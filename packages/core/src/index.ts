@@ -52,3 +52,16 @@ export type {
   VectorSearchResult,
   BM25SearchResult,
 } from './types/storage';
+
+// Config
+export {
+  loadConfig,
+  configExists,
+  getDefaultConfigPath,
+  configSchema,
+  validateConfig,
+  loadEnvFiles,
+  resolveEnvVariables,
+  type LoadConfigOptions,
+  type ResolvedConfig,
+} from './config';

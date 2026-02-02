@@ -1,3 +1,9 @@
 // 配置模块入口
-export { loadConfig } from './loader';
-export { configSchema, type ResolvedConfig } from './schema';
+export {
+  loadConfig,
+  configExists,
+  getDefaultConfigPath,
+  type LoadConfigOptions,
+} from './loader';
+export { configSchema, validateConfig, type ResolvedConfig } from './schema';
+export { loadEnvFiles, resolveEnvVariables } from './env';
