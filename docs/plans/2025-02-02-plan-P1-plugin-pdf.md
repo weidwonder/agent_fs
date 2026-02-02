@@ -1052,14 +1052,14 @@ Expected: 成功转换并输出映射信息
 
 ## 完成检查清单
 
-- [ ] 正确实现 DocumentPlugin 接口
-- [ ] MinerU 集成模块实现
-- [ ] PDF → Markdown 转换功能
-- [ ] 位置映射正确生成
-- [ ] parseLocator 正确解析
-- [ ] 单元测试通过
-- [ ] 集成测试脚本可用
-- [ ] README 文档完整
+- [x] 正确实现 DocumentPlugin 接口
+- [x] MinerU 集成模块实现
+- [x] PDF → Markdown 转换功能
+- [x] 位置映射正确生成
+- [x] parseLocator 正确解析
+- [x] 单元测试通过
+- [x] 集成测试脚本可用
+- [x] README 文档完整
 
 ---
 
