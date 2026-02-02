@@ -25,3 +25,12 @@ export type {
   IndexingConfig,
   SearchConfig,
 } from './types/config';
+
+// Search types
+export type {
+  SearchResult,
+  SearchOptions,
+  SearchFilters,
+  SearchMeta,
+  SearchResponse,
+} from './types/search';
