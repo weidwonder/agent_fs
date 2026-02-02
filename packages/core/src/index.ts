@@ -10,3 +10,6 @@ export type {
   PositionMapping,
   LocatorInfo,
 } from './types/plugin';
+
+// Chunk types
+export type { Chunk, ChunkMetadata, ChunkResult, ChunkerOptions } from './types/chunk';
