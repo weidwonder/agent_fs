@@ -253,11 +253,11 @@ export class SummaryService {
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
+        const response = await fetch(`${this.config.base_url}/chat/completions`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${this.config.apiKey}`,
+            Authorization: `Bearer ${this.config.api_key}`,
           },
           body: JSON.stringify({
             model: this.config.model,
@@ -346,8 +346,8 @@ import { SummaryService, createSummaryService } from '@agent-fs/llm';
 
 const service = createSummaryService({
   provider: 'openai-compatible',
-  baseUrl: 'https://api.openai.com/v1',
-  apiKey: process.env.OPENAI_API_KEY,
+  base_url: 'https://api.openai.com/v1',
+  api_key: process.env.OPENAI_API_KEY || '',
   model: 'gpt-4o-mini',
 });
 

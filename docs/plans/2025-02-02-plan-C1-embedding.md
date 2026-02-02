@@ -363,10 +363,10 @@ git commit -m "feat(llm): add local embedding provider with transformers.js"
  */
 export interface APIEmbeddingOptions {
   /** API 地址 */
-  baseUrl: string;
+  base_url: string;
 
   /** API 密钥 */
-  apiKey: string;
+  api_key: string;
 
   /** 模型名称 */
   model: string;
@@ -404,7 +404,7 @@ export class APIEmbeddingProvider {
    * 批量生成 embedding
    */
   async embedBatch(texts: string[]): Promise<number[][]> {
-    const url = `${this.options.baseUrl}/embeddings`;
+    const url = `${this.options.base_url}/embeddings`;
 
     let lastError: Error | null = null;
 
@@ -414,7 +414,7 @@ export class APIEmbeddingProvider {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${this.options.apiKey}`,
+            Authorization: `Bearer ${this.options.api_key}`,
           },
           body: JSON.stringify({
             model: this.options.model,
@@ -566,8 +566,8 @@ export class EmbeddingService {
     } else if (config.api) {
       this.modelName = config.api.model;
       this.provider = new APIEmbeddingProvider({
-        baseUrl: config.api.baseUrl,
-        apiKey: config.api.apiKey,
+        base_url: config.api.base_url,
+        api_key: config.api.api_key,
         model: config.api.model,
       });
     } else {
@@ -908,8 +908,7 @@ git commit -m "test(llm): add embedding cache and service tests"
     { "path": "packages/core" },
     { "path": "packages/search" },
     { "path": "packages/llm" },
-    { "path": "packages/plugins/plugin-markdown" },
-    { "path": "packages/plugins/plugin-pdf" }
+    { "path": "packages/plugins/plugin-markdown" }
   ]
 }
 ```
@@ -963,8 +962,8 @@ const service = createEmbeddingService({
   default: 'api',
   api: {
     provider: 'openai-compatible',
-    baseUrl: 'https://api.openai.com/v1',
-    apiKey: process.env.OPENAI_API_KEY,
+    base_url: 'https://api.openai.com/v1',
+    api_key: process.env.OPENAI_API_KEY || '',
     model: 'text-embedding-3-small',
   },
 });
