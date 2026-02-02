@@ -59,41 +59,78 @@ interface PositionMapping {
 
 ---
 
-## Task 1: 研究 MinerU 输出格式
+## Task 1: MinerU 输出格式说明
 
-**Goal:** 了解 MinerU 的调用方式和输出格式
+**已确认的 MinerU 工作方式：**
 
-**Step 1: 安装 MinerU（本地测试）**
+### HTTP API 调用
 
-```bash
-# 在临时环境安装 MinerU
-pip install magic-pdf
+```typescript
+// 端点
+POST ${apiHost}/file_parse
+
+// 请求参数 (FormData)
+{
+  return_md: 'true',
+  response_format_zip: 'true',
+  files: [文件 Buffer]
+}
+
+// 请求头
+{
+  token: userId,
+  Authorization: 'Bearer ...' (可选)
+}
+
+// 响应
+返回 ZIP 文件 (application/zip)
 ```
 
-**Step 2: 测试 MinerU 输出**
+### 输出文件结构
 
-```bash
-# 测试 PDF 转换，观察输出格式
-magic-pdf -p sample.pdf -o output/
+```
+<file_id>/
+├── vlm/
+│   ├── images/                        # 提取的图片
+│   ├── xxx_content_list_v2.json       # ⭐️ 按页组织的内容（含位置）
+│   ├── xxx_content_list.json          # 旧版内容列表
+│   ├── xxx.md                         # ⭐️ 生成的 Markdown
+│   ├── xxx_layout.pdf                 # 带布局标注的 PDF
+│   ├── xxx_middle.json                # 中间数据
+│   ├── xxx_model.json                 # 模型数据
+│   └── xxx_origin.pdf                 # 原始 PDF
 ```
 
-**Step 3: 确认输出内容**
+### content_list_v2.json 结构
 
-需要确认：
-- Markdown 输出路径和格式
-- 是否包含位置映射信息（页码、坐标）
-- 位置映射的数据格式（JSON/XML/其他）
+```json
+[
+  [  // 第 1 页
+    {
+      "type": "title" | "paragraph" | "table" | "image",
+      "content": {
+        "title_content": [{ "type": "text", "content": "..." }],
+        "level": 1
+      },
+      "bbox": [x, y, width, height]
+    }
+  ],
+  [  // 第 2 页
+    ...
+  ]
+]
+```
 
-**Step 4: 记录调用参数**
+### 位置映射策略
 
-确定最终的 MinerU 调用参数：
-- 输出格式：Markdown
-- 保留位置信息的选项
-- 其他必要配置
+1. 解析 `content_list_v2.json`（按页组织，包含 bbox）
+2. 提取每页的所有文本内容
+3. 在 Markdown 中匹配文本，确定每页对应的行号范围
+4. 生成 PositionMapping（页级粒度）
 
-**Notes:**
-- 如果 MinerU 不直接输出位置映射，需要探索其他方案
-- 可能需要解析 MinerU 的中间格式（如 JSON layout）
+**格式：**
+- `originalLocator`: `page:N`（从 1 开始）
+- `markdownRange`: `{ startLine, endLine }`
 
 ---
 
@@ -178,7 +215,7 @@ git commit -m "chore: create @agent-fs/plugin-pdf package structure"
 
 ---
 
-## Task 3: 实现 MinerU 调用模块
+## Task 3: 实现 MinerU HTTP 调用模块
 
 **Files:**
 - Create: `packages/plugins/plugin-pdf/src/mineru.ts`
@@ -186,10 +223,10 @@ git commit -m "chore: create @agent-fs/plugin-pdf package structure"
 **Step 1: 创建 mineru.ts**
 
 ```typescript
-import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import AdmZip from 'adm-zip';
 
 /**
  * MinerU 转换结果
@@ -197,69 +234,89 @@ import { tmpdir } from 'node:os';
 export interface MinerUResult {
   /** Markdown 内容 */
   markdown: string;
-  /** 位置映射 JSON（如果可用） */
-  mapping?: MinerUMapping[];
+  /** content_list_v2.json 内容（按页组织的内容块） */
+  contentList?: MinerUPage[];
 }
 
 /**
- * MinerU 位置映射项
+ * MinerU 页面内容（content_list_v2.json）
  */
-export interface MinerUMapping {
-  /** PDF 页码 (1-based) */
-  page: number;
-  /** 区域坐标 (可选) */
-  bbox?: { x: number; y: number; width: number; height: number };
-  /** 对应的 Markdown 行号范围 */
-  markdownLines: { start: number; end: number };
+export interface MinerUPage {
+  /** 页面内容块 */
+  blocks: MinerUBlock[];
+}
+
+/**
+ * MinerU 内容块
+ */
+export interface MinerUBlock {
+  type: 'title' | 'paragraph' | 'table' | 'image';
+  content: {
+    title_content?: Array<{ type: string; content: string }>;
+    paragraph_content?: Array<{ type: string; content: string }>;
+    level?: number;
+  };
+  bbox: [number, number, number, number]; // [x, y, width, height]
 }
 
 /**
  * MinerU 配置选项
  */
 export interface MinerUOptions {
-  /** MinerU 命令路径，默认 'magic-pdf' */
-  command?: string;
-  /** 超时时间（毫秒），默认 60000 */
+  /** MinerU API 地址 */
+  apiHost: string;
+  /** 超时时间（毫秒），默认 120000 */
   timeout?: number;
   /** 是否保留临时文件用于调试 */
   keepTemp?: boolean;
+  /** 用户 ID（用于 token 头） */
+  userId?: string;
+  /** API Key（可选） */
+  apiKey?: string;
 }
 
 /**
- * 调用 MinerU 转换 PDF
+ * 调用 MinerU HTTP API 转换 PDF
  */
 export async function convertPDFWithMinerU(
   pdfPath: string,
-  options: MinerUOptions = {},
+  options: MinerUOptions,
 ): Promise<MinerUResult> {
-  const command = options.command ?? 'magic-pdf';
-  const timeout = options.timeout ?? 60000;
+  const timeout = options.timeout ?? 120000;
   const keepTemp = options.keepTemp ?? false;
 
-  // 创建临时输出目录
+  // 创建临时目录
   const tempDir = join(tmpdir(), `agent-fs-pdf-${Date.now()}`);
   mkdirSync(tempDir, { recursive: true });
 
+  let zipPath: string | undefined;
+
   try {
-    // 调用 MinerU
-    await runMinerU(command, pdfPath, tempDir, timeout);
+    // 1. 调用 MinerU API
+    zipPath = await uploadFileAndDownloadZip(pdfPath, tempDir, options, timeout);
 
-    // 读取输出的 Markdown
-    const markdownPath = join(tempDir, 'output.md'); // 根据实际输出调整
+    // 2. 解压 ZIP
+    const extractDir = join(tempDir, 'extracted');
+    mkdirSync(extractDir, { recursive: true });
+
+    const zip = new AdmZip(zipPath);
+    zip.extractAllTo(extractDir, true);
+
+    // 3. 查找输出文件
+    const { markdownPath, contentListPath } = findOutputFiles(extractDir);
+
+    // 4. 读取文件
     const markdown = readFileSync(markdownPath, 'utf-8');
+    let contentList: MinerUPage[] | undefined;
 
-    // 尝试读取位置映射（如果存在）
-    const mappingPath = join(tempDir, 'mapping.json'); // 根据实际输出调整
-    let mapping: MinerUMapping[] | undefined;
-
-    if (existsSync(mappingPath)) {
-      const mappingJson = readFileSync(mappingPath, 'utf-8');
-      mapping = JSON.parse(mappingJson);
+    if (contentListPath && existsSync(contentListPath)) {
+      const contentListJson = readFileSync(contentListPath, 'utf-8');
+      contentList = JSON.parse(contentListJson);
     }
 
-    return { markdown, mapping };
+    return { markdown, contentList };
   } finally {
-    // 清理临时目录
+    // 清理临时文件
     if (!keepTemp) {
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -267,70 +324,116 @@ export async function convertPDFWithMinerU(
 }
 
 /**
- * 运行 MinerU 命令
+ * 上传文件到 MinerU 并下载 ZIP
  */
-function runMinerU(
-  command: string,
+async function uploadFileAndDownloadZip(
   pdfPath: string,
-  outputDir: string,
+  tempDir: string,
+  options: MinerUOptions,
   timeout: number,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    // 根据 MinerU 实际参数调整
-    const args = ['-p', pdfPath, '-o', outputDir, '--format', 'markdown'];
+): Promise<string> {
+  const endpoint = `${options.apiHost}/file_parse`;
+  const fileBuffer = readFileSync(pdfPath);
 
-    const process = spawn(command, args, {
-      stdio: 'pipe',
-    });
-
-    let stdout = '';
-    let stderr = '';
-
-    process.stdout.on('data', (data) => {
-      stdout += data.toString();
-    });
-
-    process.stderr.on('data', (data) => {
-      stderr += data.toString();
-    });
-
-    const timer = setTimeout(() => {
-      process.kill();
-      reject(new Error(`MinerU 超时 (${timeout}ms)`));
-    }, timeout);
-
-    process.on('close', (code) => {
-      clearTimeout(timer);
-
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(
-          new Error(
-            `MinerU 失败 (code ${code}):\nstdout: ${stdout}\nstderr: ${stderr}`,
-          ),
-        );
-      }
-    });
-
-    process.on('error', (error) => {
-      clearTimeout(timer);
-      reject(new Error(`无法启动 MinerU: ${error.message}`));
-    });
+  // 构建 FormData
+  const FormData = (await import('form-data')).default;
+  const formData = new FormData();
+  formData.append('return_md', 'true');
+  formData.append('response_format_zip', 'true');
+  formData.append('files', fileBuffer, {
+    filename: pdfPath.split('/').pop() || 'document.pdf',
   });
+
+  // 发起请求
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        token: options.userId ?? '',
+        ...(options.apiKey ? { Authorization: `Bearer ${options.apiKey}` } : {}),
+        ...formData.getHeaders(),
+      },
+      body: formData as any,
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    // 检查响应类型
+    const contentType = response.headers.get('content-type');
+    if (contentType !== 'application/zip') {
+      throw new Error(`Unexpected content-type: ${contentType}`);
+    }
+
+    // 保存 ZIP
+    const zipPath = join(tempDir, 'result.zip');
+    const arrayBuffer = await response.arrayBuffer();
+    writeFileSync(zipPath, Buffer.from(arrayBuffer));
+
+    return zipPath;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * 查找解压后的输出文件
+ */
+function findOutputFiles(extractDir: string): {
+  markdownPath: string;
+  contentListPath?: string;
+} {
+  // 查找 vlm 子目录
+  const vlmDir = join(extractDir, 'vlm');
+  if (!existsSync(vlmDir)) {
+    throw new Error('vlm directory not found in extracted files');
+  }
+
+  // 查找 .md 文件
+  const files = readFileSync(vlmDir);
+  const mdFile = files.find((f: string) => f.endsWith('.md'));
+
+  if (!mdFile) {
+    throw new Error('.md file not found in vlm directory');
+  }
+
+  const markdownPath = join(vlmDir, mdFile);
+
+  // 查找 content_list_v2.json
+  const contentListFile = files.find((f: string) =>
+    f.endsWith('_content_list_v2.json'),
+  );
+  const contentListPath = contentListFile
+    ? join(vlmDir, contentListFile)
+    : undefined;
+
+  return { markdownPath, contentListPath };
 }
 ```
 
-**Step 2: 验证编译**
+**Step 2: 安装依赖**
+
+```bash
+# 添加 form-data 和 adm-zip
+pnpm add -D --filter @agent-fs/plugin-pdf form-data adm-zip
+pnpm add -D --filter @agent-fs/plugin-pdf @types/adm-zip
+```
+
+**Step 3: 验证编译**
 
 Run: `pnpm --filter @agent-fs/plugin-pdf build`
 Expected: 编译成功
 
-**Step 3: Commit**
+**Step 4: Commit**
 
 ```bash
-git add packages/plugins/plugin-pdf/src/mineru.ts
-git commit -m "feat(plugin-pdf): add MinerU integration module"
+git add packages/plugins/plugin-pdf
+git commit -m "feat(plugin-pdf): add MinerU HTTP API integration module"
 ```
 
 ---
@@ -427,68 +530,138 @@ export class PDFPlugin implements DocumentPlugin {
 
   /**
    * 构建 PositionMapping
+   * 从 MinerU 的 content_list_v2.json 构建页级映射
    */
   private buildPositionMapping(result: {
     markdown: string;
-    mapping?: Array<{
-      page: number;
-      bbox?: { x: number; y: number; width: number; height: number };
-      markdownLines: { start: number; end: number };
-    }>;
+    contentList?: Array<Array<{ content: any; bbox: number[] }>>;
   }): PositionMapping[] {
-    if (!result.mapping || result.mapping.length === 0) {
-      // 如果没有 mapping，回退到按页划分
+    if (!result.contentList || result.contentList.length === 0) {
+      // 如果没有 contentList，回退到简单策略
       return this.fallbackPageMapping(result.markdown);
     }
 
-    return result.mapping.map((item) => {
-      let locator = `page:${item.page}`;
-
-      if (item.bbox) {
-        const { x, y, width, height } = item.bbox;
-        locator += `:${x},${y},${width},${height}`;
-      }
-
-      return {
-        markdownRange: {
-          startLine: item.markdownLines.start,
-          endLine: item.markdownLines.end,
-        },
-        originalLocator: locator,
-      };
-    });
-  }
-
-  /**
-   * 回退方案：按页划分映射
-   * 当 MinerU 没有提供详细映射时使用
-   */
-  private fallbackPageMapping(markdown: string): PositionMapping[] {
-    const lines = markdown.split('\n');
+    const markdownLines = result.markdown.split('\n');
     const mapping: PositionMapping[] = [];
 
-    // 简单策略：假设每个 "---" 分隔符表示新页
-    let currentPage = 1;
-    let pageStart = 1;
+    let currentLine = 1;
 
-    for (let i = 0; i < lines.length; i += 1) {
-      if (lines[i].trim() === '---') {
-        if (i > pageStart) {
-          mapping.push({
-            markdownRange: { startLine: pageStart, endLine: i },
-            originalLocator: `page:${currentPage}`,
-          });
-        }
-        currentPage += 1;
-        pageStart = i + 1;
+    // 遍历每一页
+    for (let pageIdx = 0; pageIdx < result.contentList.length; pageIdx += 1) {
+      const page = result.contentList[pageIdx];
+      const pageNumber = pageIdx + 1;
+
+      // 提取该页的所有文本内容
+      const pageTexts = this.extractPageTexts(page);
+
+      // 在 Markdown 中查找该页的起始和结束行
+      const pageRange = this.findPageRangeInMarkdown(
+        markdownLines,
+        pageTexts,
+        currentLine,
+      );
+
+      if (pageRange) {
+        mapping.push({
+          markdownRange: {
+            startLine: pageRange.startLine,
+            endLine: pageRange.endLine,
+          },
+          originalLocator: `page:${pageNumber}`,
+        });
+        currentLine = pageRange.endLine + 1;
       }
     }
 
-    // 最后一页
-    if (pageStart <= lines.length) {
+    return mapping;
+  }
+
+  /**
+   * 提取页面的所有文本内容
+   */
+  private extractPageTexts(
+    page: Array<{ content: any; bbox: number[] }>,
+  ): string[] {
+    const texts: string[] = [];
+
+    for (const block of page) {
+      if (block.content.title_content) {
+        for (const item of block.content.title_content) {
+          if (item.content) {
+            texts.push(item.content.trim());
+          }
+        }
+      }
+      if (block.content.paragraph_content) {
+        for (const item of block.content.paragraph_content) {
+          if (item.content) {
+            texts.push(item.content.trim());
+          }
+        }
+      }
+    }
+
+    return texts.filter((t) => t.length > 0);
+  }
+
+  /**
+   * 在 Markdown 中查找页面的行号范围
+   */
+  private findPageRangeInMarkdown(
+    markdownLines: string[],
+    pageTexts: string[],
+    startLine: number,
+  ): { startLine: number; endLine: number } | null {
+    if (pageTexts.length === 0) return null;
+
+    // 查找该页第一个文本在 Markdown 中的位置
+    const firstText = pageTexts[0];
+    let foundStart = -1;
+
+    for (let i = startLine - 1; i < markdownLines.length; i += 1) {
+      if (markdownLines[i].includes(firstText)) {
+        foundStart = i + 1;
+        break;
+      }
+    }
+
+    if (foundStart === -1) return null;
+
+    // 查找该页最后一个文本在 Markdown 中的位置
+    const lastText = pageTexts[pageTexts.length - 1];
+    let foundEnd = foundStart;
+
+    for (let i = foundStart - 1; i < markdownLines.length; i += 1) {
+      if (markdownLines[i].includes(lastText)) {
+        foundEnd = i + 1;
+        break;
+      }
+    }
+
+    return { startLine: foundStart, endLine: foundEnd };
+  }
+
+  /**
+   * 回退方案：简单平均分配
+   * 当 MinerU 没有提供 contentList 时使用
+   */
+  private fallbackPageMapping(markdown: string): PositionMapping[] {
+    const lines = markdown.split('\n');
+    const totalLines = lines.length;
+
+    // 假设平均每页 20 行（简单估算）
+    const estimatedPages = Math.ceil(totalLines / 20);
+    const linesPerPage = Math.ceil(totalLines / estimatedPages);
+
+    const mapping: PositionMapping[] = [];
+
+    for (let page = 1; page <= estimatedPages; page += 1) {
+      const startLine = (page - 1) * linesPerPage + 1;
+      const endLine = Math.min(page * linesPerPage, totalLines);
+
       mapping.push({
-        markdownRange: { startLine: pageStart, endLine: lines.length },
-        originalLocator: `page:${currentPage}`,
+        markdownRange: { startLine, endLine },
+        originalLocator: `page:${page}`,
       });
     }
 
@@ -706,29 +879,28 @@ git commit -m "chore(plugin-pdf): add integration test script"
 ```markdown
 # @agent-fs/plugin-pdf
 
-PDF 文档处理插件，使用 MinerU 转换 PDF 为 Markdown。
+PDF 文档处理插件，使用 MinerU HTTP API 转换 PDF 为 Markdown。
 
 ## 功能
 
 - 将 PDF 转换为结构化 Markdown
-- 保留 PDF 位置映射（页码/坐标区域）
+- 保留 PDF 位置映射（页级粒度）
 - 支持双向定位：Markdown ↔ PDF
 - 复用 Markdown 分块和向量化流程
 
 ## 依赖
 
-### MinerU
+### MinerU HTTP 服务
 
-需要安装 [MinerU](https://github.com/opendatalab/MinerU)：
+需要部署 [MinerU](https://github.com/opendatalab/MinerU) HTTP 服务。
 
+参考部署方式：
 ```bash
-pip install magic-pdf
-```
+# 命令行方式（测试用）
+mineru -b vlm-http-client -u http://your-api-host:port -p input.pdf -o output/
 
-验证安装：
-
-```bash
-magic-pdf --version
+# 或使用 Docker 部署 HTTP 服务
+# 详见 MinerU 文档
 ```
 
 ## 使用
@@ -738,8 +910,10 @@ import { createPDFPlugin } from '@agent-fs/plugin-pdf';
 
 const plugin = createPDFPlugin({
   minerU: {
-    command: 'magic-pdf', // MinerU 命令路径
-    timeout: 60000,       // 超时时间（毫秒）
+    apiHost: 'http://10.144.0.99:30000',  // MinerU HTTP API 地址
+    timeout: 120000,                       // 超时时间（毫秒）
+    userId: 'user-123',                    // 可选：用户 ID
+    apiKey: 'sk-...',                      // 可选：API Key
   },
 });
 
@@ -756,15 +930,15 @@ await plugin.dispose();
 
 ### originalLocator
 
+当前版本只支持页级映射：
 - `page:N` - 第 N 页
-- `page:N:x,y,w,h` - 第 N 页的坐标区域
 
 ### 示例
 
 ```typescript
 {
   markdownRange: { startLine: 1, endLine: 50 },
-  originalLocator: 'page:1:100,200,500,600'
+  originalLocator: 'page:1'
 }
 ```
 
@@ -774,15 +948,23 @@ await plugin.dispose();
 # 单元测试
 pnpm test
 
-# 集成测试（需要 MinerU）
+# 集成测试（需要 MinerU HTTP 服务）
 npx tsx scripts/test-with-pdf.ts /path/to/sample.pdf
 ```
 
 ## 注意事项
 
-1. **MinerU 必须安装**：首次使用前需安装 Python 和 MinerU
-2. **性能**：PDF 转换可能较慢，建议设置合理的 timeout
-3. **回退机制**：如果 MinerU 未提供详细映射，会回退到按页划分
+1. **MinerU HTTP 服务**：需要提前部署 MinerU HTTP API 服务
+2. **性能**：PDF 转换较慢（大文件可能需要 1-2 分钟），建议设置 120s+ 超时
+3. **位置映射**：当前只支持页级映射，不支持更精确的 bbox 映射
+4. **回退机制**：如果无法解析 content_list_v2.json，会回退到简单平均分配策略
+
+## 输出文件
+
+MinerU 会生成以下文件（解压后）：
+- `xxx.md` - Markdown 文件
+- `xxx_content_list_v2.json` - 内容列表（含位置信息）
+- `images/` - 提取的图片
 
 ## 许可证
 
@@ -871,8 +1053,10 @@ import { createPDFPlugin } from '@agent-fs/plugin-pdf';
 // 使用示例
 const plugin = createPDFPlugin({
   minerU: {
-    command: 'magic-pdf',
-    timeout: 60000,
+    apiHost: 'http://10.144.0.99:30000',  // MinerU HTTP API 地址
+    timeout: 120000,                       // 超时时间（毫秒）
+    userId: 'user-123',                    // 可选：用户 ID
+    apiKey: 'sk-...',                      // 可选：API Key
   },
 });
 
@@ -880,7 +1064,8 @@ await plugin.init();
 
 const result = await plugin.toMarkdown('/path/to/document.pdf');
 // result.markdown: 转换后的 Markdown 内容
-// result.mapping: 位置映射数组
+// result.mapping: 位置映射数组（页级粒度）
+// 示例: [{ markdownRange: { startLine: 1, endLine: 50 }, originalLocator: 'page:1' }]
 
 await plugin.dispose();
 ```
@@ -896,17 +1081,29 @@ P1 完成后，以下计划可以继续：
 
 ## 备注
 
-### MinerU 调用细节
+### MinerU 调用细节（已确认）
 
-Task 1 完成后需要补充 MinerU 的实际调用参数和输出格式。当前实现基于假设，可能需要根据 MinerU 实际情况调整：
+**HTTP API：**
+- 端点：`POST ${apiHost}/file_parse`
+- 请求：FormData（`return_md: true`, `response_format_zip: true`, files）
+- 响应：ZIP 文件（同步返回）
 
-- 输出文件名和路径
-- 位置映射的 JSON 格式
-- 命令行参数
+**输出文件：**
+- `vlm/xxx.md` - Markdown 文件
+- `vlm/xxx_content_list_v2.json` - 按页组织的内容块（含 bbox）
+- `vlm/images/` - 提取的图片
 
-### 替代方案
+**位置映射：**
+- 解析 content_list_v2.json 获取每页的内容块
+- 通过文本匹配在 Markdown 中定位每页的行号范围
+- 生成页级映射（`page:N` 格式）
 
-如果 MinerU 不满足需求，可考虑：
-- pdf-parse + layout 分析
-- pdfjs + 自定义解析
-- 其他 PDF 处理库
+**参考实现：**
+- cherry-studio: `OpenMineruPreprocessProvider.ts`
+- 示例输出：`/Users/weidwonder/tasks/20260130 政旦待分析pdf/output/...`
+
+### 已知限制
+
+1. **位置映射粒度**：当前只支持页级映射，不支持块级（bbox）映射
+2. **文本匹配**：依赖简单的文本包含匹配，可能不够精确
+3. **超时时间**：大文件处理时间较长，建议设置 120s+ 超时
