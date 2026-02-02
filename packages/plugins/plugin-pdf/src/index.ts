@@ -1,2 +1,8 @@
-// 插件入口
-export { PDFPlugin } from './plugin';
+// @agent-fs/plugin-pdf
+export { PDFPlugin, createPDFPlugin, type PDFPluginOptions } from './plugin';
+export type {
+  MinerUOptions,
+  MinerUResult,
+  MinerUBlock,
+  MinerUContentList,
+} from './mineru';
