@@ -169,11 +169,14 @@ Expected: 目录创建成功
     "test": "vitest run"
   },
   "dependencies": {
-    "@agent-fs/core": "workspace:*"
+    "@agent-fs/core": "workspace:*",
+    "undici": "^6.0.0",
+    "adm-zip": "^0.5.10"
   },
   "devDependencies": {
     "typescript": "^5.3.0",
-    "@types/node": "^20.0.0"
+    "@types/node": "^20.0.0",
+    "@types/adm-zip": "^0.5.5"
   }
 }
 ```
@@ -223,7 +226,14 @@ git commit -m "chore: create @agent-fs/plugin-pdf package structure"
 **Step 1: 创建 mineru.ts**
 
 ```typescript
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import AdmZip from 'adm-zip';
@@ -235,19 +245,11 @@ export interface MinerUResult {
   /** Markdown 内容 */
   markdown: string;
   /** content_list_v2.json 内容（按页组织的内容块） */
-  contentList?: MinerUPage[];
+  contentList?: MinerUContentList;
 }
 
 /**
- * MinerU 页面内容（content_list_v2.json）
- */
-export interface MinerUPage {
-  /** 页面内容块 */
-  blocks: MinerUBlock[];
-}
-
-/**
- * MinerU 内容块
+ * MinerU 内容块（content_list_v2.json 中的元素）
  */
 export interface MinerUBlock {
   type: 'title' | 'paragraph' | 'table' | 'image';
@@ -258,6 +260,12 @@ export interface MinerUBlock {
   };
   bbox: [number, number, number, number]; // [x, y, width, height]
 }
+
+/**
+ * MinerU 页面数组类型
+ * content_list_v2.json 是一个二维数组: Array<Array<MinerUBlock>>
+ */
+export type MinerUContentList = MinerUBlock[][];
 
 /**
  * MinerU 配置选项
@@ -307,11 +315,11 @@ export async function convertPDFWithMinerU(
 
     // 4. 读取文件
     const markdown = readFileSync(markdownPath, 'utf-8');
-    let contentList: MinerUPage[] | undefined;
+    let contentList: MinerUContentList | undefined;
 
     if (contentListPath && existsSync(contentListPath)) {
       const contentListJson = readFileSync(contentListPath, 'utf-8');
-      contentList = JSON.parse(contentListJson);
+      contentList = JSON.parse(contentListJson) as MinerUContentList;
     }
 
     return { markdown, contentList };
@@ -335,14 +343,15 @@ async function uploadFileAndDownloadZip(
   const endpoint = `${options.apiHost}/file_parse`;
   const fileBuffer = readFileSync(pdfPath);
 
-  // 构建 FormData
-  const FormData = (await import('form-data')).default;
+  // 构建 FormData（使用 undici 的 FormData 以确保兼容性）
+  const { FormData } = await import('undici');
   const formData = new FormData();
   formData.append('return_md', 'true');
   formData.append('response_format_zip', 'true');
-  formData.append('files', fileBuffer, {
-    filename: pdfPath.split('/').pop() || 'document.pdf',
-  });
+
+  // 创建 Blob 并添加到 FormData
+  const blob = new Blob([fileBuffer], { type: 'application/pdf' });
+  formData.append('files', blob, pdfPath.split('/').pop() || 'document.pdf');
 
   // 发起请求
   const controller = new AbortController();
@@ -354,9 +363,9 @@ async function uploadFileAndDownloadZip(
       headers: {
         token: options.userId ?? '',
         ...(options.apiKey ? { Authorization: `Bearer ${options.apiKey}` } : {}),
-        ...formData.getHeaders(),
+        // FormData 会自动设置正确的 content-type 和 boundary
       },
-      body: formData as any,
+      body: formData,
       signal: controller.signal,
     });
 
@@ -364,9 +373,9 @@ async function uploadFileAndDownloadZip(
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    // 检查响应类型
+    // 检查响应类型（宽松匹配，允许 charset 等参数）
     const contentType = response.headers.get('content-type');
-    if (contentType !== 'application/zip') {
+    if (!contentType || !contentType.includes('application/zip')) {
       throw new Error(`Unexpected content-type: ${contentType}`);
     }
 
@@ -394,8 +403,8 @@ function findOutputFiles(extractDir: string): {
     throw new Error('vlm directory not found in extracted files');
   }
 
-  // 查找 .md 文件
-  const files = readFileSync(vlmDir);
+  // 读取目录内容
+  const files = readdirSync(vlmDir);
   const mdFile = files.find((f: string) => f.endsWith('.md'));
 
   if (!mdFile) {
@@ -419,8 +428,10 @@ function findOutputFiles(extractDir: string): {
 **Step 2: 安装依赖**
 
 ```bash
-# 添加 form-data 和 adm-zip
-pnpm add -D --filter @agent-fs/plugin-pdf form-data adm-zip
+# 添加运行时依赖
+pnpm add --filter @agent-fs/plugin-pdf undici adm-zip
+
+# 添加类型定义
 pnpm add -D --filter @agent-fs/plugin-pdf @types/adm-zip
 ```
 
@@ -452,7 +463,12 @@ import type {
   LocatorInfo,
   PositionMapping,
 } from '@agent-fs/core';
-import { convertPDFWithMinerU, type MinerUOptions } from './mineru';
+import {
+  convertPDFWithMinerU,
+  type MinerUOptions,
+  type MinerUContentList,
+  type MinerUBlock,
+} from './mineru';
 
 /**
  * PDF 插件配置
@@ -534,7 +550,7 @@ export class PDFPlugin implements DocumentPlugin {
    */
   private buildPositionMapping(result: {
     markdown: string;
-    contentList?: Array<Array<{ content: any; bbox: number[] }>>;
+    contentList?: MinerUContentList;
   }): PositionMapping[] {
     if (!result.contentList || result.contentList.length === 0) {
       // 如果没有 contentList，回退到简单策略
@@ -579,9 +595,7 @@ export class PDFPlugin implements DocumentPlugin {
   /**
    * 提取页面的所有文本内容
    */
-  private extractPageTexts(
-    page: Array<{ content: any; bbox: number[] }>,
-  ): string[] {
+  private extractPageTexts(page: MinerUBlock[]): string[] {
     const texts: string[] = [];
 
     for (const block of page) {
@@ -693,7 +707,12 @@ export function createPDFPlugin(options?: PDFPluginOptions): DocumentPlugin {
 ```typescript
 // @agent-fs/plugin-pdf
 export { PDFPlugin, createPDFPlugin, type PDFPluginOptions } from './plugin';
-export type { MinerUOptions, MinerUResult, MinerUMapping } from './mineru';
+export type {
+  MinerUOptions,
+  MinerUResult,
+  MinerUBlock,
+  MinerUContentList,
+} from './mineru';
 ```
 
 **Step 3: 验证编译**
