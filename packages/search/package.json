@@ -15,7 +15,11 @@
     "build": "tsc",
     "clean": "rm -rf dist",
     "lint": "eslint src",
-    "test": "vitest run --root ../.."
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@agent-fs/core": "workspace:*",
+    "nodejieba": "^2.6.0"
   },
   "devDependencies": {
     "typescript": "^5.3.0"
