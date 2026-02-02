@@ -29,3 +29,6 @@ coverage/
 
 # Electron
 out/
+
+# Worktrees
+.worktree/
