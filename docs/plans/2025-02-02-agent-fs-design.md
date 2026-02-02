@@ -562,7 +562,11 @@ search:
 # 插件配置（可选，覆盖插件默认参数）
 plugins:
   pdf:
-    extra_param: "as_example"
+    mineru:
+      api_host: "http://localhost:8080"  # MinerU HTTP API 地址
+      timeout: 120000                     # 超时时间（毫秒）
+      user_id: ""                         # 可选：用户 ID
+      api_key: "${MINERU_API_KEY}"        # 可选：API Key
 ```
 
 ---
