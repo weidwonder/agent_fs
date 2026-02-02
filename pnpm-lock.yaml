@@ -74,6 +74,22 @@ importers:
         specifier: ^5.3.0
         version: 5.9.3
 
+  packages/plugins/plugin-markdown:
+    dependencies:
+      '@agent-fs/core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      typescript:
+        specifier: ^5.3.0
+        version: 5.9.3
+
+  packages/search:
+    devDependencies:
+      typescript:
+        specifier: ^5.3.0
+        version: 5.9.3
+
 packages:
 
   '@babel/helper-string-parser@7.27.1':
