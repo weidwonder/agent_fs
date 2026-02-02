@@ -64,3 +64,16 @@ export {
   type SentenceSplitOptions,
   type SentenceChunk,
 } from './chunker';
+
+// Config
+export {
+  loadConfig,
+  configExists,
+  getDefaultConfigPath,
+  configSchema,
+  validateConfig,
+  loadEnvFiles,
+  resolveEnvVariables,
+  type LoadConfigOptions,
+  type ResolvedConfig,
+} from './config';
