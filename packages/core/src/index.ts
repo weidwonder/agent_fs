@@ -44,3 +44,11 @@ export type {
   Registry,
   RegisteredDirectory,
 } from './types/index-meta';
+
+// Storage types
+export type {
+  VectorDocument,
+  BM25Document,
+  VectorSearchResult,
+  BM25SearchResult,
+} from './types/storage';
