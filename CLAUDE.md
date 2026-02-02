@@ -1,4 +1,4 @@
-# CLAUDE.md
+# CLAUDE.md or Agent.md
 
 > Agent FS - 面向 AI Agent 的文件系统智能索引工具
 
