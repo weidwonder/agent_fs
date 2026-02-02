@@ -13,3 +13,15 @@ export type {
 
 // Chunk types
 export type { Chunk, ChunkMetadata, ChunkResult, ChunkerOptions } from './types/chunk';
+
+// Config types
+export type {
+  Config,
+  LLMConfig,
+  EmbeddingConfig,
+  LocalEmbeddingConfig,
+  APIEmbeddingConfig,
+  RerankConfig,
+  IndexingConfig,
+  SearchConfig,
+} from './types/config';
