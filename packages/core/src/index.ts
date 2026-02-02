@@ -34,3 +34,13 @@ export type {
   SearchMeta,
   SearchResponse,
 } from './types/search';
+
+// Index types
+export type {
+  IndexMetadata,
+  IndexStats,
+  FileMetadata,
+  SubdirectoryInfo,
+  Registry,
+  RegisteredDirectory,
+} from './types/index-meta';
