@@ -52,3 +52,15 @@ export type {
   VectorSearchResult,
   BM25SearchResult,
 } from './types/storage';
+
+export {
+  MarkdownChunker,
+  countTokens,
+  createTokenizer,
+  splitBySentences,
+  splitLargeBlock,
+  type Tokenizer,
+  type TokenizerOptions,
+  type SentenceSplitOptions,
+  type SentenceChunk,
+} from './chunker';
