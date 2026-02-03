@@ -314,7 +314,7 @@ export class IndexPipeline {
 
     // 切分
     const chunker = new MarkdownChunker(this.options.chunkOptions);
-    const chunkResult = chunker.chunk(conversionResult.markdown);
+    const chunks = chunker.chunk(conversionResult.markdown);
 
     // 计算文件 hash
     const content = readFileSync(filePath);
@@ -329,8 +329,8 @@ export class IndexPipeline {
     const vectorDocs: VectorDocument[] = [];
     const bm25Docs: BM25Document[] = [];
 
-    for (let i = 0; i < chunkResult.chunks.length; i++) {
-      const chunk = chunkResult.chunks[i];
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
       const chunkId = `${fileId}:${String(i).padStart(4, '0')}`;
       chunkIds.push(chunkId);
 
@@ -391,7 +391,7 @@ export class IndexPipeline {
     writeFileSync(join(docDir, 'mapping.json'), JSON.stringify(conversionResult.mapping, null, 2));
     writeFileSync(
       join(docDir, 'chunks.json'),
-      JSON.stringify({ document: filename, chunks: chunkResult.chunks }, null, 2)
+      JSON.stringify({ document: filename, chunks }, null, 2)
     );
     writeFileSync(
       join(docDir, 'summary.json'),
