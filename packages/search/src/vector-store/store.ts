@@ -29,6 +29,8 @@ export interface VectorSearchOptions {
   distanceType?: 'l2' | 'cosine' | 'dot';
 }
 
+const toRecord = (doc: VectorDocument): Record<string, unknown> => ({ ...doc });
+
 export class VectorStore {
   private db: lancedb.Connection | null = null;
   private table: lancedb.Table | null = null;
@@ -69,7 +71,8 @@ export class VectorStore {
         indexed_at: '',
         deleted_at: '',
       };
-      this.table = await this.db.createTable(this.options.tableName, [emptyDoc]);
+      const seedData = [toRecord(emptyDoc)];
+      this.table = await this.db.createTable(this.options.tableName, seedData);
       // 删除占位记录
       await this.table.delete(`chunk_id = ''`);
     }
@@ -80,7 +83,7 @@ export class VectorStore {
   async addDocuments(docs: VectorDocument[]): Promise<void> {
     if (docs.length === 0) return;
     const table = await this.ensureTable();
-    await table.add(docs);
+    await table.add(docs.map((doc) => toRecord(doc)));
   }
 
   async searchByContent(
