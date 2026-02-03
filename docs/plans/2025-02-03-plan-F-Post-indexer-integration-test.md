@@ -8,7 +8,7 @@
 
 **Tech Stack:** Vitest, TypeScript
 
-**依赖:** [F] indexer 完成后执行
+**依赖:** Task 1-6 可立即执行（测试已完成组件）；Task 7-8 需要 LLM 服务可用
 
 **检查点:** CP4 - Layer 5 验收
 
@@ -32,7 +32,9 @@ test-data/
 - [ ] 向量存储能正确写入和查询
 - [ ] BM25 索引能正确构建和搜索
 - [ ] 多路融合搜索返回正确结果
-- [ ] 索引元数据正确写入
+- [ ] SearchFusion.search() 完整流程正常工作
+- [ ] BM25-only 结果能正确回查补全 summary/locator
+- [ ] 索引元数据正确写入（需要 LLM）
 
 ---
 
@@ -67,6 +69,7 @@ Run: `mkdir -p packages/e2e/src/utils`
     "@agent-fs/search": "workspace:*",
     "@agent-fs/llm": "workspace:*",
     "@agent-fs/plugin-markdown": "workspace:*",
+    "@agent-fs/plugin-pdf": "workspace:*",
     "typescript": "^5.3.0",
     "vitest": "^4.0.18"
   }
@@ -87,7 +90,8 @@ Run: `mkdir -p packages/e2e/src/utils`
     { "path": "../core" },
     { "path": "../search" },
     { "path": "../llm" },
-    { "path": "../plugins/plugin-markdown" }
+    { "path": "../plugins/plugin-markdown" },
+    { "path": "../plugins/plugin-pdf" }
   ]
 }
 ```
@@ -860,6 +864,239 @@ Expected: All tests PASS
 
 ---
 
+## Task 6.5: SearchFusion 完整集成测试
+
+**Files:**
+- Create: `packages/e2e/src/f-post/search-fusion-complete.e2e.ts`
+
+**Step 1: 编写测试**
+
+```typescript
+// packages/e2e/src/f-post/search-fusion-complete.e2e.ts
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { MarkdownPlugin } from '@agent-fs/plugin-markdown';
+import { MarkdownChunker } from '@agent-fs/core';
+import { VectorStore, BM25Index, createSearchFusion } from '@agent-fs/search';
+import type { VectorDocument, BM25Document } from '@agent-fs/core';
+import type { EmbeddingService } from '@agent-fs/llm';
+import { TEST_FILES } from '../utils/test-config';
+import { createTempTestDir, cleanupTempDir, copyTestFile } from '../utils/test-helpers';
+
+describe('F-Post: SearchFusion Complete Integration', () => {
+  let tempDir: string;
+  let storageDir: string;
+  let plugin: MarkdownPlugin;
+  let vectorStore: VectorStore;
+  let bm25Index: BM25Index;
+
+  const DIMENSION = 8;
+
+  function mockVector(content: string): number[] {
+    const vector = new Array(DIMENSION).fill(0);
+    for (let i = 0; i < content.length && i < DIMENSION * 10; i++) {
+      vector[i % DIMENSION] += content.charCodeAt(i) / 1000;
+    }
+    const norm = Math.sqrt(vector.reduce((sum, v) => sum + v * v, 0));
+    return vector.map(v => v / (norm || 1));
+  }
+
+  // Mock embedding service
+  const mockEmbeddingService: EmbeddingService = {
+    embed: async (text: string) => mockVector(text),
+    embedBatch: async (texts: string[]) => texts.map(mockVector),
+    getDimension: () => DIMENSION,
+    init: async () => {},
+    dispose: async () => {},
+  };
+
+  beforeEach(async () => {
+    tempDir = createTempTestDir();
+    storageDir = createTempTestDir();
+    plugin = new MarkdownPlugin();
+    vectorStore = new VectorStore({
+      storagePath: storageDir,
+      dimension: DIMENSION,
+    });
+    await vectorStore.init();
+    bm25Index = new BM25Index();
+  });
+
+  afterEach(async () => {
+    await vectorStore.close();
+    cleanupTempDir(tempDir);
+    cleanupTempDir(storageDir);
+  });
+
+  it('should perform complete SearchFusion.search() with mock embedding', async () => {
+    const filePath = copyTestFile(TEST_FILES.markdown, tempDir);
+
+    const result = await plugin.toMarkdown(filePath);
+    const chunker = new MarkdownChunker({ minTokens: 200, maxTokens: 800 });
+    const chunkResult = chunker.chunk(result.markdown);
+
+    const vectorDocs: VectorDocument[] = [];
+    const bm25Docs: BM25Document[] = [];
+
+    for (let i = 0; i < Math.min(chunkResult.chunks.length, 10); i++) {
+      const chunk = chunkResult.chunks[i];
+      const chunkId = `search-fusion-${i}`;
+
+      vectorDocs.push({
+        chunk_id: chunkId,
+        file_id: 'sf-file-001',
+        dir_id: 'sf-dir-001',
+        rel_path: TEST_FILES.markdown,
+        file_path: filePath,
+        content: chunk.content,
+        summary: `摘要 ${i}: ${chunk.content.slice(0, 30)}`,
+        content_vector: mockVector(chunk.content),
+        summary_vector: mockVector(`摘要 ${i}`),
+        locator: chunk.locator,
+        indexed_at: new Date().toISOString(),
+        deleted_at: '',
+      });
+
+      bm25Docs.push({
+        chunk_id: chunkId,
+        file_id: 'sf-file-001',
+        dir_id: 'sf-dir-001',
+        file_path: filePath,
+        content: chunk.content,
+        tokens: [],
+        indexed_at: new Date().toISOString(),
+        deleted_at: '',
+      });
+    }
+
+    await vectorStore.addDocuments(vectorDocs);
+    bm25Index.addDocuments(bm25Docs);
+
+    // 使用 SearchFusion 进行搜索
+    const fusion = createSearchFusion(vectorStore, bm25Index, mockEmbeddingService);
+
+    const response = await fusion.search({
+      query: '检验报告 CONFORMED',
+      topK: 5,
+    });
+
+    // 验证结果
+    expect(response.results.length).toBeGreaterThan(0);
+    expect(response.results.length).toBeLessThanOrEqual(5);
+    expect(response.meta.fusionMethod).toBe('rrf');
+    expect(response.meta.totalSearched).toBeGreaterThan(0);
+    expect(response.meta.elapsedMs).toBeGreaterThanOrEqual(0);
+
+    // 验证结果结构
+    for (const result of response.results) {
+      expect(result.chunkId).toBeDefined();
+      expect(result.score).toBeGreaterThan(0);
+      expect(result.content).toBeDefined();
+      expect(result.source.filePath).toBeDefined();
+    }
+  });
+
+  it('should use keyword for BM25 when provided', async () => {
+    const filePath = copyTestFile(TEST_FILES.markdown, tempDir);
+
+    const result = await plugin.toMarkdown(filePath);
+    const chunker = new MarkdownChunker({ minTokens: 200, maxTokens: 800 });
+    const chunkResult = chunker.chunk(result.markdown);
+
+    const bm25Docs: BM25Document[] = chunkResult.chunks.slice(0, 5).map((chunk, i) => ({
+      chunk_id: `keyword-test-${i}`,
+      file_id: 'file-001',
+      dir_id: 'dir-001',
+      file_path: filePath,
+      content: chunk.content,
+      tokens: [],
+      indexed_at: new Date().toISOString(),
+      deleted_at: '',
+    }));
+
+    bm25Index.addDocuments(bm25Docs);
+
+    const fusion = createSearchFusion(vectorStore, bm25Index, mockEmbeddingService);
+
+    // 使用 keyword 参数
+    const response = await fusion.search(
+      {
+        query: 'semantic query for vectors',
+        keyword: '检验报告',
+        topK: 5,
+      },
+      {
+        useContentVector: false,
+        useSummaryVector: false,
+        useBM25: true,
+      }
+    );
+
+    expect(response.results.length).toBeGreaterThan(0);
+  });
+
+  it('should backfill summary/locator for BM25-only results', async () => {
+    const filePath = copyTestFile(TEST_FILES.markdown, tempDir);
+
+    const result = await plugin.toMarkdown(filePath);
+    const chunker = new MarkdownChunker({ minTokens: 200, maxTokens: 800 });
+    const chunkResult = chunker.chunk(result.markdown);
+
+    // 只在 VectorStore 中存储完整信息
+    const vectorDocs: VectorDocument[] = chunkResult.chunks.slice(0, 3).map((chunk, i) => ({
+      chunk_id: `backfill-test-${i}`,
+      file_id: 'file-001',
+      dir_id: 'dir-001',
+      rel_path: TEST_FILES.markdown,
+      file_path: filePath,
+      content: chunk.content,
+      summary: `完整摘要 ${i}`,
+      content_vector: mockVector(chunk.content),
+      summary_vector: mockVector(`摘要 ${i}`),
+      locator: chunk.locator,
+      indexed_at: new Date().toISOString(),
+      deleted_at: '',
+    }));
+
+    // BM25 中存储同样的 chunks
+    const bm25Docs: BM25Document[] = chunkResult.chunks.slice(0, 3).map((chunk, i) => ({
+      chunk_id: `backfill-test-${i}`,
+      file_id: 'file-001',
+      dir_id: 'dir-001',
+      file_path: filePath,
+      content: chunk.content,
+      tokens: [],
+      indexed_at: new Date().toISOString(),
+      deleted_at: '',
+    }));
+
+    await vectorStore.addDocuments(vectorDocs);
+    bm25Index.addDocuments(bm25Docs);
+
+    const fusion = createSearchFusion(vectorStore, bm25Index, mockEmbeddingService);
+
+    // 只使用 BM25 搜索，应该回查补全 summary/locator
+    const response = await fusion.search(
+      { query: '检验', topK: 3 },
+      { useContentVector: false, useSummaryVector: false, useBM25: true }
+    );
+
+    // 验证 summary 和 locator 被补全
+    for (const result of response.results) {
+      expect(result.summary).toContain('完整摘要');
+      expect(result.source.locator).toBeDefined();
+      expect(result.source.locator.length).toBeGreaterThan(0);
+    }
+  });
+});
+```
+
+**Step 2: 运行测试**
+
+Run: `pnpm --filter @agent-fs/e2e test src/f-post/search-fusion-complete.e2e.ts`
+Expected: All tests PASS
+
+---
+
 ## Task 7: 完整索引流水线测试（需要 LLM）
 
 **Files:**
@@ -1059,8 +1296,9 @@ Expected: All F-Post tests PASS
 - [ ] Markdown 插件集成测试
 - [ ] BM25 搜索集成测试
 - [ ] 向量存储集成测试
-- [ ] 多路融合搜索测试
-- [ ] 完整流水线测试
+- [ ] 多路融合搜索测试（RRF 算法）
+- [ ] SearchFusion 完整集成测试
+- [ ] 完整流水线测试（需要 LLM）
 - [ ] 测试脚本配置
 
 ---
@@ -1074,4 +1312,5 @@ Expected: All F-Post tests PASS
 | BM25 Index | 中英文搜索、软删除、路径过滤 |
 | Vector Store | 存储、搜索、过滤、压缩 |
 | RRF Fusion | 多路融合、空结果处理 |
-| Full Pipeline | 完整索引流程验证 |
+| SearchFusion | 完整搜索流程、keyword 参数、BM25 回查补全 |
+| Full Pipeline | 完整索引流程验证（需要 LLM） |

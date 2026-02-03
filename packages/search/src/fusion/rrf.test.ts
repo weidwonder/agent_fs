@@ -73,7 +73,7 @@ describe('fusionRRF', () => {
   });
 
   it('should handle empty lists', () => {
-    const fused = fusionRRF([], (item) => item.id);
+    const fused = fusionRRF<{ id: string }>([], (item) => item.id);
     expect(fused).toEqual([]);
   });
 

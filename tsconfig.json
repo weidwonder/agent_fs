@@ -4,6 +4,8 @@
     { "path": "packages/core" },
     { "path": "packages/llm" },
     { "path": "packages/search" },
-    { "path": "packages/plugins/plugin-markdown" }
+    { "path": "packages/plugins/plugin-markdown" },
+    { "path": "packages/plugins/plugin-pdf" },
+    { "path": "packages/indexer" }
   ]
 }

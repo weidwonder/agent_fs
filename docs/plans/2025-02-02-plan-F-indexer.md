@@ -477,6 +477,7 @@ export class Indexer {
     const bm25Index = new BM25Index();
 
     // 运行流水线
+    const chunkSize = this.config.indexing.chunk_size;
     const pipeline = new IndexPipeline({
       dirPath,
       pluginManager: this.pluginManager,
@@ -484,7 +485,10 @@ export class Indexer {
       summaryService,
       vectorStore,
       bm25Index,
-      chunkOptions: this.config.indexing.chunkSize,
+      chunkOptions: {
+        minTokens: chunkSize.min_tokens,
+        maxTokens: chunkSize.max_tokens,
+      },
       onProgress: this.options.onProgress,
     });
 
