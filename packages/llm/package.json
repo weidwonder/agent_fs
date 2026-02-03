@@ -15,7 +15,7 @@
     "build": "tsc",
     "clean": "rm -rf dist",
     "lint": "eslint src",
-    "test": "vitest run"
+    "test": "vitest run --root ../../ --config ../../vitest.config.ts"
   },
   "dependencies": {
     "@agent-fs/core": "workspace:*",
