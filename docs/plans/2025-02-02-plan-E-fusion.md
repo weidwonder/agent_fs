@@ -23,6 +23,17 @@
 
 ---
 
+## 重要说明
+
+### 字段命名约定
+
+- **内部存储**（`VectorDocument`, `BM25Document`）使用 **snake_case**
+- **外部 API**（`SearchResult`）使用 **camelCase**
+
+从存储读取时使用 snake_case，输出到 API 时映射为 camelCase。
+
+---
+
 ## Task 1: 创建 fusion 模块
 
 **Files:**
@@ -129,8 +140,8 @@ export function fusionRRF<T>(
 
 ```typescript
 import type { SearchResult, SearchOptions, SearchResponse } from '@agent-fs/core';
-import { VectorStore } from '../vector-store';
-import { BM25Index } from '../bm25';
+import type { VectorStore } from '../vector-store';
+import type { BM25Index } from '../bm25';
 import { fusionRRF, type RRFParams, DEFAULT_RRF_PARAMS } from './rrf';
 import type { EmbeddingService } from '@agent-fs/llm';
 
@@ -189,15 +200,16 @@ export class SearchFusion {
         filePathPrefix,
       });
 
+      // 从 snake_case 存储格式映射到 camelCase API 格式
       lists.push({
         name: 'content_vector',
         items: results.map((r) => ({
-          chunkId: r.chunkId,
+          chunkId: r.chunk_id,
           score: r.score,
           content: r.document.content,
           summary: r.document.summary,
           source: {
-            filePath: r.document.filePath,
+            filePath: r.document.file_path,
             locator: r.document.locator,
           },
         })),
@@ -215,12 +227,12 @@ export class SearchFusion {
       lists.push({
         name: 'summary_vector',
         items: results.map((r) => ({
-          chunkId: r.chunkId,
+          chunkId: r.chunk_id,
           score: r.score,
           content: r.document.content,
           summary: r.document.summary,
           source: {
-            filePath: r.document.filePath,
+            filePath: r.document.file_path,
             locator: r.document.locator,
           },
         })),
@@ -238,12 +250,12 @@ export class SearchFusion {
       lists.push({
         name: 'bm25',
         items: results.map((r) => ({
-          chunkId: r.chunkId,
+          chunkId: r.chunk_id,
           score: r.score,
           content: r.document.content,
-          summary: '', // BM25 文档可能没有 summary
+          summary: '', // BM25 文档没有 summary
           source: {
-            filePath: r.document.filePath,
+            filePath: r.document.file_path,
             locator: '', // 需要从其他地方获取
           },
         })),
@@ -309,6 +321,7 @@ export type { FusionOptions, RRFParams } from './fusion';
 - [ ] 多路向量召回
 - [ ] BM25 结果融合
 - [ ] 正确排序
+- [ ] snake_case → camelCase 映射
 
 ---
 

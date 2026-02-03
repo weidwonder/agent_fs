@@ -26,6 +26,17 @@
 
 ---
 
+## 重要说明
+
+### 字段命名约定
+
+- **内部存储**（`VectorDocument`, `BM25Document`）使用 **snake_case**
+- **外部 JSON 文件**（`index.json`, `registry.json`）使用 **camelCase**
+
+构建存储文档时使用 snake_case，`deleted_at` 使用空字符串表示未删除。
+
+---
+
 ## Task 1: 创建 indexer 包结构
 
 **Files:**
@@ -172,7 +183,7 @@ export function scanDirectory(
 import { v4 as uuidv4 } from 'uuid';
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join, relative, basename } from 'node:path';
+import { join } from 'node:path';
 import type {
   IndexMetadata,
   FileMetadata,
@@ -254,7 +265,7 @@ export class IndexPipeline {
       []
     );
 
-    // 写入 index.json
+    // 写入 index.json（使用 camelCase，这是外部 JSON 格式）
     const metadata: IndexMetadata = {
       version: '1.0',
       createdAt: new Date().toISOString(),
@@ -334,30 +345,31 @@ export class IndexPipeline {
 
       const now = new Date().toISOString();
 
+      // 使用 snake_case（内部存储格式）
       vectorDocs.push({
-        chunkId,
-        fileId,
-        dirId: this.dirId,
-        relPath: filename,
-        filePath,
+        chunk_id: chunkId,
+        file_id: fileId,
+        dir_id: this.dirId,
+        rel_path: filename,
+        file_path: filePath,
         content: chunk.content,
         summary: summaryResult.summary,
-        contentVector: contentEmbed,
-        summaryVector: summaryEmbed,
+        content_vector: contentEmbed,
+        summary_vector: summaryEmbed,
         locator: chunk.locator,
-        indexedAt: now,
-        deletedAt: null,
+        indexed_at: now,
+        deleted_at: '',  // 空字符串表示未删除
       });
 
       bm25Docs.push({
-        chunkId,
-        fileId,
-        dirId: this.dirId,
-        filePath,
+        chunk_id: chunkId,
+        file_id: fileId,
+        dir_id: this.dirId,
+        file_path: filePath,
         content: chunk.content,
         tokens: [],
-        indexedAt: now,
-        deletedAt: null,
+        indexed_at: now,
+        deleted_at: '',
       });
     }
 
@@ -567,7 +579,7 @@ export type { ScanResult } from './scanner';
 - [ ] 目录扫描
 - [ ] 插件调度
 - [ ] 完整流水线
-- [ ] 索引存储
+- [ ] 索引存储（snake_case）
 - [ ] Registry 更新
 - [ ] 进度回调
 
