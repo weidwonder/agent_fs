@@ -14,6 +14,12 @@
 理解架构设计
 └─> docs/plans/2025-02-02-agent-fs-design.md（设计文档）
 
+本地 Embedding/Rerank 设计
+└─> docs/plans/2026-02-03-local-embedding-rerank-design.md
+
+本地 Embedding/Rerank 实施计划
+└─> docs/plans/2026-02-03-local-embedding-rerank.md
+
 开发规范
 └─> docs/guides/code-standards.md
 
