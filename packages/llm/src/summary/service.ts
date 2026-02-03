@@ -137,7 +137,13 @@ export class SummaryService {
           throw new Error(`API error: ${response.status}`);
         }
 
-        const data = await response.json();
+        const data = (await response.json()) as {
+          choices: Array<{
+            message: {
+              content: string;
+            };
+          }>;
+        };
         return data.choices[0].message.content.trim();
       } catch (error) {
         lastError = error as Error;
