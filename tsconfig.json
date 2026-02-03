@@ -3,6 +3,7 @@
   "references": [
     { "path": "packages/core" },
     { "path": "packages/search" },
+    { "path": "packages/llm" },
     { "path": "packages/plugins/plugin-markdown" }
   ]
 }
