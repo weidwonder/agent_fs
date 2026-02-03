@@ -16,3 +16,6 @@ export {
   type TokenizeOptions,
   type BM25Params,
 } from './bm25';
+
+export { VectorStore, createVectorStore } from './vector-store';
+export type { VectorStoreOptions, VectorSearchOptions } from './vector-store';

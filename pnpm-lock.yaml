@@ -139,6 +139,9 @@ importers:
       '@agent-fs/core':
         specifier: workspace:*
         version: link:../core
+      '@lancedb/lancedb':
+        specifier: ^0.23.0
+        version: 0.23.0(apache-arrow@18.1.0)
       nodejieba:
         specifier: ^2.6.0
         version: 2.6.0
