@@ -177,4 +177,34 @@ describe('VectorStore', () => {
     expect(removed).toBe(1);
     expect(count).toBe(1);
   });
+
+  it('should get documents by chunk ids', async () => {
+    const docs = [
+      createDoc('g1', 'dir1', '/project/docs/g1.md', [1, 0, 0], [0, 1, 0]),
+      createDoc('g2', 'dir1', '/project/docs/g2.md', [0, 1, 0], [1, 0, 0]),
+      createDoc('g3', 'dir1', '/project/docs/g3.md', [0, 0, 1], [1, 0, 0]),
+    ];
+
+    await store.addDocuments(docs);
+
+    const results = await store.getByChunkIds(['g1', 'g3']);
+    const ids = results.map((doc) => doc.chunk_id).sort();
+
+    expect(ids).toEqual(['g1', 'g3']);
+  });
+
+  it('should not return soft deleted documents', async () => {
+    const docs = [
+      createDoc('d1', 'dir1', '/project/docs/d1.md', [1, 0, 0], [0, 1, 0]),
+      createDoc('d2', 'dir1', '/project/docs/d2.md', [0, 1, 0], [1, 0, 0]),
+    ];
+
+    await store.addDocuments(docs);
+    await store.softDelete(['d2']);
+
+    const results = await store.getByChunkIds(['d1', 'd2']);
+    const ids = results.map((doc) => doc.chunk_id).sort();
+
+    expect(ids).toEqual(['d1']);
+  });
 });

@@ -172,6 +172,22 @@ export class VectorStore {
     }));
   }
 
+  async getByChunkIds(chunkIds: string[]): Promise<VectorDocument[]> {
+    if (chunkIds.length === 0) return [];
+
+    const table = await this.ensureTable();
+    const filters = chunkIds.map((id) => `chunk_id = '${id}'`).join(' OR ');
+
+    const query = table
+      .vectorSearch(new Array(this.options.dimension).fill(0))
+      .column('content_vector')
+      .where(`deleted_at = '' AND (${filters})`)
+      .limit(chunkIds.length);
+
+    const rows = await query.toArray();
+    return rows as VectorDocument[];
+  }
+
   /**
    * 将距离转换为相似度分数
    */

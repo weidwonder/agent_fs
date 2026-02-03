@@ -16,10 +16,11 @@
 
 ## 成功标准
 
-- [ ] RRF 算法正确实现
-- [ ] 能融合向量搜索和 BM25 结果
-- [ ] 融合结果按分数排序
-- [ ] 单元测试覆盖率 > 80%
+- [x] RRF 算法正确实现
+- [x] 能融合向量搜索和 BM25 结果
+- [x] 融合结果按分数排序
+- [x] BM25-only 结果通过回查补全 summary/locator
+- [x] 单元测试覆盖率 > 80%
 
 ---
 
@@ -44,6 +45,11 @@
 
 **融合策略：** 当 BM25 结果被选中时，如果需要 summary/locator，通过 chunk_id 从 VectorStore 补充获取。RRF 融合会优先使用包含完整信息的 VectorDocument 版本。
 
+### BM25-only 结果补全策略
+
+- 若融合结果中某些条目仅来自 BM25（summary/locator 为空），则在融合完成后使用 `VectorStore.getByChunkIds()` 批量回查。
+- 仅补全缺失字段，不覆盖已有内容。
+
 ---
 
 ## Task 1: 创建 fusion 模块
@@ -63,6 +69,26 @@ Run: `mkdir -p packages/search/src/fusion`
 
 **Files:**
 - Create: `packages/search/src/fusion/rrf.ts`
+- Test: `packages/search/src/fusion/rrf.test.ts`
+
+**Step 1: 先写失败测试（TDD）**
+
+在 `packages/search/src/fusion/rrf.test.ts` 覆盖以下用例（先写最小可失败版本）：
+- `rrfScore` 计算正确（rank=1, k=60 → 1/61）
+- 单列表融合（结果顺序不变）
+- 双列表融合（同一项目分数累加）
+- 多列表融合（3+ 列表）
+- 相同项目的 sources 正确记录
+- merge 函数正确调用（字段补充）
+- 空列表处理
+- 自定义 k 参数
+
+**Step 2: 运行测试确认失败**
+
+Run: `pnpm test -- packages/search/src/fusion/rrf.test.ts`
+Expected: FAIL（缺少实现）
+
+**Step 3: 写最小实现**
 
 ```typescript
 /**
@@ -151,10 +177,74 @@ export function fusionRRF<T>(
 
 ---
 
-## Task 3: 实现 SearchFusion
+## Task 3: VectorStore 增加 getByChunkIds
+
+**Files:**
+- Modify: `packages/search/src/vector-store/store.ts`
+- Test: `packages/search/src/vector-store/store.test.ts`
+
+**Step 1: 先写失败测试（TDD）**
+
+在 `packages/search/src/vector-store/store.test.ts` 增加用例：
+- 能按 chunk_id 返回对应文档
+- 不返回已软删除文档
+
+**Step 2: 运行测试确认失败**
+
+Run: `pnpm test -- packages/search/src/vector-store/store.test.ts`
+Expected: FAIL（缺少实现）
+
+**Step 3: 增加方法实现**
+
+在 `VectorStore` 类中新增：
+
+```typescript
+async getByChunkIds(chunkIds: string[]): Promise<VectorDocument[]> {
+  if (chunkIds.length === 0) return [];
+
+  const table = await this.ensureTable();
+  const filters = chunkIds.map((id) => `chunk_id = '${id}'`).join(' OR ');
+
+  const query = table
+    .vectorSearch(new Array(this.options.dimension).fill(0))
+    .column('content_vector')
+    .where(`deleted_at = '' AND (${filters})`)
+    .limit(chunkIds.length);
+
+  const rows = await query.toArray();
+  return rows as VectorDocument[];
+}
+```
+
+---
+
+## Task 4: 实现 SearchFusion
 
 **Files:**
 - Create: `packages/search/src/fusion/search-fusion.ts`
+- Test: `packages/search/src/fusion/search-fusion.test.ts`
+
+**Step 1: 先写失败测试（TDD）**
+
+在 `packages/search/src/fusion/search-fusion.test.ts` 覆盖以下用例（使用最小 mock）：
+- 仅使用 contentVector 搜索
+- 仅使用 summaryVector 搜索
+- 仅使用 BM25 搜索
+- 三路融合搜索
+- scope 过滤生效
+- topK 限制生效
+- keyword 参数优先用于 BM25
+- 查询向量只计算一次（mock 验证）
+- BM25 结果的 summary/locator 被向量结果补充
+- BM25-only 结果触发 getByChunkIds 回查
+- meta 信息正确（totalSearched, elapsedMs）
+
+**Step 2: 运行测试确认失败**
+
+Run: `pnpm test -- packages/search/src/fusion/search-fusion.test.ts`
+Expected: FAIL（缺少实现）
+
+**Step 3: 写最小实现**
 
 ```typescript
 import type { SearchResult, SearchOptions, SearchResponse } from '@agent-fs/core';
@@ -270,7 +360,7 @@ export class SearchFusion {
       });
 
       // BM25Document 没有 summary 和 locator 字段
-      // 这些字段会在 RRF 融合时从 VectorDocument 版本补充
+      // 这些字段会在 RRF 融合后通过回查补充
       lists.push({
         name: 'bm25',
         items: results.map((r) => ({
@@ -304,6 +394,27 @@ export class SearchFusion {
       rrfParams
     );
 
+    // BM25-only 结果补全 summary/locator
+    const missingItems = fused.filter(
+      (item) => !item.item.summary || !item.item.source.locator
+    );
+    if (missingItems.length > 0) {
+      const missingIds = missingItems.map((item) => item.item.chunkId);
+      const docs = await this.vectorStore.getByChunkIds(missingIds);
+      const docMap = new Map(docs.map((doc) => [doc.chunk_id, doc]));
+
+      for (const fusedItem of missingItems) {
+        const doc = docMap.get(fusedItem.item.chunkId);
+        if (!doc) continue;
+        if (!fusedItem.item.summary) {
+          fusedItem.item.summary = doc.summary;
+        }
+        if (!fusedItem.item.source.locator) {
+          fusedItem.item.source.locator = doc.locator;
+        }
+      }
+    }
+
     // 取 top-k
     const results = fused.slice(0, topK).map((f) => ({
       ...f.item,
@@ -332,7 +443,7 @@ export function createSearchFusion(
 
 ---
 
-## Task 4: 更新导出
+## Task 5: 更新导出
 
 **File:** `packages/search/src/fusion/index.ts`
 
@@ -353,52 +464,41 @@ export type { FusionOptions, RRFParams, RankedItem, FusedItem } from './fusion';
 
 ---
 
-## Task 5: 编写测试
+## Task 6: 补充测试与覆盖率检查
 
 **Files:**
-- Create: `packages/search/src/fusion/rrf.test.ts`
-- Create: `packages/search/src/fusion/search-fusion.test.ts`
+- Modify (if needed): `packages/search/src/fusion/rrf.test.ts`
+- Modify (if needed): `packages/search/src/fusion/search-fusion.test.ts`
 
-### 5.1 RRF 算法测试
-
-**测试用例：**
-
-- [ ] `rrfScore` 计算正确（rank=1, k=60 → 1/61）
-- [ ] 单列表融合（结果顺序不变）
-- [ ] 双列表融合（同一项目分数累加）
-- [ ] 多列表融合（3+ 列表）
-- [ ] 相同项目的 sources 正确记录
-- [ ] merge 函数正确调用（字段补充）
-- [ ] 空列表处理
-- [ ] 自定义 k 参数
-
-### 5.2 SearchFusion 集成测试
+### 6.1 SearchFusion 集成测试补齐（如有缺失）
 
 **测试用例：**
 
-- [ ] 仅使用 contentVector 搜索
-- [ ] 仅使用 summaryVector 搜索
-- [ ] 仅使用 BM25 搜索
-- [ ] 三路融合搜索
-- [ ] scope 过滤生效
-- [ ] topK 限制生效
-- [ ] keyword 参数优先用于 BM25
-- [ ] 查询向量只计算一次（mock 验证）
-- [ ] BM25 结果的 summary/locator 被向量结果补充
-- [ ] meta 信息正确（totalSearched, elapsedMs）
+- [x] 仅使用 contentVector 搜索
+- [x] 仅使用 summaryVector 搜索
+- [x] 仅使用 BM25 搜索
+- [x] 三路融合搜索
+- [x] scope 过滤生效
+- [x] topK 限制生效
+- [x] keyword 参数优先用于 BM25
+- [x] 查询向量只计算一次（mock 验证）
+- [x] BM25 结果的 summary/locator 被向量结果补充
+- [x] BM25-only 结果触发 getByChunkIds 回查
+- [x] meta 信息正确（totalSearched, elapsedMs）
 
 ---
 
 ## 完成检查清单
 
-- [ ] RRF 算法实现
-- [ ] 多路向量召回
-- [ ] BM25 结果融合
-- [ ] 正确排序
-- [ ] snake_case → camelCase 映射
-- [ ] 查询向量缓存（避免重复计算）
-- [ ] 字段合并（BM25 缺失字段补充）
-- [ ] 单元测试 > 80% 覆盖率
+- [x] RRF 算法实现
+- [x] 多路向量召回
+- [x] BM25 结果融合
+- [x] 正确排序
+- [x] snake_case → camelCase 映射
+- [x] 查询向量缓存（避免重复计算）
+- [x] 字段合并（BM25 缺失字段补充）
+- [x] BM25-only 回查补全 summary/locator
+- [x] 单元测试 > 80% 覆盖率
 
 ---
 
