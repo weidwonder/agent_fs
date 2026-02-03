@@ -54,8 +54,8 @@ export class BM25Index {
    * 添加文档
    */
   addDocument(doc: BM25Document): void {
-    if (this.documents.has(doc.chunkId)) {
-      this.removeDocument(doc.chunkId);
+    if (this.documents.has(doc.chunk_id)) {
+      this.removeDocument(doc.chunk_id);
     }
 
     const tokens = tokenize(doc.content);
@@ -66,7 +66,7 @@ export class BM25Index {
       this.docFreqs.set(term, (this.docFreqs.get(term) || 0) + 1);
     }
 
-    this.documents.set(doc.chunkId, {
+    this.documents.set(doc.chunk_id, {
       doc,
       tokens,
       termFreq,
@@ -114,7 +114,7 @@ export class BM25Index {
     const internal = this.documents.get(chunkId);
     if (!internal) return false;
 
-    internal.doc.deletedAt = new Date().toISOString();
+    internal.doc.deleted_at = new Date().toISOString();
     return true;
   }
 
@@ -124,7 +124,7 @@ export class BM25Index {
   removeByDirId(dirId: string): number {
     let count = 0;
     for (const [chunkId, internal] of this.documents) {
-      if (internal.doc.dirId === dirId) {
+      if (internal.doc.dir_id === dirId) {
         this.removeDocument(chunkId);
         count++;
       }
@@ -138,7 +138,7 @@ export class BM25Index {
   removeByFileId(fileId: string): number {
     let count = 0;
     for (const [chunkId, internal] of this.documents) {
-      if (internal.doc.fileId === fileId) {
+      if (internal.doc.file_id === fileId) {
         this.removeDocument(chunkId);
         count++;
       }
@@ -162,11 +162,11 @@ export class BM25Index {
     const results: BM25SearchResult[] = [];
 
     for (const internal of this.documents.values()) {
-      if (!includeDeleted && internal.doc.deletedAt) continue;
+      if (!includeDeleted && internal.doc.deleted_at) continue;
 
-      if (dirId && internal.doc.dirId !== dirId) continue;
+      if (dirId && internal.doc.dir_id !== dirId) continue;
 
-      if (filePathPrefix && !internal.doc.filePath.startsWith(filePathPrefix)) continue;
+      if (filePathPrefix && !internal.doc.file_path.startsWith(filePathPrefix)) continue;
 
       const score = bm25Score(
         queryTokens,
@@ -180,7 +180,7 @@ export class BM25Index {
 
       if (score > 0) {
         results.push({
-          chunkId: internal.doc.chunkId,
+          chunk_id: internal.doc.chunk_id,
           score,
           document: internal.doc,
         });
@@ -204,7 +204,7 @@ export class BM25Index {
   get activeSize(): number {
     let count = 0;
     for (const internal of this.documents.values()) {
-      if (!internal.doc.deletedAt) {
+      if (!internal.doc.deleted_at) {
         count++;
       }
     }
@@ -248,7 +248,7 @@ export class BM25Index {
   compact(): number {
     let removed = 0;
     for (const [chunkId, internal] of this.documents) {
-      if (internal.doc.deletedAt) {
+      if (internal.doc.deleted_at) {
         this.removeDocument(chunkId);
         removed++;
       }

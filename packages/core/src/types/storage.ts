@@ -1,21 +1,24 @@
 /**
  * 向量文档（LanceDB 存储）
+ *
+ * 注意：列名使用 snake_case，因为 LanceDB 的 SQL 解析器会将列名转为小写。
+ * 使用 camelCase 会导致 WHERE 过滤时找不到字段。
  */
 export interface VectorDocument {
   /** Chunk ID */
-  chunkId: string;
+  chunk_id: string;
 
   /** 文件 ID */
-  fileId: string;
+  file_id: string;
 
   /** 目录 ID */
-  dirId: string;
+  dir_id: string;
 
   /** 相对路径 */
-  relPath: string;
+  rel_path: string;
 
   /** 绝对路径 */
-  filePath: string;
+  file_path: string;
 
   /** Chunk 内容 */
   content: string;
@@ -24,36 +27,38 @@ export interface VectorDocument {
   summary: string;
 
   /** 内容向量 */
-  contentVector: number[];
+  content_vector: number[];
 
   /** 摘要向量 */
-  summaryVector: number[];
+  summary_vector: number[];
 
   /** 原文定位符 */
   locator: string;
 
-  /** 索引时间 */
-  indexedAt: string;
+  /** 索引时间 (ISO 8601) */
+  indexed_at: string;
 
-  /** 删除时间（软删除） */
-  deletedAt: string | null;
+  /** 删除时间（软删除），空字符串表示未删除 */
+  deleted_at: string;
 }
 
 /**
  * BM25 文档
+ *
+ * 注意：列名使用 snake_case 以保持与 VectorDocument 一致。
  */
 export interface BM25Document {
   /** Chunk ID */
-  chunkId: string;
+  chunk_id: string;
 
   /** 文件 ID */
-  fileId: string;
+  file_id: string;
 
   /** 目录 ID */
-  dirId: string;
+  dir_id: string;
 
   /** 文件路径 */
-  filePath: string;
+  file_path: string;
 
   /** Chunk 内容 */
   content: string;
@@ -61,11 +66,11 @@ export interface BM25Document {
   /** 分词后的 tokens */
   tokens: string[];
 
-  /** 索引时间 */
-  indexedAt: string;
+  /** 索引时间 (ISO 8601) */
+  indexed_at: string;
 
-  /** 删除时间（软删除） */
-  deletedAt: string | null;
+  /** 删除时间（软删除），空字符串表示未删除 */
+  deleted_at: string;
 }
 
 /**
@@ -73,9 +78,9 @@ export interface BM25Document {
  */
 export interface VectorSearchResult {
   /** Chunk ID */
-  chunkId: string;
+  chunk_id: string;
 
-  /** 相似度分数 */
+  /** 相似度分数 (0-1，越高越相似) */
   score: number;
 
   /** 文档数据 */
@@ -87,7 +92,7 @@ export interface VectorSearchResult {
  */
 export interface BM25SearchResult {
   /** Chunk ID */
-  chunkId: string;
+  chunk_id: string;
 
   /** BM25 分数 */
   score: number;

@@ -28,6 +28,8 @@
     "pnpm": ">=8.0.0"
   },
   "dependencies": {
+    "@lancedb/lancedb": "^0.23.0",
+    "@lancedb/lancedb-darwin-x64": "^0.22.3",
     "gpt-tokenizer": "^3.4.0",
     "nodejieba": "^2.6.0",
     "remark": "^15.0.1",

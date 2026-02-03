@@ -11,14 +11,14 @@ describe('BM25 persistence', () => {
   const indexPath = join(testDir, 'bm25', 'index.json');
 
   const createDoc = (id: string, content: string): BM25Document => ({
-    chunkId: id,
-    fileId: `file_${id}`,
-    dirId: 'dir1',
-    filePath: `/path/to/${id}.md`,
+    chunk_id: id,
+    file_id: `file_${id}`,
+    dir_id: 'dir1',
+    file_path: `/path/to/${id}.md`,
     content,
     tokens: [],
-    indexedAt: new Date().toISOString(),
-    deletedAt: null,
+    indexed_at: new Date().toISOString(),
+    deleted_at: '',
   });
 
   beforeEach(() => {

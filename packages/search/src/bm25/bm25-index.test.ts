@@ -6,14 +6,14 @@ describe('BM25Index', () => {
   let index: BM25Index;
 
   const createDoc = (id: string, content: string, dirId = 'dir1'): BM25Document => ({
-    chunkId: id,
-    fileId: `file_${id}`,
-    dirId,
-    filePath: `/path/to/${id}.md`,
+    chunk_id: id,
+    file_id: `file_${id}`,
+    dir_id: dirId,
+    file_path: `/path/to/${id}.md`,
     content,
     tokens: [],
-    indexedAt: new Date().toISOString(),
-    deletedAt: null,
+    indexed_at: new Date().toISOString(),
+    deleted_at: '',
   });
 
   beforeEach(() => {
@@ -63,7 +63,7 @@ describe('BM25Index', () => {
       index.addDocument(createDoc('4', 'Python in another dir', 'dir2'));
       const results = index.search('Python', { dirId: 'dir1' });
       for (const r of results) {
-        expect(r.document.dirId).toBe('dir1');
+        expect(r.document.dir_id).toBe('dir1');
       }
     });
 
