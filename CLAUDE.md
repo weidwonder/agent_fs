@@ -17,6 +17,9 @@
 开发规范
 └─> docs/guides/code-standards.md
 
+插件开发
+└─> docs/guides/plugin-development.md
+
 开始开发
 └─> 待创建实施计划
 ```
@@ -73,3 +76,4 @@ agent_fs/
 - [需求文档](docs/requirements.md) - 完整功能需求
 - [设计文档](docs/plans/2025-02-02-agent-fs-design.md) - 架构与接口设计
 - [代码规范](docs/guides/code-standards.md) - 编码与验证要求
+- [插件开发指南](docs/guides/plugin-development.md) - 创建自定义文档处理插件
