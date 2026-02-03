@@ -14,6 +14,9 @@
 理解架构设计
 └─> docs/plans/2025-02-02-agent-fs-design.md（设计文档）
 
+开发规范
+└─> docs/guides/code-standards.md
+
 开始开发
 └─> 待创建实施计划
 ```
@@ -43,6 +46,7 @@ agent_fs/
 ├── CLAUDE.md                 # 本文件
 ├── docs/
 │   ├── requirements.md       # 需求文档
+│   ├── guides/               # 开发与操作指南
 │   └── plans/                # 设计与计划
 ├── packages/                 # Monorepo（待创建）
 │   ├── core/                 # 核心库
@@ -68,3 +72,4 @@ agent_fs/
 
 - [需求文档](docs/requirements.md) - 完整功能需求
 - [设计文档](docs/plans/2025-02-02-agent-fs-design.md) - 架构与接口设计
+- [代码规范](docs/guides/code-standards.md) - 编码与验证要求
