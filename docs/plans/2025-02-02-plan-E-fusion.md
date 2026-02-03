@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript
 
-**依赖:** [B3] bm25, [D] vector-store
+**依赖:** [B3] bm25, [D] vector-store, [C1] embedding
 
 **被依赖:** [F] indexer, [G1] mcp-server
 
@@ -32,6 +32,18 @@
 
 从存储读取时使用 snake_case，输出到 API 时映射为 camelCase。
 
+### BM25Document 与 VectorDocument 的差异
+
+| 字段 | VectorDocument | BM25Document | 说明 |
+|------|----------------|--------------|------|
+| summary | ✓ | ✗ | BM25 不存储摘要 |
+| locator | ✓ | ✗ | BM25 不存储定位符 |
+| content_vector | ✓ | ✗ | BM25 不需要向量 |
+| summary_vector | ✓ | ✗ | BM25 不需要向量 |
+| tokens | ✗ | ✓ | BM25 存储分词结果 |
+
+**融合策略：** 当 BM25 结果被选中时，如果需要 summary/locator，通过 chunk_id 从 VectorStore 补充获取。RRF 融合会优先使用包含完整信息的 VectorDocument 版本。
+
 ---
 
 ## Task 1: 创建 fusion 模块
@@ -50,7 +62,7 @@ Run: `mkdir -p packages/search/src/fusion`
 ## Task 2: 实现 RRF 算法
 
 **Files:**
-- Modify: `packages/search/src/fusion/rrf.ts`
+- Create: `packages/search/src/fusion/rrf.ts`
 
 ```typescript
 /**
@@ -94,11 +106,13 @@ export function rrfScore(rank: number, k: number = DEFAULT_RRF_PARAMS.k): number
  * 使用 RRF 融合多个排名列表
  * @param lists 多个排名列表，每个列表按相关度降序排列
  * @param getId 获取项目唯一标识的函数
+ * @param merge 合并同一项目的多个版本（可选，用于补充缺失字段）
  * @param params RRF 参数
  */
 export function fusionRRF<T>(
   lists: { name: string; items: T[] }[],
   getId: (item: T) => string,
+  merge?: (existing: T, newItem: T, source: string) => T,
   params: RRFParams = DEFAULT_RRF_PARAMS
 ): FusedItem<T>[] {
   // 累积每个项目的 RRF 分数
@@ -114,6 +128,10 @@ export function fusionRRF<T>(
       if (existing) {
         existing.score += score;
         existing.sources.push(list.name);
+        // 合并项目（用于补充缺失字段）
+        if (merge) {
+          existing.item = merge(existing.item, item, list.name);
+        }
       } else {
         scoreMap.set(id, {
           item,
@@ -136,7 +154,7 @@ export function fusionRRF<T>(
 ## Task 3: 实现 SearchFusion
 
 **Files:**
-- Modify: `packages/search/src/fusion/search-fusion.ts`
+- Create: `packages/search/src/fusion/search-fusion.ts`
 
 ```typescript
 import type { SearchResult, SearchOptions, SearchResponse } from '@agent-fs/core';
@@ -192,9 +210,14 @@ export class SearchFusion {
     // 收集多路召回结果
     const lists: { name: string; items: SearchResult[] }[] = [];
 
+    // 缓存查询向量（避免重复计算）
+    let queryVector: number[] | null = null;
+    if (useContentVector || useSummaryVector) {
+      queryVector = await this.embeddingService.embed(query);
+    }
+
     // 1. 内容向量搜索
-    if (useContentVector) {
-      const queryVector = await this.embeddingService.embed(query);
+    if (useContentVector && queryVector) {
       const results = await this.vectorStore.searchByContent(queryVector, {
         topK: topK * 2,
         filePathPrefix,
@@ -217,8 +240,7 @@ export class SearchFusion {
     }
 
     // 2. 摘要向量搜索
-    if (useSummaryVector) {
-      const queryVector = await this.embeddingService.embed(query);
+    if (useSummaryVector && queryVector) {
       const results = await this.vectorStore.searchBySummary(queryVector, {
         topK: topK * 2,
         filePathPrefix,
@@ -247,23 +269,40 @@ export class SearchFusion {
         filePathPrefix,
       });
 
+      // BM25Document 没有 summary 和 locator 字段
+      // 这些字段会在 RRF 融合时从 VectorDocument 版本补充
       lists.push({
         name: 'bm25',
         items: results.map((r) => ({
           chunkId: r.chunk_id,
           score: r.score,
           content: r.document.content,
-          summary: '', // BM25 文档没有 summary
+          summary: '', // BM25 文档没有 summary，融合时会被覆盖
           source: {
             filePath: r.document.file_path,
-            locator: '', // 需要从其他地方获取
+            locator: '', // BM25 文档没有 locator，融合时会被覆盖
           },
         })),
       });
     }
 
-    // RRF 融合
-    const fused = fusionRRF(lists, (item) => item.chunkId, rrfParams);
+    // RRF 融合（带字段合并）
+    const fused = fusionRRF(
+      lists,
+      (item) => item.chunkId,
+      // 合并函数：优先使用有 summary/locator 的版本
+      (existing, newItem, _source) => {
+        return {
+          ...existing,
+          summary: existing.summary || newItem.summary,
+          source: {
+            filePath: existing.source.filePath,
+            locator: existing.source.locator || newItem.source.locator,
+          },
+        };
+      },
+      rrfParams
+    );
 
     // 取 top-k
     const results = fused.slice(0, topK).map((f) => ({
@@ -295,23 +334,58 @@ export function createSearchFusion(
 
 ## Task 4: 更新导出
 
+**File:** `packages/search/src/fusion/index.ts`
+
 ```typescript
-// packages/search/src/fusion/index.ts
 export { fusionRRF, rrfScore, DEFAULT_RRF_PARAMS } from './rrf';
 export type { RRFParams, RankedItem, FusedItem } from './rrf';
 export { SearchFusion, createSearchFusion } from './search-fusion';
 export type { FusionOptions } from './search-fusion';
+```
 
-// packages/search/src/index.ts 添加：
-export { SearchFusion, createSearchFusion, fusionRRF } from './fusion';
-export type { FusionOptions, RRFParams } from './fusion';
+**Update:** `packages/search/src/index.ts` 添加：
+
+```typescript
+// Fusion
+export { SearchFusion, createSearchFusion, fusionRRF, rrfScore, DEFAULT_RRF_PARAMS } from './fusion';
+export type { FusionOptions, RRFParams, RankedItem, FusedItem } from './fusion';
 ```
 
 ---
 
 ## Task 5: 编写测试
 
-测试 RRF 算法和 SearchFusion。
+**Files:**
+- Create: `packages/search/src/fusion/rrf.test.ts`
+- Create: `packages/search/src/fusion/search-fusion.test.ts`
+
+### 5.1 RRF 算法测试
+
+**测试用例：**
+
+- [ ] `rrfScore` 计算正确（rank=1, k=60 → 1/61）
+- [ ] 单列表融合（结果顺序不变）
+- [ ] 双列表融合（同一项目分数累加）
+- [ ] 多列表融合（3+ 列表）
+- [ ] 相同项目的 sources 正确记录
+- [ ] merge 函数正确调用（字段补充）
+- [ ] 空列表处理
+- [ ] 自定义 k 参数
+
+### 5.2 SearchFusion 集成测试
+
+**测试用例：**
+
+- [ ] 仅使用 contentVector 搜索
+- [ ] 仅使用 summaryVector 搜索
+- [ ] 仅使用 BM25 搜索
+- [ ] 三路融合搜索
+- [ ] scope 过滤生效
+- [ ] topK 限制生效
+- [ ] keyword 参数优先用于 BM25
+- [ ] 查询向量只计算一次（mock 验证）
+- [ ] BM25 结果的 summary/locator 被向量结果补充
+- [ ] meta 信息正确（totalSearched, elapsedMs）
 
 ---
 
@@ -322,6 +396,9 @@ export type { FusionOptions, RRFParams } from './fusion';
 - [ ] BM25 结果融合
 - [ ] 正确排序
 - [ ] snake_case → camelCase 映射
+- [ ] 查询向量缓存（避免重复计算）
+- [ ] 字段合并（BM25 缺失字段补充）
+- [ ] 单元测试 > 80% 覆盖率
 
 ---
 
@@ -329,6 +406,8 @@ export type { FusionOptions, RRFParams } from './fusion';
 
 ```typescript
 import { SearchFusion, createSearchFusion } from '@agent-fs/search';
+import type { EmbeddingService } from '@agent-fs/llm';
+import type { VectorStore, BM25Index } from '@agent-fs/search';
 
 const fusion = createSearchFusion(vectorStore, bm25Index, embeddingService);
 
@@ -339,5 +418,17 @@ const response = await fusion.search({
 });
 
 console.log(response.results);
-console.log(response.meta.elapsedMs);
+// [
+//   {
+//     chunkId: 'chunk-001',
+//     score: 0.032,  // RRF 分数
+//     content: '...',
+//     summary: '...',
+//     source: { filePath: '...', locator: '...' }
+//   },
+//   ...
+// ]
+
+console.log(response.meta);
+// { totalSearched: 60, fusionMethod: 'rrf', elapsedMs: 123 }
 ```
