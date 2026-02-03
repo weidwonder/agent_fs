@@ -29,10 +29,10 @@ export interface LLMConfig {
   provider: 'openai-compatible';
 
   /** API 地址 */
-  baseUrl: string;
+  base_url: string;
 
   /** API 密钥 */
-  apiKey: string;
+  api_key: string;
 
   /** 模型名称 */
   model: string;
@@ -71,10 +71,10 @@ export interface APIEmbeddingConfig {
   provider: 'openai-compatible';
 
   /** API 地址 */
-  baseUrl: string;
+  base_url: string;
 
   /** API 密钥 */
-  apiKey: string;
+  api_key: string;
 
   /** 模型名称 */
   model: string;
@@ -96,9 +96,9 @@ export interface RerankConfig {
  */
 export interface IndexingConfig {
   /** Chunk 大小配置 */
-  chunkSize: {
-    minTokens: number;
-    maxTokens: number;
+  chunk_size: {
+    min_tokens: number;
+    max_tokens: number;
   };
 }
 
@@ -107,7 +107,7 @@ export interface IndexingConfig {
  */
 export interface SearchConfig {
   /** 默认返回数量 */
-  defaultTopK: number;
+  default_top_k: number;
 
   /** 融合配置 */
   fusion: {
