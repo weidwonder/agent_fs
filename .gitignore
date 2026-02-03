@@ -32,6 +32,7 @@ out/
 
 # Worktrees
 .worktree/
+.worktrees/
 
 # Test data (E2E testing)
 test-data/
