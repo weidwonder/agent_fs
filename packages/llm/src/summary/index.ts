@@ -1,2 +1,3 @@
-// Summary 模块导出（占位）
-export {};
+export { SummaryService, createSummaryService } from './service';
+export type { SummaryOptions, SummaryResult } from './service';
+export { SummaryCache } from './cache';
