@@ -29,10 +29,10 @@ export interface LLMConfig {
   provider: 'openai-compatible';
 
   /** API 地址 */
-  baseUrl: string;
+  base_url: string;
 
   /** API 密钥 */
-  apiKey: string;
+  api_key: string;
 
   /** 模型名称 */
   model: string;
@@ -71,10 +71,10 @@ export interface APIEmbeddingConfig {
   provider: 'openai-compatible';
 
   /** API 地址 */
-  baseUrl: string;
+  base_url: string;
 
   /** API 密钥 */
-  apiKey: string;
+  api_key: string;
 
   /** 模型名称 */
   model: string;
