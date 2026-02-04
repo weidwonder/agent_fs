@@ -12,6 +12,8 @@
 
 **被依赖:** 无（终端应用）
 
+**更新日期:** 2026-02-04（根据实际实现调整）
+
 ---
 
 ## 成功标准
@@ -23,6 +25,20 @@
 - [ ] 能编辑配置
 - [ ] 能清理无效索引
 - [ ] 打包成可执行文件
+
+---
+
+## IndexProgress 类型参考
+
+```typescript
+// 来自 @agent-fs/indexer
+interface IndexProgress {
+  phase: 'scan' | 'convert' | 'chunk' | 'summary' | 'embed' | 'write';
+  currentFile: string;
+  processed: number;
+  total: number;
+}
+```
 
 ---
 
@@ -104,10 +120,13 @@ export default defineConfig({
 **Files:**
 - Create: `packages/electron-app/src/main/index.ts`
 
+**说明：** 使用 `@agent-fs/indexer` 的 `createIndexer` 和 `IndexProgress` 类型。
+
 ```typescript
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import { join } from 'node:path';
 import { createIndexer } from '@agent-fs/indexer';
+import type { IndexProgress } from '@agent-fs/indexer';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -156,8 +175,11 @@ ipcMain.handle('select-directory', async () => {
 });
 
 ipcMain.handle('start-indexing', async (_event, dirPath: string) => {
+  // IndexerOptions 接口:
+  // - configPath?: string
+  // - onProgress?: (progress: IndexProgress) => void
   const indexer = createIndexer({
-    onProgress: (progress) => {
+    onProgress: (progress: IndexProgress) => {
       mainWindow?.webContents.send('indexing-progress', progress);
     },
   });
@@ -168,6 +190,7 @@ ipcMain.handle('start-indexing', async (_event, dirPath: string) => {
     await indexer.dispose();
     return { success: true, metadata };
   } catch (error) {
+    await indexer.dispose();
     return { success: false, error: (error as Error).message };
   }
 });
@@ -251,21 +274,51 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 ```tsx
 import React, { useState, useEffect } from 'react';
 
+// IndexProgress 类型（与 @agent-fs/indexer 一致）
+interface IndexProgress {
+  phase: 'scan' | 'convert' | 'chunk' | 'summary' | 'embed' | 'write';
+  currentFile: string;
+  processed: number;
+  total: number;
+}
+
+// RegisteredDirectory 类型（与 @agent-fs/core 一致）
+interface RegisteredDirectory {
+  path: string;
+  alias: string;
+  dirId: string;
+  summary: string;
+  lastUpdated: string;
+  fileCount: number;
+  chunkCount: number;
+  valid: boolean;
+}
+
 declare global {
   interface Window {
     electronAPI: {
-      selectDirectory: () => Promise<string>;
+      selectDirectory: () => Promise<string | undefined>;
       startIndexing: (path: string) => Promise<{ success: boolean; metadata?: any; error?: string }>;
-      getRegistry: () => Promise<{ indexedDirectories: any[] }>;
-      onIndexingProgress: (callback: (progress: any) => void) => void;
+      getRegistry: () => Promise<{ indexedDirectories: RegisteredDirectory[] }>;
+      onIndexingProgress: (callback: (progress: IndexProgress) => void) => void;
     };
   }
 }
 
+// Phase 显示名称映射
+const PHASE_NAMES: Record<IndexProgress['phase'], string> = {
+  scan: '扫描文件',
+  convert: '转换文档',
+  chunk: '切分内容',
+  summary: '生成摘要',
+  embed: '计算向量',
+  write: '写入索引',
+};
+
 export default function App() {
-  const [directories, setDirectories] = useState<any[]>([]);
+  const [directories, setDirectories] = useState<RegisteredDirectory[]>([]);
   const [indexing, setIndexing] = useState(false);
-  const [progress, setProgress] = useState<any>(null);
+  const [progress, setProgress] = useState<IndexProgress | null>(null);
 
   useEffect(() => {
     loadRegistry();
@@ -274,7 +327,7 @@ export default function App() {
 
   const loadRegistry = async () => {
     const registry = await window.electronAPI.getRegistry();
-    setDirectories(registry.indexedDirectories || []);
+    setDirectories(registry.indexedDirectories?.filter(d => d.valid) || []);
   };
 
   const handleSelectDirectory = async () => {
@@ -312,12 +365,12 @@ export default function App() {
           {progress && (
             <div className="mt-4 p-4 bg-white rounded shadow-sm">
               <p className="text-sm text-stone-600">
-                {progress.phase}: {progress.currentFile}
+                {PHASE_NAMES[progress.phase]}: {progress.currentFile}
               </p>
               <div className="mt-2 h-2 bg-stone-200 rounded">
                 <div
                   className="h-full bg-stone-600 rounded transition-all"
-                  style={{ width: `${(progress.processed / progress.total) * 100}%` }}
+                  style={{ width: `${progress.total > 0 ? (progress.processed / progress.total) * 100 : 0}%` }}
                 />
               </div>
               <p className="mt-1 text-xs text-stone-500">
@@ -333,15 +386,15 @@ export default function App() {
             <p className="text-stone-400">暂无索引</p>
           ) : (
             <ul className="space-y-2">
-              {directories.map((dir, i) => (
-                <li key={i} className="p-4 bg-white rounded shadow-sm">
+              {directories.map((dir) => (
+                <li key={dir.dirId} className="p-4 bg-white rounded shadow-sm">
                   <p className="font-medium text-stone-800">{dir.alias || dir.path}</p>
                   <p className="text-sm text-stone-500 truncate">{dir.path}</p>
                   <p className="text-sm text-stone-400 mt-1">
                     {dir.fileCount} 文件 · {dir.chunkCount} chunks
                   </p>
                   {dir.summary && (
-                    <p className="text-sm text-stone-600 mt-2">{dir.summary}</p>
+                    <p className="text-sm text-stone-600 mt-2 line-clamp-2">{dir.summary}</p>
                   )}
                 </li>
               ))}
@@ -446,3 +499,30 @@ pnpm dev
 pnpm build
 pnpm package
 ```
+
+---
+
+## 注意事项
+
+1. **类型对应关系**：
+   - `IndexProgress` 来自 `@agent-fs/indexer`，包含 phase、currentFile、processed、total 四个字段
+   - `RegisteredDirectory` 来自 `@agent-fs/core`，包含 path、alias、dirId、summary 等字段
+
+2. **Indexer 使用**：
+   ```typescript
+   // 正确的调用顺序
+   const indexer = createIndexer({ onProgress: callback });
+   await indexer.init();           // 初始化插件
+   await indexer.indexDirectory(path);
+   await indexer.dispose();        // 清理资源（无论成功失败都要调用）
+   ```
+
+3. **进度阶段说明**：
+   - `scan`: 扫描目录中的文件
+   - `convert`: 调用插件转换文档为 Markdown
+   - `chunk`: 将 Markdown 切分为语义 chunks
+   - `summary`: 调用 LLM 生成 chunk/文档摘要
+   - `embed`: 计算 embedding 向量
+   - `write`: 写入向量存储和 BM25 索引
+
+4. **错误处理**：索引失败时确保调用 `dispose()` 释放资源，避免内存泄漏。

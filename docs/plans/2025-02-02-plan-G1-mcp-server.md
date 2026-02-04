@@ -12,6 +12,8 @@
 
 **被依赖:** 无（终端应用）
 
+**更新日期:** 2026-02-04（根据实际实现调整）
+
 ---
 
 ## 成功标准
@@ -47,6 +49,10 @@ Run: `mkdir -p packages/mcp-server/src/tools`
   "bin": {
     "agent-fs-mcp": "./dist/index.js"
   },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc -w"
+  },
   "dependencies": {
     "@agent-fs/core": "workspace:*",
     "@agent-fs/search": "workspace:*",
@@ -57,6 +63,19 @@ Run: `mkdir -p packages/mcp-server/src/tools`
   "devDependencies": {
     "typescript": "^5.3.0"
   }
+}
+```
+
+**Step 3: 创建 tsconfig.json**
+
+```json
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "include": ["src/**/*"]
 }
 ```
 
@@ -74,10 +93,10 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { listIndexes } from './tools/list-indexes';
-import { dirTree } from './tools/dir-tree';
-import { search } from './tools/search';
-import { getChunk } from './tools/get-chunk';
+import { listIndexes } from './tools/list-indexes.js';
+import { dirTree } from './tools/dir-tree.js';
+import { search, initSearchService, disposeSearchService } from './tools/search.js';
+import { getChunk } from './tools/get-chunk.js';
 
 export async function createServer() {
   const server = new Server(
@@ -184,8 +203,18 @@ export async function createServer() {
 }
 
 export async function runServer() {
+  // 初始化搜索服务（预加载，避免首次查询延迟）
+  await initSearchService();
+
   const server = await createServer();
   const transport = new StdioServerTransport();
+
+  // 优雅退出
+  process.on('SIGINT', async () => {
+    await disposeSearchService();
+    process.exit(0);
+  });
+
   await server.connect(transport);
   console.error('Agent FS MCP Server running on stdio');
 }
@@ -267,6 +296,7 @@ function buildTree(metadata: IndexMetadata, depth: number) {
     files: metadata.files.map((f) => ({
       path: f.name,
       summary: f.summary,
+      chunk_count: f.chunkCount,
     })),
     subdirectories: depth > 0
       ? metadata.subdirectories.map((s) => ({
@@ -282,17 +312,22 @@ function buildTree(metadata: IndexMetadata, depth: number) {
 
 ---
 
-## Task 5: 实现 search 工具
+## Task 5: 实现 search 工具（服务单例模式）
 
 **Files:**
 - Create: `packages/mcp-server/src/tools/search.ts`
 
+**说明：** 使用服务单例模式，避免每次请求重复初始化 embedding 服务和向量存储。
+
 ```typescript
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { existsSync } from 'node:fs';
 import { loadConfig } from '@agent-fs/core';
+import type { EmbeddingService } from '@agent-fs/llm';
 import { createEmbeddingService } from '@agent-fs/llm';
-import { createVectorStore, BM25Index, loadIndex, createSearchFusion } from '@agent-fs/search';
+import type { VectorStore, BM25Index, SearchFusion } from '@agent-fs/search';
+import { createVectorStore, loadIndex, indexExists, createSearchFusion } from '@agent-fs/search';
 
 interface SearchInput {
   query: string;
@@ -301,48 +336,112 @@ interface SearchInput {
   top_k?: number;
 }
 
-let searchService: any = null;
+// 服务单例
+let embeddingService: EmbeddingService | null = null;
+let vectorStore: VectorStore | null = null;
+let bm25Index: BM25Index | null = null;
+let searchFusion: SearchFusion | null = null;
 
-async function getSearchService() {
-  if (searchService) return searchService;
+/**
+ * 初始化搜索服务（启动时调用）
+ */
+export async function initSearchService(): Promise<void> {
+  if (searchFusion) return; // 已初始化
 
   const config = loadConfig();
   const storagePath = join(homedir(), '.agent_fs', 'storage');
 
-  const embeddingService = createEmbeddingService(config.embedding);
+  // 检查存储目录是否存在
+  if (!existsSync(join(storagePath, 'vectors'))) {
+    console.error('Warning: Vector storage not found. Search will not work until indexing is done.');
+    return;
+  }
+
+  // 初始化 Embedding 服务
+  embeddingService = createEmbeddingService(config.embedding);
   await embeddingService.init();
 
-  const vectorStore = createVectorStore({
+  // 初始化 VectorStore
+  vectorStore = createVectorStore({
     storagePath: join(storagePath, 'vectors'),
     dimension: embeddingService.getDimension(),
   });
   await vectorStore.init();
 
-  const bm25Index = loadIndex(join(storagePath, 'bm25', 'index.json'));
+  // 加载 BM25 索引
+  const bm25Path = join(storagePath, 'bm25', 'index.json');
+  if (indexExists(bm25Path)) {
+    bm25Index = loadIndex(bm25Path);
+  } else {
+    // 创建空索引
+    const { BM25Index: BM25IndexClass } = await import('@agent-fs/search');
+    bm25Index = new BM25IndexClass();
+  }
 
-  searchService = createSearchFusion(vectorStore, bm25Index, embeddingService);
-  return searchService;
+  // 创建搜索融合服务
+  searchFusion = createSearchFusion(vectorStore, bm25Index, embeddingService);
 }
 
-export async function search(input: SearchInput) {
-  const fusion = await getSearchService();
+/**
+ * 释放搜索服务资源（退出时调用）
+ */
+export async function disposeSearchService(): Promise<void> {
+  if (vectorStore) {
+    await vectorStore.close();
+    vectorStore = null;
+  }
+  if (embeddingService) {
+    await embeddingService.dispose();
+    embeddingService = null;
+  }
+  bm25Index = null;
+  searchFusion = null;
+}
 
-  const response = await fusion.search({
+/**
+ * 获取 VectorStore 实例（供 get_chunk 使用）
+ */
+export function getVectorStore(): VectorStore {
+  if (!vectorStore) {
+    throw new Error('Search service not initialized. No indexes available.');
+  }
+  return vectorStore;
+}
+
+/**
+ * 搜索工具实现
+ */
+export async function search(input: SearchInput) {
+  if (!searchFusion) {
+    throw new Error('Search service not initialized. Please index some directories first.');
+  }
+
+  // 调用 SearchFusion.search
+  // 接口: search(options: SearchOptions, fusionOptions?: FusionOptions)
+  const response = await searchFusion.search({
     query: input.query,
     keyword: input.keyword,
     scope: input.scope,
-    topK: input.top_k,
+    topK: input.top_k ?? 10,
   });
 
+  // 转换返回格式（camelCase → snake_case for MCP）
   return {
-    results: response.results.map((r: any) => ({
+    results: response.results.map((r) => ({
       chunk_id: r.chunkId,
       score: r.score,
       content: r.content,
       summary: r.summary,
-      source: r.source,
+      source: {
+        file_path: r.source.filePath,
+        locator: r.source.locator,
+      },
     })),
-    meta: response.meta,
+    meta: {
+      total_searched: response.meta.totalSearched,
+      fusion_method: response.meta.fusionMethod,
+      elapsed_ms: response.meta.elapsedMs,
+    },
   };
 }
 ```
@@ -354,35 +453,237 @@ export async function search(input: SearchInput) {
 **Files:**
 - Create: `packages/mcp-server/src/tools/get-chunk.ts`
 
+**说明：** 完整实现 chunk 详情获取，包括邻居 chunk 功能。
+
 ```typescript
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+import type { Registry, IndexMetadata } from '@agent-fs/core';
+import { getVectorStore } from './search.js';
+
 interface GetChunkInput {
   chunk_id: string;
   include_neighbors?: boolean;
   neighbor_count?: number;
 }
 
-export async function getChunk(input: GetChunkInput) {
-  // TODO: 实现从存储中获取 chunk 详情
-  // 需要解析 chunk_id 获取 file_id，然后读取对应的 chunks.json
+interface ChunkInfo {
+  id: string;
+  content: string;
+  summary: string;
+  token_count: number;
+  source: {
+    file_path: string;
+    locator: string;
+  };
+}
 
-  return {
+/**
+ * 从 chunk_id 解析 file_id
+ * chunk_id 格式: {file_id}:{chunk_index}
+ */
+function parseChunkId(chunkId: string): { fileId: string; chunkIndex: number } {
+  const parts = chunkId.split(':');
+  if (parts.length < 2) {
+    throw new Error(`Invalid chunk_id format: ${chunkId}`);
+  }
+  const chunkIndex = parseInt(parts[parts.length - 1], 10);
+  const fileId = parts.slice(0, -1).join(':');
+  return { fileId, chunkIndex };
+}
+
+/**
+ * 查找文件所在目录
+ */
+function findFileDirectory(fileId: string): { dirPath: string; fileName: string } | null {
+  const registryPath = join(homedir(), '.agent_fs', 'registry.json');
+  if (!existsSync(registryPath)) return null;
+
+  const registry: Registry = JSON.parse(readFileSync(registryPath, 'utf-8'));
+
+  for (const dir of registry.indexedDirectories) {
+    if (!dir.valid) continue;
+
+    const indexPath = join(dir.path, '.fs_index', 'index.json');
+    if (!existsSync(indexPath)) continue;
+
+    const metadata: IndexMetadata = JSON.parse(readFileSync(indexPath, 'utf-8'));
+    const file = metadata.files.find((f) => f.fileId === fileId);
+    if (file) {
+      return { dirPath: dir.path, fileName: file.name };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * 获取 chunk 详情
+ */
+export async function getChunk(input: GetChunkInput) {
+  const { chunk_id, include_neighbors = false, neighbor_count = 2 } = input;
+
+  // 方法1：从 VectorStore 获取（如果服务已初始化）
+  try {
+    const vectorStore = getVectorStore();
+    const docs = await vectorStore.getByChunkIds([chunk_id]);
+
+    if (docs.length > 0) {
+      const doc = docs[0];
+      const result: { chunk: ChunkInfo; neighbors?: { before: ChunkInfo[]; after: ChunkInfo[] } } = {
+        chunk: {
+          id: doc.chunk_id,
+          content: doc.content,
+          summary: doc.summary,
+          token_count: Math.ceil(doc.content.length / 4), // 粗略估算
+          source: {
+            file_path: doc.file_path,
+            locator: doc.locator,
+          },
+        },
+      };
+
+      // 获取邻居 chunks
+      if (include_neighbors) {
+        const { fileId, chunkIndex } = parseChunkId(chunk_id);
+        const neighborIds: string[] = [];
+
+        // 前面的 chunks
+        for (let i = Math.max(0, chunkIndex - neighbor_count); i < chunkIndex; i++) {
+          neighborIds.push(`${fileId}:${String(i).padStart(4, '0')}`);
+        }
+
+        // 后面的 chunks（尝试获取，可能不存在）
+        for (let i = chunkIndex + 1; i <= chunkIndex + neighbor_count; i++) {
+          neighborIds.push(`${fileId}:${String(i).padStart(4, '0')}`);
+        }
+
+        const neighborDocs = await vectorStore.getByChunkIds(neighborIds);
+        const neighborMap = new Map(neighborDocs.map((d) => [d.chunk_id, d]));
+
+        const before: ChunkInfo[] = [];
+        const after: ChunkInfo[] = [];
+
+        for (let i = Math.max(0, chunkIndex - neighbor_count); i < chunkIndex; i++) {
+          const id = `${fileId}:${String(i).padStart(4, '0')}`;
+          const neighbor = neighborMap.get(id);
+          if (neighbor) {
+            before.push({
+              id: neighbor.chunk_id,
+              content: neighbor.content,
+              summary: neighbor.summary,
+              token_count: Math.ceil(neighbor.content.length / 4),
+              source: {
+                file_path: neighbor.file_path,
+                locator: neighbor.locator,
+              },
+            });
+          }
+        }
+
+        for (let i = chunkIndex + 1; i <= chunkIndex + neighbor_count; i++) {
+          const id = `${fileId}:${String(i).padStart(4, '0')}`;
+          const neighbor = neighborMap.get(id);
+          if (neighbor) {
+            after.push({
+              id: neighbor.chunk_id,
+              content: neighbor.content,
+              summary: neighbor.summary,
+              token_count: Math.ceil(neighbor.content.length / 4),
+              source: {
+                file_path: neighbor.file_path,
+                locator: neighbor.locator,
+              },
+            });
+          }
+        }
+
+        result.neighbors = { before, after };
+      }
+
+      return result;
+    }
+  } catch {
+    // VectorStore 未初始化，尝试从文件系统读取
+  }
+
+  // 方法2：从 .fs_index/documents 读取
+  const { fileId, chunkIndex } = parseChunkId(chunk_id);
+  const fileInfo = findFileDirectory(fileId);
+
+  if (!fileInfo) {
+    throw new Error(`Chunk not found: ${chunk_id}`);
+  }
+
+  const chunksPath = join(fileInfo.dirPath, '.fs_index', 'documents', fileInfo.fileName, 'chunks.json');
+  const summaryPath = join(fileInfo.dirPath, '.fs_index', 'documents', fileInfo.fileName, 'summary.json');
+
+  if (!existsSync(chunksPath)) {
+    throw new Error(`Chunks file not found for: ${fileInfo.fileName}`);
+  }
+
+  const chunksData = JSON.parse(readFileSync(chunksPath, 'utf-8'));
+  const summaryData = existsSync(summaryPath) ? JSON.parse(readFileSync(summaryPath, 'utf-8')) : null;
+
+  const chunk = chunksData.chunks[chunkIndex];
+  if (!chunk) {
+    throw new Error(`Chunk index out of range: ${chunkIndex}`);
+  }
+
+  const result: { chunk: ChunkInfo; neighbors?: { before: ChunkInfo[]; after: ChunkInfo[] } } = {
     chunk: {
-      id: input.chunk_id,
-      content: 'TODO: 从存储获取',
-      summary: 'TODO',
-      token_count: 0,
+      id: chunk_id,
+      content: chunk.content,
+      summary: summaryData?.chunks?.[chunkIndex] || '',
+      token_count: chunk.tokenCount || Math.ceil(chunk.content.length / 4),
       source: {
-        file_path: '',
-        locator: '',
+        file_path: join(fileInfo.dirPath, fileInfo.fileName),
+        locator: chunk.locator,
       },
     },
-    neighbors: input.include_neighbors
-      ? {
-          before: [],
-          after: [],
-        }
-      : undefined,
   };
+
+  if (include_neighbors) {
+    const before: ChunkInfo[] = [];
+    const after: ChunkInfo[] = [];
+
+    for (let i = Math.max(0, chunkIndex - neighbor_count); i < chunkIndex; i++) {
+      const c = chunksData.chunks[i];
+      if (c) {
+        before.push({
+          id: `${fileId}:${String(i).padStart(4, '0')}`,
+          content: c.content,
+          summary: summaryData?.chunks?.[i] || '',
+          token_count: c.tokenCount || Math.ceil(c.content.length / 4),
+          source: {
+            file_path: join(fileInfo.dirPath, fileInfo.fileName),
+            locator: c.locator,
+          },
+        });
+      }
+    }
+
+    for (let i = chunkIndex + 1; i <= chunkIndex + neighbor_count && i < chunksData.chunks.length; i++) {
+      const c = chunksData.chunks[i];
+      if (c) {
+        after.push({
+          id: `${fileId}:${String(i).padStart(4, '0')}`,
+          content: c.content,
+          summary: summaryData?.chunks?.[i] || '',
+          token_count: c.tokenCount || Math.ceil(c.content.length / 4),
+          source: {
+            file_path: join(fileInfo.dirPath, fileInfo.fileName),
+            locator: c.locator,
+          },
+        });
+      }
+    }
+
+    result.neighbors = { before, after };
+  }
+
+  return result;
 }
 ```
 
@@ -395,7 +696,7 @@ export async function getChunk(input: GetChunkInput) {
 
 ```typescript
 #!/usr/bin/env node
-import { runServer } from './server';
+import { runServer } from './server.js';
 
 runServer().catch((error) => {
   console.error('Failed to start MCP server:', error);
@@ -410,9 +711,10 @@ runServer().catch((error) => {
 - [ ] MCP Server 框架搭建
 - [ ] list_indexes 实现
 - [ ] dir_tree 实现
-- [ ] search 实现
-- [ ] get_chunk 实现
+- [ ] search 实现（含服务单例管理）
+- [ ] get_chunk 实现（含邻居 chunk）
 - [ ] stdio 通信正常
+- [ ] 优雅退出（资源清理）
 
 ---
 
@@ -432,3 +734,20 @@ npx @agent-fs/mcp-server
   }
 }
 ```
+
+---
+
+## 注意事项
+
+1. **服务单例模式**：MCP Server 是长运行进程，EmbeddingService 和 VectorStore 需要初始化后复用，避免每次请求重复加载模型。
+
+2. **字段命名约定**：
+   - 内部代码使用 camelCase（TypeScript 惯例）
+   - MCP 工具输出使用 snake_case（便于 AI Agent 解析）
+
+3. **错误处理**：搜索服务未初始化时（无索引），应返回友好错误信息而非崩溃。
+
+4. **依赖的实际接口**：
+   - `SearchFusion.search(options: SearchOptions, fusionOptions?: FusionOptions)`
+   - `VectorStore.getByChunkIds(chunkIds: string[]): Promise<VectorDocument[]>`
+   - `EmbeddingService.init()` / `dispose()`
