@@ -10,6 +10,7 @@
     { "path": "../search" },
     { "path": "../llm" },
     { "path": "../plugins/plugin-markdown" },
-    { "path": "../plugins/plugin-pdf" }
+    { "path": "../plugins/plugin-pdf" },
+    { "path": "../plugins/plugin-docx" }
   ]
 }
