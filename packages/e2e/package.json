@@ -1,0 +1,21 @@
+{
+  "name": "@agent-fs/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:f-post": "vitest run -t 'F-Post'",
+    "test:g-post": "vitest run -t 'G-Post'"
+  },
+  "devDependencies": {
+    "@agent-fs/core": "workspace:*",
+    "@agent-fs/search": "workspace:*",
+    "@agent-fs/llm": "workspace:*",
+    "@agent-fs/plugin-markdown": "workspace:*",
+    "@agent-fs/plugin-pdf": "workspace:*",
+    "typescript": "^5.3.0",
+    "vitest": "^4.0.18"
+  }
+}
