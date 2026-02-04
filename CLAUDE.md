@@ -12,7 +12,7 @@
 └─> docs/requirements.md
 
 理解架构设计
-└─> docs/plans/2025-02-02-agent-fs-design.md（设计文档）
+└─> docs/architecture.md（系统架构）
 
 开发规范
 └─> docs/guides/code-standards.md
@@ -20,8 +20,8 @@
 插件开发
 └─> docs/guides/plugin-development.md
 
-开始开发
-└─> docs/plans/2026-02-04-plugin-docx-implementation.md（DOCX 插件实施计划）
+设计历史
+└─> docs/plans/2025-02-02-agent-fs-design.md（原始设计文档）
 ```
 
 ## 项目概述
@@ -74,6 +74,6 @@ agent_fs/
 ## 更多信息
 
 - [需求文档](docs/requirements.md) - 完整功能需求
-- [设计文档](docs/plans/2025-02-02-agent-fs-design.md) - 架构与接口设计
+- [架构文档](docs/architecture.md) - 系统架构与模块说明
 - [代码规范](docs/guides/code-standards.md) - 编码与验证要求
 - [插件开发指南](docs/guides/plugin-development.md) - 创建自定义文档处理插件
