@@ -61,8 +61,8 @@ Run: `mkdir -p packages/e2e/src/utils`
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:f-post": "vitest run --grep 'F-Post'",
-    "test:g-post": "vitest run --grep 'G-Post'"
+    "test:f-post": "vitest run -t 'F-Post'",
+    "test:g-post": "vitest run -t 'G-Post'"
   },
   "devDependencies": {
     "@agent-fs/core": "workspace:*",
