@@ -21,7 +21,7 @@
 └─> docs/guides/plugin-development.md
 
 开始开发
-└─> 待创建实施计划
+└─> docs/plans/2026-02-04-plugin-docx-implementation.md（DOCX 插件实施计划）
 ```
 
 ## 项目概述
