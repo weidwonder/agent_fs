@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Runtime.Versioning;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -25,32 +26,47 @@ public class Converter
 
     private ConvertData ConvertDocx(string filePath)
     {
-        using var stream = File.OpenRead(filePath);
-        var document = new XWPFDocument(stream);
-        var builder = new MarkdownBuilder();
+        string? normalizedPath = null;
 
-        var paraIndex = 0;
-        var tableIndex = 0;
-
-        foreach (var element in document.BodyElements)
+        try
         {
-            if (element is XWPFParagraph paragraph)
+            normalizedPath = NormalizeDocxForNpoiIfNeeded(filePath);
+            var inputPath = normalizedPath ?? filePath;
+
+            using var stream = File.OpenRead(inputPath);
+            var document = new XWPFDocument(stream);
+            var builder = new MarkdownBuilder();
+
+            var paraIndex = 0;
+            var tableIndex = 0;
+
+            foreach (var element in document.BodyElements)
             {
-                var markdown = RenderParagraph(paragraph, paraIndex, out var locator);
-                builder.AppendBlock(markdown, locator);
-                paraIndex += 1;
-                continue;
+                if (element is XWPFParagraph paragraph)
+                {
+                    var markdown = RenderParagraph(paragraph, paraIndex, out var locator);
+                    builder.AppendBlock(markdown, locator);
+                    paraIndex += 1;
+                    continue;
+                }
+
+                if (element is XWPFTable table)
+                {
+                    var markdown = RenderTable(table);
+                    builder.AppendBlock(markdown, $"table:{tableIndex}");
+                    tableIndex += 1;
+                }
             }
 
-            if (element is XWPFTable table)
+            return builder.Build();
+        }
+        finally
+        {
+            if (normalizedPath != null && File.Exists(normalizedPath))
             {
-                var markdown = RenderTable(table);
-                builder.AppendBlock(markdown, $"table:{tableIndex}");
-                tableIndex += 1;
+                File.Delete(normalizedPath);
             }
         }
-
-        return builder.Build();
     }
 
     private string RenderParagraph(XWPFParagraph paragraph, int paraIndex, out string locator)
@@ -255,5 +271,79 @@ public class Converter
         }
 
         return outputPath;
+    }
+
+    private string? NormalizeDocxForNpoiIfNeeded(string filePath)
+    {
+        using var archive = ZipFile.OpenRead(filePath);
+        var normalizedEntries = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var entry in archive.Entries)
+        {
+            if (!entry.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            string xmlContent;
+            using (var reader = new StreamReader(entry.Open(), Encoding.UTF8, true))
+            {
+                xmlContent = reader.ReadToEnd();
+            }
+
+            if (!NeedsJcNormalization(xmlContent))
+            {
+                continue;
+            }
+
+            normalizedEntries[entry.FullName] = NormalizeJcValues(xmlContent);
+        }
+
+        if (normalizedEntries.Count == 0) return null;
+
+        var normalizedPath = Path.Combine(Path.GetTempPath(), $"agent-fs-docx-normalized-{Guid.NewGuid()}.docx");
+
+        using var output = ZipFile.Open(normalizedPath, ZipArchiveMode.Create);
+        foreach (var entry in archive.Entries)
+        {
+            if (string.IsNullOrEmpty(entry.Name) && entry.FullName.EndsWith('/'))
+            {
+                continue;
+            }
+
+            var outputEntry = output.CreateEntry(entry.FullName, CompressionLevel.Optimal);
+            using var outputStream = outputEntry.Open();
+
+            if (normalizedEntries.TryGetValue(entry.FullName, out var normalizedXml))
+            {
+                using var writer = new StreamWriter(outputStream, new UTF8Encoding(false));
+                writer.Write(normalizedXml);
+            }
+            else
+            {
+                using var inputStream = entry.Open();
+                inputStream.CopyTo(outputStream);
+            }
+        }
+
+        return normalizedPath;
+    }
+
+    private static bool NeedsJcNormalization(string xmlContent)
+    {
+        return xmlContent.Contains("w:val=\"start\"")
+            || xmlContent.Contains("w:val=\"end\"")
+            || xmlContent.Contains("w:val='start'")
+            || xmlContent.Contains("w:val='end'");
+    }
+
+    private static string NormalizeJcValues(string xmlContent)
+    {
+        const string pattern = "(<w:jc[^>]*\\bw:val=)(['\"])(start|end)\\2";
+        return Regex.Replace(xmlContent, pattern, match =>
+        {
+            var value = match.Groups[3].Value == "start" ? "left" : "right";
+            return $"{match.Groups[1].Value}{match.Groups[2].Value}{value}{match.Groups[2].Value}";
+        });
     }
 }
