@@ -1,3 +1,4 @@
+export { DocxPlugin, createDocxPlugin, type DocxPluginOptions } from './plugin';
 export type {
   DocxRequest,
   DocxResponse,
