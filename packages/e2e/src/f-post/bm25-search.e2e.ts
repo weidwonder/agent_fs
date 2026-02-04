@@ -41,14 +41,17 @@ describe('F-Post: BM25 Search Integration', () => {
 
     index.addDocuments(docs);
 
-    const results1 = index.search('CONFORMED', { topK: 5 });
+    // 英文搜索
+    const results1 = index.search('INSPECTION REPORT', { topK: 5 });
     expect(results1.length).toBeGreaterThan(0);
     expect(results1[0].score).toBeGreaterThan(0);
 
-    const results2 = index.search('SMART SPEAKER', { topK: 5 });
+    // 关键字搜索
+    const results2 = index.search('CONFORMED', { topK: 5 });
     expect(results2.length).toBeGreaterThan(0);
 
-    const results3 = index.search('Report', { topK: 5 });
+    // 产品名称搜索
+    const results3 = index.search('SMART SPEAKER', { topK: 5 });
     expect(results3.length).toBeGreaterThan(0);
   });
 
@@ -78,19 +81,13 @@ describe('F-Post: BM25 Search Integration', () => {
   });
 
   it('should filter by filePathPrefix', async () => {
-    const filePath = copyTestFile(TEST_FILES.markdown, tempDir);
-
-    const result = await plugin.toMarkdown(filePath);
-    const chunker = new MarkdownChunker({ minTokens: 200, maxTokens: 800 });
-    const chunks = chunker.chunk(result.markdown);
-
     const docs: BM25Document[] = [
       {
         chunk_id: 'path-test-1',
         file_id: 'file-001',
         dir_id: 'dir-001',
         file_path: '/project/docs/report.md',
-        content: chunks[0]?.content || 'report content alpha',
+        content: 'INSPECTION REPORT 内容 A',
         tokens: [],
         indexed_at: new Date().toISOString(),
         deleted_at: '',
@@ -100,7 +97,7 @@ describe('F-Post: BM25 Search Integration', () => {
         file_id: 'file-002',
         dir_id: 'dir-001',
         file_path: '/project/other/data.md',
-        content: chunks[1]?.content || 'report content beta',
+        content: 'INSPECTION REPORT 内容 B',
         tokens: [],
         indexed_at: new Date().toISOString(),
         deleted_at: '',
@@ -109,7 +106,7 @@ describe('F-Post: BM25 Search Integration', () => {
 
     index.addDocuments(docs);
 
-    const filtered = index.search('report', {
+    const filtered = index.search('INSPECTION', {
       topK: 10,
       filePathPrefix: '/project/docs',
     });

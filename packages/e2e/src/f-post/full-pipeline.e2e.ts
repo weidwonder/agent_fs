@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { MarkdownPlugin } from '@agent-fs/plugin-markdown';
 import { MarkdownChunker } from '@agent-fs/core';
 import { createEmbeddingService, createSummaryService } from '@agent-fs/llm';
-import { VectorStore, BM25Index, fusionRRF } from '../../../search/src';
+import { VectorStore, BM25Index, fusionRRF } from '@agent-fs/search';
 import type { VectorDocument, BM25Document } from '@agent-fs/core';
 import { TEST_FILES, MOCK_CONFIG, checkLLMAvailable } from '../utils/test-config';
 import { createTempTestDir, cleanupTempDir, copyTestFile } from '../utils/test-helpers';
@@ -13,7 +13,7 @@ describe('F-Post: Full Indexing Pipeline', () => {
   beforeAll(async () => {
     llmAvailable = await checkLLMAvailable();
     if (!llmAvailable) {
-      console.warn('⚠️ LLM service not available. Skipping full pipeline tests.');
+      console.warn('⚠️ LLM 服务不可用，跳过完整流水线测试。');
     }
   });
 
@@ -33,7 +33,7 @@ describe('F-Post: Full Indexing Pipeline', () => {
 
     it('should complete full indexing pipeline for markdown', async () => {
       if (!llmAvailable) {
-        console.log('Skipping: LLM service not available');
+        console.log('跳过：LLM 服务不可用');
         return;
       }
 
@@ -58,8 +58,8 @@ describe('F-Post: Full Indexing Pipeline', () => {
         const conversionResult = await plugin.toMarkdown(filePath);
 
         const chunker = new MarkdownChunker({
-          minTokens: MOCK_CONFIG.indexing.chunkSize.minTokens,
-          maxTokens: MOCK_CONFIG.indexing.chunkSize.maxTokens,
+          minTokens: MOCK_CONFIG.indexing.chunk_size.min_tokens,
+          maxTokens: MOCK_CONFIG.indexing.chunk_size.max_tokens,
         });
         const chunks = chunker.chunk(conversionResult.markdown);
 
@@ -112,10 +112,10 @@ describe('F-Post: Full Indexing Pipeline', () => {
         await vectorStore.addDocuments(vectorDocs);
         bm25Index.addDocuments(bm25Docs);
 
-        const queryVector = await embeddingService.embed('Report CONFORMED');
+        const queryVector = await embeddingService.embed('INSPECTION REPORT RESULT');
 
         const vectorResults = await vectorStore.searchByContent(queryVector, { topK: 3 });
-        const bm25Results = bm25Index.search('CONFORMED', { topK: 3 });
+        const bm25Results = bm25Index.search('INSPECTION REPORT', { topK: 3 });
 
         expect(vectorResults.length).toBeGreaterThan(0);
         expect(bm25Results.length).toBeGreaterThan(0);
@@ -136,11 +136,11 @@ describe('F-Post: Full Indexing Pipeline', () => {
 
         expect(fused.length).toBeGreaterThan(0);
 
-        console.log('✅ Full pipeline completed successfully');
-        console.log(`   - Chunks processed: ${vectorDocs.length}`);
-        console.log(`   - Vector search results: ${vectorResults.length}`);
-        console.log(`   - BM25 search results: ${bm25Results.length}`);
-        console.log(`   - Fused results: ${fused.length}`);
+        console.log('✅ 完整流水线执行成功');
+        console.log(`   - 处理的块数：${vectorDocs.length}`);
+        console.log(`   - 向量检索结果数：${vectorResults.length}`);
+        console.log(`   - BM25 检索结果数：${bm25Results.length}`);
+        console.log(`   - 融合结果数：${fused.length}`);
       } finally {
         await vectorStore.close();
         await embeddingService.dispose();

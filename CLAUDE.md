@@ -14,6 +14,12 @@
 理解架构设计
 └─> docs/architecture.md（系统架构）
 
+本地 Embedding/Rerank 设计
+└─> docs/plans/2026-02-03-local-embedding-rerank-design.md
+
+本地 Embedding/Rerank 实施计划
+└─> docs/plans/2026-02-03-local-embedding-rerank.md
+
 开发规范
 └─> docs/guides/code-standards.md
 

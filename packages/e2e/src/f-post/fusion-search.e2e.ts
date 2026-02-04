@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { MarkdownPlugin } from '@agent-fs/plugin-markdown';
 import { MarkdownChunker } from '@agent-fs/core';
-import { VectorStore, BM25Index, fusionRRF } from '../../../search/src';
+import { VectorStore, BM25Index, fusionRRF } from '@agent-fs/search';
 import type { VectorDocument, BM25Document } from '@agent-fs/core';
 import { TEST_FILES } from '../utils/test-config';
 import { createTempTestDir, cleanupTempDir, copyTestFile } from '../utils/test-helpers';
@@ -86,9 +86,9 @@ describe('F-Post: Fusion Search Integration', () => {
     await vectorStore.addDocuments(vectorDocs);
     bm25Index.addDocuments(bm25Docs);
 
-    const queryVector = mockVector('Report CONFORMED');
+    const queryVector = mockVector('INSPECTION REPORT CONFORMED');
     const vectorResults = await vectorStore.searchByContent(queryVector, { topK: 5 });
-    const bm25Results = bm25Index.search('CONFORMED', { topK: 5 });
+    const bm25Results = bm25Index.search('INSPECTION REPORT', { topK: 5 });
 
     const fused = fusionRRF(
       [
@@ -114,9 +114,9 @@ describe('F-Post: Fusion Search Integration', () => {
 
     expect(fused.length).toBeGreaterThan(0);
 
-    for (const result of fused) {
-      expect(result.score).toBeGreaterThan(0);
-      expect(result.sources.length).toBeGreaterThanOrEqual(1);
+    for (const resultItem of fused) {
+      expect(resultItem.score).toBeGreaterThan(0);
+      expect(resultItem.sources.length).toBeGreaterThanOrEqual(1);
     }
 
     const multiSourceItems = fused.filter((r) => r.sources.length > 1);
@@ -147,7 +147,7 @@ describe('F-Post: Fusion Search Integration', () => {
 
     bm25Index.addDocuments(bm25Docs);
 
-    const bm25Results = bm25Index.search('CONFORMED', { topK: 5 });
+    const bm25Results = bm25Index.search('INSPECTION', { topK: 5 });
 
     const fused = fusionRRF(
       [

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { MarkdownPlugin } from '@agent-fs/plugin-markdown';
 import { MarkdownChunker } from '@agent-fs/core';
-import { VectorStore, BM25Index, createSearchFusion } from '../../../search/src';
+import { VectorStore, BM25Index, createSearchFusion } from '@agent-fs/search';
 import type { VectorDocument, BM25Document } from '@agent-fs/core';
 import type { EmbeddingService } from '@agent-fs/llm';
 import { TEST_FILES } from '../utils/test-config';
@@ -31,7 +31,7 @@ describe('F-Post: SearchFusion Complete Integration', () => {
     getDimension: () => DIMENSION,
     init: async () => {},
     dispose: async () => {},
-  } as EmbeddingService;
+  };
 
   beforeEach(async () => {
     tempDir = createTempTestDir();
@@ -98,7 +98,7 @@ describe('F-Post: SearchFusion Complete Integration', () => {
     const fusion = createSearchFusion(vectorStore, bm25Index, mockEmbeddingService);
 
     const response = await fusion.search({
-      query: 'Report CONFORMED',
+      query: 'INSPECTION REPORT CONFORMED',
       topK: 5,
     });
 
@@ -108,11 +108,11 @@ describe('F-Post: SearchFusion Complete Integration', () => {
     expect(response.meta.totalSearched).toBeGreaterThan(0);
     expect(response.meta.elapsedMs).toBeGreaterThanOrEqual(0);
 
-    for (const result of response.results) {
-      expect(result.chunkId).toBeDefined();
-      expect(result.score).toBeGreaterThan(0);
-      expect(result.content).toBeDefined();
-      expect(result.source.filePath).toBeDefined();
+    for (const resultItem of response.results) {
+      expect(resultItem.chunkId).toBeDefined();
+      expect(resultItem.score).toBeGreaterThan(0);
+      expect(resultItem.content).toBeDefined();
+      expect(resultItem.source.filePath).toBeDefined();
     }
   });
 
@@ -141,7 +141,7 @@ describe('F-Post: SearchFusion Complete Integration', () => {
     const response = await fusion.search(
       {
         query: 'semantic query for vectors',
-        keyword: 'CONFORMED',
+        keyword: 'INSPECTION REPORT',
         topK: 5,
       },
       {
@@ -193,14 +193,14 @@ describe('F-Post: SearchFusion Complete Integration', () => {
     const fusion = createSearchFusion(vectorStore, bm25Index, mockEmbeddingService);
 
     const response = await fusion.search(
-      { query: 'CONFORMED', topK: 3 },
+      { query: 'INSPECTION', topK: 3 },
       { useContentVector: false, useSummaryVector: false, useBM25: true }
     );
 
-    for (const result of response.results) {
-      expect(result.summary).toContain('完整摘要');
-      expect(result.source.locator).toBeDefined();
-      expect(result.source.locator.length).toBeGreaterThan(0);
+    for (const resultItem of response.results) {
+      expect(resultItem.summary).toContain('完整摘要');
+      expect(resultItem.source.locator).toBeDefined();
+      expect(resultItem.source.locator.length).toBeGreaterThan(0);
     }
   });
 });

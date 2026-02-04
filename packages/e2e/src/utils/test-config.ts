@@ -1,6 +1,5 @@
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig } from '@agent-fs/core';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
@@ -14,62 +13,91 @@ export const TEST_FILES = {
   pdf2: 'INDIR2512IN01019_D22,D23,F2,F3_origin.pdf',
 };
 
-const FALLBACK_CONFIG = {
+const LLM_BASE_URL =
+  process.env.AGENT_FS_LLM_BASE_URL ?? 'https://open.bigmodel.cn/api/coding/paas/v4';
+const EMBEDDING_BASE_URL =
+  process.env.AGENT_FS_EMBEDDING_BASE_URL ?? 'https://open.bigmodel.cn/api/paas/v4';
+const API_KEY = process.env.AGENT_FS_LLM_API_KEY ?? '';
+const EMBEDDING_API_KEY = process.env.AGENT_FS_EMBEDDING_API_KEY ?? API_KEY;
+const LLM_MODEL = process.env.AGENT_FS_LLM_MODEL ?? 'GLM-4.5-air';
+const EMBEDDING_MODEL = process.env.AGENT_FS_EMBEDDING_MODEL ?? 'embedding-3';
+
+export const MOCK_CONFIG = {
   embedding: {
     default: 'api' as const,
     api: {
-      base_url: 'http://localhost:11434/v1',
-      api_key: 'ollama',
-      model: 'nomic-embed-text',
+      provider: 'openai-compatible' as const,
+      base_url: EMBEDDING_BASE_URL,
+      api_key: EMBEDDING_API_KEY,
+      model: EMBEDDING_MODEL,
     },
   },
   llm: {
     provider: 'openai-compatible' as const,
-    base_url: 'http://localhost:11434/v1',
-    api_key: 'ollama',
-    model: 'qwen2.5:7b',
+    base_url: LLM_BASE_URL,
+    api_key: API_KEY,
+    model: LLM_MODEL,
   },
   indexing: {
-    chunkSize: {
-      minTokens: 200,
-      maxTokens: 800,
+    chunk_size: {
+      min_tokens: 200,
+      max_tokens: 800,
     },
   },
 };
 
-let resolvedConfig: ReturnType<typeof loadConfig> | null = null;
-try {
-  resolvedConfig = loadConfig();
-} catch {
-  resolvedConfig = null;
-}
-
-export const MOCK_CONFIG = {
-  embedding: resolvedConfig?.embedding ?? FALLBACK_CONFIG.embedding,
-  llm: resolvedConfig?.llm ?? FALLBACK_CONFIG.llm,
-  indexing: {
-    chunkSize: {
-      minTokens:
-        resolvedConfig?.indexing.chunk_size.min_tokens ??
-        FALLBACK_CONFIG.indexing.chunkSize.minTokens,
-      maxTokens:
-        resolvedConfig?.indexing.chunk_size.max_tokens ??
-        FALLBACK_CONFIG.indexing.chunkSize.maxTokens,
-    },
-  },
-};
-
-export async function checkLLMAvailable(): Promise<boolean> {
+async function checkEndpoint(url: string, init: RequestInit): Promise<boolean> {
   try {
-    const response = await fetch(`${MOCK_CONFIG.llm.base_url}/models`, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${MOCK_CONFIG.llm.api_key}`,
-      },
-      signal: AbortSignal.timeout(5000),
-    });
+    const response = await fetch(url, { ...init, signal: AbortSignal.timeout(8000) });
     return response.ok;
   } catch {
     return false;
   }
+}
+
+export async function checkLLMAvailable(): Promise<boolean> {
+  if (!API_KEY || !LLM_BASE_URL || !EMBEDDING_BASE_URL) {
+    return false;
+  }
+
+  const headers = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${API_KEY}`,
+  };
+
+  const modelsOk = await checkEndpoint(`${LLM_BASE_URL}/models`, {
+    method: 'GET',
+    headers,
+  });
+
+  const chatOk = modelsOk
+    ? true
+    : await checkEndpoint(`${LLM_BASE_URL}/chat/completions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: LLM_MODEL,
+          messages: [{ role: 'user', content: 'ping' }],
+          max_tokens: 1,
+          temperature: 0,
+        }),
+      });
+
+  if (!chatOk) {
+    return false;
+  }
+
+  const embeddingOk = await checkEndpoint(`${EMBEDDING_BASE_URL}/embeddings`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${EMBEDDING_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: EMBEDDING_MODEL,
+      input: 'ping',
+    }),
+  });
+
+  return embeddingOk;
 }
