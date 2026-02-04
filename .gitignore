@@ -36,3 +36,7 @@ out/
 
 # Test data (E2E testing)
 test-data/
+
+# .NET build outputs
+**/bin/
+**/obj/
