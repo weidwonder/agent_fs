@@ -7,6 +7,7 @@ import { createEmbeddingService, createSummaryService } from '@agent-fs/llm';
 import { createVectorStore, BM25Index, saveIndex as saveBM25 } from '@agent-fs/search';
 import { MarkdownPlugin } from '@agent-fs/plugin-markdown';
 import { PDFPlugin } from '@agent-fs/plugin-pdf';
+import { DocxPlugin } from '@agent-fs/plugin-docx';
 import { PluginManager } from './plugin-manager';
 import { IndexPipeline, type IndexProgress } from './pipeline';
 
@@ -28,6 +29,7 @@ export class Indexer {
     // 注册默认插件
     this.pluginManager.register(new MarkdownPlugin());
     this.pluginManager.register(new PDFPlugin());
+    this.pluginManager.register(new DocxPlugin());
   }
 
   async init(): Promise<void> {
