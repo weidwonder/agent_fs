@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { MarkdownPlugin } from '@agent-fs/plugin-markdown';
 import { MarkdownChunker } from '@agent-fs/core';
 import { createEmbeddingService, createSummaryService } from '@agent-fs/llm';
-import { VectorStore, BM25Index, fusionRRF } from '@agent-fs/search';
+import { VectorStore, BM25Index, fusionRRF } from '../../../search/src';
 import type { VectorDocument, BM25Document } from '@agent-fs/core';
 import { TEST_FILES, MOCK_CONFIG, checkLLMAvailable } from '../utils/test-config';
 import { createTempTestDir, cleanupTempDir, copyTestFile } from '../utils/test-helpers';

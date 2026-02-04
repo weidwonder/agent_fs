@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { MarkdownPlugin } from '@agent-fs/plugin-markdown';
 import { MarkdownChunker } from '@agent-fs/core';
-import { VectorStore, BM25Index, createSearchFusion } from '@agent-fs/search';
+import { VectorStore, BM25Index, createSearchFusion } from '../../../search/src';
 import type { VectorDocument, BM25Document } from '@agent-fs/core';
 import type { EmbeddingService } from '@agent-fs/llm';
 import { TEST_FILES } from '../utils/test-config';
