@@ -22,6 +22,7 @@
     "@agent-fs/llm": "workspace:*",
     "@agent-fs/plugin-markdown": "workspace:*",
     "@agent-fs/plugin-pdf": "workspace:*",
+    "@agent-fs/plugin-docx": "workspace:*",
     "uuid": "^9.0.0"
   },
   "devDependencies": {
