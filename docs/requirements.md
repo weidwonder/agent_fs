@@ -14,18 +14,21 @@
 | 需求 | 说明 |
 |------|------|
 | 支持格式 | PDF / DOCX / DOC / XLSX / XLS / Markdown |
-| 索引范围 | 当前目录文件（不递归子目录文件） |
-| 子目录处理 | 读取子目录的 `.fs_index/index.json` 获取 summary（如未索引则告警） |
-| 索引存储 | 在目标目录下创建 `.fs_index` 目录 |
+| 索引范围 | **Project 文件夹及其所有子文件夹（递归索引）** |
+| 层级结构 | Project 文件夹（顶级）包含多个子文件夹，每个文件夹独立的 `.fs_index` |
+| 索引存储 | 每个文件夹下创建 `.fs_index` 目录，存储该文件夹的索引 |
+| 全局注册 | `~/.agent_fs/registry.json` 只记录 Project 文件夹 |
 
 ### 2.2 文档处理流程
 
 ```
 原始文档
     ↓
-[插件] 转换为 Markdown（保留位置映射）
+[插件] 转换输出
+    ├─ markdown: 语义化视图（用于展示、向量化）
+    └─ searchableText: 可选，用于倒排索引（结构化插件提供）
     ↓
-MarkdownNodeParser 按结构切分
+[MarkdownChunker] 基于 markdown 按结构切分
     ↓
 超大块(>1.2K token) → SentenceSplitter 再切分
     ↓
@@ -35,28 +38,34 @@ MarkdownNodeParser 按结构切分
     ↓
 [Embedding] 向量化 chunk 和 summary
     ↓
-存入向量库 + BM25 索引
+[存储]
+    ├─ 向量库: chunk 向量 + summary 向量（不存文本）
+    ├─ 倒排索引: searchableText 构建索引（不持久化）
+    └─ AFD 文件: markdown 压缩存储（.afd 格式）
     ↓
 汇总生成目录 summary
 ```
 
 ### 2.3 索引内容
 
-| 层级 | 索引内容 |
-|------|----------|
-| Chunk | 原文内容、summary、向量、所属文件、原文位置 |
-| 文档 | summary、summary 向量、chunk 列表 |
-| 目录 | summary（汇总所有文件和子目录）、文件列表、子目录列表 |
+| 层级 | 索引内容 | 存储位置 |
+|------|----------|----------|
+| Chunk | chunk 向量、summary 向量、chunk 在 markdown 的行范围 | 向量库（LanceDB） |
+| 倒排索引 | term → {chunk_id, locator, tf, positions} | SQLite（文件级 BLOB） |
+| 文档内容 | markdown（语义化）、metadata | .afd 压缩文件 |
+| 文档元数据 | 文件名、hash、fileId、chunkCount、summary | .fs_index/index.json |
+| 目录元数据 | summary、文件列表、子目录列表、层级信息 | .fs_index/index.json |
 
 ### 2.4 搜索能力
 
 | 需求 | 说明 |
 |------|------|
-| 多路召回 | 向量搜索(chunk) + 向量搜索(summary) + BM25 关键词搜索 |
+| 多路召回 | 向量搜索(chunk) + 向量搜索(summary) + 倒排索引关键词搜索 |
 | 融合排序 | RRF（倒数排名融合） |
 | 可选 Rerank | 支持 LLM Rerank |
 | 查询类型 | 语义查询 + 精准关键词查询（可同时使用） |
-| 查询范围 | 单目录 / 多目录 / 所有已索引目录 |
+| 查询范围 | 单/多个 Project 或子文件夹，**自动包含所有子文件夹** |
+| 层级过滤 | 指定 Project 文件夹 → 搜索全部；指定子文件夹 → 仅搜索该子树 |
 
 ### 2.5 增量更新
 
@@ -64,8 +73,9 @@ MarkdownNodeParser 按结构切分
 |------|------|
 | 新增文档 | 检测新文件 → 执行完整索引流程 |
 | 删除文档 | 检测已删除文件 → 从索引中移除 |
+| 文档修改 | **检测文件变更 → 重建该文件索引** |
+| 变更检测 | 文件 ≤200MB: MD5 哈希；文件 >200MB: 大小+修改时间 |
 | 触发方式 | 手动触发（暂不支持自动检测） |
-| 文档修改 | 暂不支持，后期迭代 |
 
 ## 3. 系统架构要求
 
@@ -76,7 +86,10 @@ MarkdownNodeParser 按结构切分
 | 文档处理插件 | 每种文件格式一个插件，互不干扰 |
 | 插件实现 | TypeScript 模块，内部可封装外部程序调用（如 C#） |
 | 插件声明 | 每个插件声明自己支持的文件后缀 |
-| 位置映射 | 插件定义 `originalLocator` 格式，主程序不解析 |
+| 插件分级 | **文本类**（Markdown/PDF/DOCX）输出完整文本；**结构化类**（Excel）输出语义化+可搜索文本 |
+| 输出格式 | `markdown`（必需）+ `searchableText`（可选，结构化插件提供） |
+| searchableText | 多对一关系：多个 searchableText entry 对应同一个 markdown 行，每个 entry 带 locator |
+| 位置映射 | 插件定义 `locator` 格式（如 `Sheet1!A1:C100`），主程序不解析 |
 
 ### 3.2 扁平架构
 
@@ -99,25 +112,70 @@ MarkdownNodeParser 按结构切分
 | Electron 客户端 | 创建/管理索引、配置、查看状态 | 用户按需启动 |
 | MCP Server | 响应 AI Agent 查询 | stdio 模式，AI Agent 按需启动 |
 
-### 3.4 全局注册表
+### 3.4 全局存储
 
 位置: `~/.agent_fs/`
 
-| 文件 | 用途 |
-|------|------|
+| 文件/目录 | 用途 |
+|----------|------|
 | `config.yaml` | 全局配置（LLM/Embedding/Rerank 等） |
-| `registry.json` | 已索引目录列表（路径、别名、summary、统计信息） |
+| `registry.json` | 已索引 **Project 文件夹**列表（含子文件夹扁平化引用） |
+| `storage/vectors/` | LanceDB 向量库（存向量，不存文本） |
+| `storage/inverted-index/inverted-index.db` | SQLite 倒排索引（文件级 BLOB 存储） |
+| `storage/cache/` | Embedding 缓存 |
 
-## 4. MCP Tools
+### 3.5 本地索引存储
+
+每个文件夹的 `.fs_index/` 结构：
+
+| 文件/目录 | 用途 |
+|----------|------|
+| `index.json` | 目录元数据（文件列表、子目录列表、层级信息） |
+| `documents/*.afd` | 压缩文档文件（ZIP 格式，包含 content.md、metadata.json） |
+
+## 4. 索引存储优化
+
+### 4.1 倒排索引（Inverted Index）
+
+| 特性 | 说明 |
+|------|------|
+| 存储引擎 | SQLite |
+| 索引粒度 | 文件级（file_id），BLOB 存储 posting list |
+| 索引内容 | term → {chunk_id, locator, tf, positions} |
+| 查询优化 | 复合索引 `(term, dir_id, tf_sum)` 支持目录过滤 |
+| 更新策略 | 增量更新：按 file_id 删除旧索引，插入新索引 |
+
+### 4.2 文档存储（AFD 格式）
+
+| 特性 | 说明 |
+|------|------|
+| 格式 | `.afd` 文件（ZIP 压缩） |
+| 内部结构 | `content.md`（markdown）、`metadata.json`（可选） |
+| 实现 | Rust native 模块（@agent-fs/storage） |
+| 压缩算法 | DEFLATE (level 6) |
+| 性能优化 | LRU 缓存、零拷贝 mmap、并行读取 |
+| 压缩率 | 60-80% 空间节省 |
+| 读取性能 | 首次 <10ms，缓存命中 <1ms（50KB 文件） |
+
+### 4.3 向量存储优化
+
+| 优化项 | 说明 |
+|--------|------|
+| 存储内容 | 仅存向量（content_vector, summary_vector） |
+| 移除字段 | content、summary 文本字段（从 AFD 读取） |
+| 新增字段 | file_id、chunk_line_start、chunk_line_end（用于定位 AFD） |
+| 空间节省 | 向量库体积减少 70-80% |
+
+## 5. MCP Tools
 
 | Tool | 用途 |
 |------|------|
-| `list_indexes` | 列出所有已索引目录及其 summary |
+| `list_indexes` | 列出所有已索引 **Project 文件夹**及其 summary（含子文件夹树） |
 | `dir_tree` | 展示目录结构（文件/子目录的 summary） |
-| `search` | 多路召回搜索（语义 + 精准关键词） |
-| `get_chunk` | 获取指定 chunk 详情及相邻 chunk |
+| `search` | 多路召回搜索（语义 + 精准关键词），支持多文件夹过滤 |
+| `get_chunk` | 获取指定 chunk 详情及相邻 chunk（从 AFD 读取） |
 
-## 5. 用户界面
+## 6. 用户界面
 
 | 要求 | 说明 |
 |------|------|
@@ -126,7 +184,7 @@ MarkdownNodeParser 按结构切分
 | 核心功能 | 选择目录、启动索引、查看进度、管理配置 |
 | 进度展示 | 当前文件、已完成/总数、索引更新时间 |
 
-## 6. 可配置项
+## 7. 可配置项
 
 | 配置项 | 说明 |
 |--------|------|
@@ -137,7 +195,7 @@ MarkdownNodeParser 按结构切分
 | 搜索参数 | top_k、融合方法 |
 | 插件参数 | 各插件自定义参数 |
 
-## 7. 跨平台支持
+## 8. 跨平台支持
 
 | 平台 | 优先级 |
 |------|--------|
@@ -145,35 +203,61 @@ MarkdownNodeParser 按结构切分
 | macOS | 尽量支持 |
 | Linux | 尽量支持 |
 
-## 8. 不支持文件处理
+## 9. 不支持文件处理
 
 - 只记录文件名到 `unsupported_files` 列表
 - 不做任何索引处理
 - AI Agent 可通过 `dir_tree` 知道这些文件存在
 
-## 9. 中文支持
+## 10. 中文支持
 
 | 组件 | 中文支持方案 |
 |------|-------------|
 | Embedding | 使用支持中文的模型（如 bge-small-zh） |
-| BM25 | 自实现，使用 nodejieba 中文分词 |
+| 倒排索引 | 使用 nodejieba 中文分词 |
 | Summary | 依赖 LLM 能力 |
 
-## 10. 约束与边界
+## 11. 约束与边界
 
 ### 暂不实现
 
-- 文档内容修改的增量更新
-- 自动检测文件变化
-- 递归索引子目录（需手动对每个子目录执行索引）
+- 自动检测文件变化（需手动触发重新索引）
 - 图片/音视频等非文档格式
+- searchableText 的持久化（每次重建索引时重新生成）
 
 ### 技术约束
 
-- LanceDB BM25 不支持中文 → 自实现 BM25
-- 向量搜索为主，BM25 为辅
+- 向量搜索为主，倒排索引为辅
+- 文件变更检测基于哈希/时间戳，无法检测内容细微变化
+
+## 12. 性能指标
+
+### 12.1 索引性能
+
+| 指标 | 目标 |
+|------|------|
+| 单文件索引速度 | 50KB 文档 < 3s（含 Embedding） |
+| 批量索引 | 100 个文档（5MB）< 5min |
+
+### 12.2 搜索性能
+
+| 指标 | 目标 |
+|------|------|
+| 向量搜索 | < 100ms（10K chunks） |
+| 倒排索引搜索 | < 50ms（1000 文件） |
+| 融合排序 | < 50ms |
+| AFD 读取（缓存命中） | < 1ms |
+| AFD 读取（未命中） | < 10ms（50KB） |
+
+### 12.3 存储效率
+
+| 指标 | 目标 |
+|------|------|
+| AFD 压缩率 | 60-80% 空间节省 |
+| 向量库体积优化 | 相比原方案减少 70-80% |
 
 ---
 
-*文档版本: 1.0*
+*文档版本: 2.0*
 *创建日期: 2025-02-02*
+*更新日期: 2026-02-05*
