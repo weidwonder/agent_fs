@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -146,7 +147,7 @@ function resolveConverterPath(): string {
   if (custom) return custom;
 
   const baseDir = dirname(fileURLToPath(import.meta.url));
-  return join(
+  const defaultPath = join(
     baseDir,
     '..',
     'dotnet',
@@ -157,4 +158,50 @@ function resolveConverterPath(): string {
     'publish',
     'DocxConverter.dll',
   );
+  if (existsSync(defaultPath)) return defaultPath;
+
+  try {
+    const require = createRequire(import.meta.url);
+    const packageJson = require.resolve('@agent-fs/plugin-docx/package.json');
+    const packageDir = dirname(packageJson);
+    const fallbackPath = join(
+      packageDir,
+      'dotnet',
+      'DocxConverter',
+      'bin',
+      'Release',
+      'net8.0',
+      'publish',
+      'DocxConverter.dll',
+    );
+    if (existsSync(fallbackPath)) return fallbackPath;
+  } catch {
+    // 忽略解析失败
+  }
+
+  const candidates = [process.cwd(), baseDir];
+  for (const startDir of candidates) {
+    let current = startDir;
+    for (let i = 0; i < 8; i += 1) {
+      const candidatePath = join(
+        current,
+        'packages',
+        'plugins',
+        'plugin-docx',
+        'dotnet',
+        'DocxConverter',
+        'bin',
+        'Release',
+        'net8.0',
+        'publish',
+        'DocxConverter.dll',
+      );
+      if (existsSync(candidatePath)) return candidatePath;
+      const parent = dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+  }
+
+  return defaultPath;
 }
