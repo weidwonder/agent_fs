@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "pnpm -r build",
+    "pretest": "pnpm --filter @agent-fs/core build",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -30,13 +31,15 @@
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.23.0",
-    "@lancedb/lancedb-darwin-arm64": "0.23.0",
-    "@lancedb/lancedb-darwin-x64": "^0.22.3",
     "gpt-tokenizer": "^3.4.0",
     "nodejieba": "^2.6.0",
     "remark": "^15.0.1",
     "remark-parse": "^11.0.0",
     "unified": "^11.0.5",
     "unist-util-visit": "^5.1.0"
+  },
+  "optionalDependencies": {
+    "@lancedb/lancedb-darwin-arm64": "0.23.0",
+    "@lancedb/lancedb-darwin-x64": "^0.22.3"
   }
 }
