@@ -8,7 +8,7 @@ import {
   convertPDFWithMinerU,
   type MinerUOptions,
   type MinerUContentList,
-  type MinerUBlock,
+  type MinerUContentItem,
 } from './mineru';
 
 /**
@@ -42,8 +42,8 @@ export class PDFPlugin implements DocumentPlugin {
    */
   async toMarkdown(filePath: string): Promise<DocumentConversionResult> {
     const minerUOptions = this.options.minerU;
-    if (!minerUOptions) {
-      throw new Error('未配置 MinerU，请在插件配置中提供 apiHost');
+    if (!minerUOptions?.serverUrl) {
+      throw new Error('未配置 MinerU，请在插件配置中提供 serverUrl');
     }
 
     // 调用 MinerU 转换
@@ -92,29 +92,38 @@ export class PDFPlugin implements DocumentPlugin {
 
   /**
    * 构建 PositionMapping
-   * 从 MinerU 的 content_list_v2.json 构建页级映射
+   * 从 MinerU 的 content list 构建页级映射
    */
   private buildPositionMapping(result: {
     markdown: string;
     contentList?: MinerUContentList;
+    totalPages?: number;
   }): PositionMapping[] {
-    if (!result.contentList || result.contentList.length === 0) {
-      // 如果没有 contentList，回退到简单策略
+    const markdownLines = result.markdown.split('\n');
+    const totalLines = markdownLines.length;
+    const contentList = result.contentList ?? [];
+    const totalPages = this.getTotalPages(contentList, result.totalPages);
+
+    if (!totalPages) {
+      // 如果无法确定页数，回退到简单策略
       return this.fallbackPageMapping(result.markdown);
     }
 
-    const markdownLines = result.markdown.split('\n');
     const mapping: PositionMapping[] = [];
-
+    const pages = this.groupContentByPage(contentList, totalPages);
     let currentLine = 1;
 
     // 遍历每一页
-    for (let pageIdx = 0; pageIdx < result.contentList.length; pageIdx += 1) {
-      const page = result.contentList[pageIdx];
+    for (let pageIdx = 0; pageIdx < totalPages; pageIdx += 1) {
       const pageNumber = pageIdx + 1;
+      const pageItems = pages[pageIdx] ?? [];
+
+      if (currentLine > totalLines) {
+        break;
+      }
 
       // 提取该页的所有文本内容
-      const pageTexts = this.extractPageTexts(page);
+      const pageTexts = this.extractPageTexts(pageItems);
 
       // 在 Markdown 中查找该页的起始和结束行
       const pageRange = this.findPageRangeInMarkdown(
@@ -132,7 +141,25 @@ export class PDFPlugin implements DocumentPlugin {
           originalLocator: `page:${pageNumber}`,
         });
         currentLine = pageRange.endLine + 1;
+        continue;
       }
+
+      // 回退策略：按剩余行数平均分配到剩余页
+      const remainingLines = totalLines - currentLine + 1;
+      const remainingPages = totalPages - pageIdx;
+      const linesPerPage = Math.max(
+        1,
+        Math.ceil(remainingLines / remainingPages),
+      );
+      const startLine = currentLine;
+      const endLine = Math.min(currentLine + linesPerPage - 1, totalLines);
+
+      mapping.push({
+        markdownRange: { startLine, endLine },
+        originalLocator: `page:${pageNumber}`,
+      });
+
+      currentLine = endLine + 1;
     }
 
     return mapping;
@@ -141,27 +168,82 @@ export class PDFPlugin implements DocumentPlugin {
   /**
    * 提取页面的所有文本内容
    */
-  private extractPageTexts(page: MinerUBlock[]): string[] {
+  private extractPageTexts(pageItems: MinerUContentItem[]): string[] {
     const texts: string[] = [];
 
-    for (const block of page) {
-      if (block.content.title_content) {
-        for (const item of block.content.title_content) {
-          if (item.content) {
-            texts.push(item.content.trim());
-          }
-        }
+    for (const item of pageItems) {
+      this.collectText(texts, item.text);
+      this.collectText(texts, item.list_items);
+      this.collectText(texts, item['table_body']);
+      this.collectText(texts, item['code_body']);
+      this.collectText(texts, item['image_caption']);
+      this.collectText(texts, item['table_caption']);
+      this.collectText(texts, item['image_footnote']);
+      this.collectText(texts, item['table_footnote']);
+    }
+
+    return texts.filter((t) => t.length > 0);
+  }
+
+  private collectText(texts: string[], value: unknown): void {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed) {
+        texts.push(trimmed);
       }
-      if (block.content.paragraph_content) {
-        for (const item of block.content.paragraph_content) {
-          if (item.content) {
-            texts.push(item.content.trim());
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (typeof item === 'string') {
+          const trimmed = item.trim();
+          if (trimmed) {
+            texts.push(trimmed);
           }
         }
       }
     }
+  }
 
-    return texts.filter((t) => t.length > 0);
+  private getTotalPages(
+    contentList: MinerUContentList,
+    totalPages?: number,
+  ): number | null {
+    if (typeof totalPages === 'number' && totalPages > 0) {
+      return totalPages;
+    }
+
+    let maxPageIdx = -1;
+    for (const item of contentList) {
+      if (typeof item.page_idx === 'number' && item.page_idx > maxPageIdx) {
+        maxPageIdx = item.page_idx;
+      }
+    }
+
+    return maxPageIdx >= 0 ? maxPageIdx + 1 : null;
+  }
+
+  private groupContentByPage(
+    contentList: MinerUContentList,
+    totalPages: number,
+  ): MinerUContentItem[][] {
+    const pages: MinerUContentItem[][] = Array.from(
+      { length: totalPages },
+      () => [],
+    );
+
+    for (const item of contentList) {
+      if (typeof item.page_idx !== 'number') {
+        continue;
+      }
+      if (item.page_idx < 0 || item.page_idx >= totalPages) {
+        continue;
+      }
+      pages[item.page_idx].push(item);
+    }
+
+    return pages;
   }
 
   /**

@@ -3,6 +3,6 @@ export { PDFPlugin, createPDFPlugin, type PDFPluginOptions } from './plugin';
 export type {
   MinerUOptions,
   MinerUResult,
-  MinerUBlock,
+  MinerUContentItem,
   MinerUContentList,
 } from './mineru';
