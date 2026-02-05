@@ -7,6 +7,7 @@ import type {
   FileMetadata,
   VectorDocument,
   BM25Document,
+  SummaryMode,
 } from '@agent-fs/core';
 import { MarkdownChunker } from '@agent-fs/core';
 import type { EmbeddingService, SummaryService } from '@agent-fs/llm';
@@ -28,7 +29,15 @@ export interface IndexerOptions {
   vectorStore: VectorStore;
   bm25Index: BM25Index;
   chunkOptions: { minTokens: number; maxTokens: number };
+  summaryOptions: SummaryPipelineOptions;
   onProgress?: (progress: IndexProgress) => void;
+}
+
+export interface SummaryPipelineOptions {
+  mode: SummaryMode;
+  tokenBudget: number;
+  maxRetries?: number;
+  timeoutMs?: number;
 }
 
 export class IndexPipeline {
@@ -42,6 +51,10 @@ export class IndexPipeline {
 
   async run(): Promise<IndexMetadata> {
     const { dirPath, pluginManager, onProgress } = this.options;
+    const summaryOptions = this.options.summaryOptions ?? {
+      mode: 'batch',
+      tokenBudget: 10000,
+    };
 
     // 确保 .fs_index 目录存在
     const fsIndexPath = join(dirPath, '.fs_index');
@@ -58,7 +71,8 @@ export class IndexPipeline {
     let totalTokens = 0;
 
     // 处理每个文件
-    for (let i = 0; i < scanResult.supportedFiles.length; i++) {
+    const totalFiles = scanResult.supportedFiles.length;
+    for (let i = 0; i < totalFiles; i++) {
       const filename = scanResult.supportedFiles[i];
       const filePath = join(dirPath, filename);
 
@@ -66,22 +80,36 @@ export class IndexPipeline {
         phase: 'convert',
         currentFile: filename,
         processed: i,
-        total: scanResult.supportedFiles.length,
+        total: totalFiles,
       });
 
-      const fileMetadata = await this.processFile(filePath, filename, fsIndexPath);
+      const fileMetadata = await this.processFile(
+        filePath,
+        filename,
+        fsIndexPath,
+        i,
+        totalFiles
+      );
       files.push(fileMetadata);
       totalChunks += fileMetadata.chunkCount;
       totalTokens += fileMetadata.chunkIds.length * 800; // 估算
     }
 
     // 生成目录 summary
-    const fileSummaries = files.map((f) => `${f.name}: ${f.summary}`);
-    const dirSummaryResult = await this.options.summaryService.generateDirectorySummary(
-      dirPath,
-      fileSummaries,
-      []
-    );
+    let directorySummary = '';
+    if (summaryOptions.mode !== 'skip') {
+      const fileSummaries = files.map((f) => `${f.name}: ${f.summary}`);
+      const dirSummaryResult = await this.options.summaryService.generateDirectorySummary(
+        dirPath,
+        fileSummaries,
+        [],
+        {
+          maxRetries: summaryOptions.maxRetries,
+          timeoutMs: summaryOptions.timeoutMs,
+        }
+      );
+      directorySummary = dirSummaryResult.summary;
+    }
 
     // 写入 index.json（使用 camelCase，这是外部 JSON 格式）
     const metadata: IndexMetadata = {
@@ -90,7 +118,7 @@ export class IndexPipeline {
       updatedAt: new Date().toISOString(),
       dirId: this.dirId,
       directoryPath: dirPath,
-      directorySummary: dirSummaryResult.summary,
+      directorySummary,
       stats: {
         fileCount: files.length,
         chunkCount: totalChunks,
@@ -117,10 +145,13 @@ export class IndexPipeline {
   private async processFile(
     filePath: string,
     filename: string,
-    fsIndexPath: string
+    fsIndexPath: string,
+    fileIndex: number,
+    totalFiles: number
   ): Promise<FileMetadata> {
     const { pluginManager, embeddingService, summaryService, vectorStore, bm25Index } =
       this.options;
+    const { onProgress } = this.options;
 
     // 获取插件
     const ext = filename.split('.').pop() || '';
@@ -128,9 +159,21 @@ export class IndexPipeline {
     if (!plugin) throw new Error(`No plugin for extension: ${ext}`);
 
     // 转换为 Markdown
+    onProgress?.({
+      phase: 'convert',
+      currentFile: filename,
+      processed: fileIndex,
+      total: totalFiles,
+    });
     const conversionResult = await plugin.toMarkdown(filePath);
 
     // 切分
+    onProgress?.({
+      phase: 'chunk',
+      currentFile: filename,
+      processed: fileIndex,
+      total: totalFiles,
+    });
     const chunker = new MarkdownChunker(this.options.chunkOptions);
     const chunks = chunker.chunk(conversionResult.markdown);
 
@@ -142,23 +185,58 @@ export class IndexPipeline {
       .digest('hex')
       .slice(0, 16);
 
-    // 生成 chunk summary 和 embedding
-    const chunkIds: string[] = [];
+    const summaryOptions = this.options.summaryOptions ?? {
+      mode: 'batch',
+      tokenBudget: 10000,
+    };
+
+    // 生成 chunk summary
+    onProgress?.({
+      phase: 'summary',
+      currentFile: filename,
+      processed: fileIndex,
+      total: totalFiles,
+    });
+
+    const chunkIds = chunks.map((_, index) => `${fileId}:${String(index).padStart(4, '0')}`);
+    let chunkSummaries: string[] = [];
+
+    if (summaryOptions.mode === 'skip') {
+      chunkSummaries = chunks.map(() => '');
+    } else {
+      const batchResults = await summaryService.generateChunkSummariesBatch(
+        chunks.map((chunk, index) => ({
+          id: chunkIds[index],
+          content: chunk.content,
+        })),
+        {
+          maxRetries: summaryOptions.maxRetries,
+          timeoutMs: summaryOptions.timeoutMs,
+          tokenBudget: summaryOptions.tokenBudget,
+        }
+      );
+      chunkSummaries = batchResults.map((result) => result.summary);
+    }
+
+    // 生成 embedding
     const vectorDocs: VectorDocument[] = [];
     const bm25Docs: BM25Document[] = [];
 
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
-      const chunkId = `${fileId}:${String(i).padStart(4, '0')}`;
-      chunkIds.push(chunkId);
+      const chunkId = chunkIds[i];
+      const chunkSummary = chunkSummaries[i] ?? '';
 
-      // 生成 summary
-      const summaryResult = await summaryService.generateChunkSummary(chunk.content);
+      onProgress?.({
+        phase: 'embed',
+        currentFile: filename,
+        processed: fileIndex,
+        total: totalFiles,
+      });
 
-      // 生成 embedding
       const [contentEmbed, summaryEmbed] = await Promise.all([
         embeddingService.embed(chunk.content),
-        embeddingService.embed(summaryResult.summary),
+        embeddingService.embed(chunkSummary),
       ]);
 
       const now = new Date().toISOString();
@@ -171,7 +249,7 @@ export class IndexPipeline {
         rel_path: filename,
         file_path: filePath,
         content: chunk.content,
-        summary: summaryResult.summary,
+        summary: chunkSummary,
         content_vector: contentEmbed,
         summary_vector: summaryEmbed,
         locator: chunk.locator,
@@ -196,13 +274,33 @@ export class IndexPipeline {
     bm25Index.addDocuments(bm25Docs);
 
     // 生成文档 summary
-    const chunkSummaries = vectorDocs.map((d) => d.summary);
-    const docSummaryResult = await summaryService.generateDocumentSummary(
-      filename,
-      chunkSummaries
-    );
+    onProgress?.({
+      phase: 'summary',
+      currentFile: filename,
+      processed: fileIndex,
+      total: totalFiles,
+    });
+
+    let documentSummary = '';
+    if (summaryOptions.mode !== 'skip') {
+      const docSummaryResult = await summaryService.generateDocumentSummary(
+        filename,
+        chunkSummaries,
+        {
+          maxRetries: summaryOptions.maxRetries,
+          timeoutMs: summaryOptions.timeoutMs,
+        }
+      );
+      documentSummary = docSummaryResult.summary;
+    }
 
     // 保存文档处理结果
+    onProgress?.({
+      phase: 'write',
+      currentFile: filename,
+      processed: fileIndex,
+      total: totalFiles,
+    });
     const docDir = join(fsIndexPath, 'documents', filename);
     mkdirSync(docDir, { recursive: true });
     writeFileSync(join(docDir, 'content.md'), conversionResult.markdown);
@@ -213,7 +311,7 @@ export class IndexPipeline {
     );
     writeFileSync(
       join(docDir, 'summary.json'),
-      JSON.stringify({ document: docSummaryResult.summary, chunks: chunkSummaries }, null, 2)
+      JSON.stringify({ document: documentSummary, chunks: chunkSummaries }, null, 2)
     );
 
     return {
@@ -225,7 +323,7 @@ export class IndexPipeline {
       indexedAt: new Date().toISOString(),
       chunkCount: chunkIds.length,
       chunkIds,
-      summary: docSummaryResult.summary,
+      summary: documentSummary,
     };
   }
 }
