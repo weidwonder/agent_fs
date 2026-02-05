@@ -8,6 +8,7 @@ import { createVectorStore, BM25Index, saveIndex as saveBM25 } from '@agent-fs/s
 import { MarkdownPlugin } from '@agent-fs/plugin-markdown';
 import { PDFPlugin } from '@agent-fs/plugin-pdf';
 import { DocxPlugin } from '@agent-fs/plugin-docx';
+import { ExcelPlugin } from '@agent-fs/plugin-excel';
 import { PluginManager } from './plugin-manager';
 import { IndexPipeline, type IndexProgress } from './pipeline';
 
@@ -30,6 +31,7 @@ export class Indexer {
     this.pluginManager.register(new MarkdownPlugin());
     this.pluginManager.register(new PDFPlugin());
     this.pluginManager.register(new DocxPlugin());
+    this.pluginManager.register(new ExcelPlugin());
   }
 
   async init(): Promise<void> {
@@ -57,6 +59,7 @@ export class Indexer {
 
     // 运行流水线
     const chunkSize = this.config.indexing.chunk_size;
+    const summaryConfig = this.config.summary;
     const pipeline = new IndexPipeline({
       dirPath,
       pluginManager: this.pluginManager,
@@ -67,6 +70,12 @@ export class Indexer {
       chunkOptions: {
         minTokens: chunkSize.min_tokens,
         maxTokens: chunkSize.max_tokens,
+      },
+      summaryOptions: {
+        mode: summaryConfig?.mode ?? 'batch',
+        tokenBudget: summaryConfig?.chunk_batch_token_budget ?? 10000,
+        maxRetries: summaryConfig?.max_retries,
+        timeoutMs: summaryConfig?.timeout_ms,
       },
       onProgress: this.options.onProgress,
     });

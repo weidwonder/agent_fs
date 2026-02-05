@@ -1,3 +1,3 @@
 export { SummaryService, createSummaryService } from './service';
-export type { SummaryOptions, SummaryResult } from './service';
+export type { SummaryOptions, SummaryResult, BatchChunkInput, BatchSummaryResult } from './service';
 export { SummaryCache } from './cache';
