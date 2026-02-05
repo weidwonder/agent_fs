@@ -71,26 +71,6 @@ describe('configSchema', () => {
     expect(result.search.default_top_k).toBe(10);
   });
 
-  it('should apply default summary config', () => {
-    const minConfig = {
-      llm: validConfig.llm,
-      embedding: { default: 'local' },
-      indexing: { chunk_size: {} },
-      search: { fusion: { method: 'rrf' } },
-    };
-    const result = validateConfig(minConfig);
-    expect(result.summary?.mode).toBe('batch');
-    expect(result.summary?.chunk_batch_token_budget).toBe(10000);
-  });
-
-  it('should reject invalid summary mode', () => {
-    const invalidConfig = {
-      ...validConfig,
-      summary: { mode: 'invalid' },
-    };
-    expect(() => validateConfig(invalidConfig)).toThrow(ZodError);
-  });
-
   it('should allow optional rerank config', () => {
     const configWithRerank = {
       ...validConfig,

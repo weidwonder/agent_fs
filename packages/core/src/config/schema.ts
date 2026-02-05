@@ -46,16 +46,6 @@ const rerankConfigSchema = z.object({
 });
 
 /**
- * Summary 配置 schema
- */
-const summaryConfigSchema = z.object({
-  mode: z.enum(['batch', 'skip']).default('batch'),
-  chunk_batch_token_budget: z.number().int().positive().default(10000),
-  timeout_ms: z.number().int().positive().optional(),
-  max_retries: z.number().int().min(0).max(2).optional(),
-});
-
-/**
  * 索引配置 schema
  */
 const indexingConfigSchema = z.object({
@@ -82,10 +72,6 @@ export const configSchema = z.object({
   llm: llmConfigSchema,
   embedding: embeddingConfigSchema,
   rerank: rerankConfigSchema.optional(),
-  summary: summaryConfigSchema.default({
-    mode: 'batch',
-    chunk_batch_token_budget: 10000,
-  }),
   indexing: indexingConfigSchema,
   search: searchConfigSchema,
   plugins: z.record(z.string(), z.unknown()).optional(),

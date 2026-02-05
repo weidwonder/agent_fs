@@ -11,9 +11,6 @@ export interface Config {
   /** Rerank 配置 */
   rerank?: RerankConfig;
 
-  /** Summary 配置 */
-  summary?: SummaryConfig;
-
   /** 索引配置 */
   indexing: IndexingConfig;
 
@@ -92,28 +89,6 @@ export interface RerankConfig {
 
   /** 提供商类型 */
   provider: 'llm';
-}
-
-/**
- * Summary 模式
- */
-export type SummaryMode = 'batch' | 'skip';
-
-/**
- * Summary 配置
- */
-export interface SummaryConfig {
-  /** Summary 生成模式 */
-  mode?: SummaryMode;
-
-  /** chunk 批量生成的 token 预算 */
-  chunk_batch_token_budget?: number;
-
-  /** 单次请求超时 */
-  timeout_ms?: number;
-
-  /** JSON 解析失败重试次数 */
-  max_retries?: number;
 }
 
 /**
