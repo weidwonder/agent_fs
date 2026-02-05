@@ -78,10 +78,10 @@ describe('SummaryService', () => {
     const result = await service.generateChunkSummary(content, { maxRetries: 1, useCache: false });
 
     expect(result.fallback).toBe(true);
-    expect(result.summary).toBe('第一段内容');
+    expect(result.summary).toBe('');
   });
 
-  it('document 摘要失败时应降级为前三段拼接', async () => {
+  it('document 摘要失败时应降级为空', async () => {
     const fetchMock: MockFetch = vi.fn().mockRejectedValue(new Error('network'));
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
@@ -93,10 +93,10 @@ describe('SummaryService', () => {
     });
 
     expect(result.fallback).toBe(true);
-    expect(result.summary).toBe('a b c');
+    expect(result.summary).toBe('');
   });
 
-  it('directory 摘要失败时应回退为统计描述', async () => {
+  it('directory 摘要失败时应降级为空', async () => {
     const fetchMock: MockFetch = vi.fn().mockRejectedValue(new Error('network'));
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
@@ -108,7 +108,7 @@ describe('SummaryService', () => {
     });
 
     expect(result.fallback).toBe(true);
-    expect(result.summary).toBe('包含 2 个文件和 1 个子目录');
+    expect(result.summary).toBe('');
   });
 
   it('应按 maxRetries 重试调用', async () => {
@@ -129,5 +129,24 @@ describe('SummaryService', () => {
 
     expect(result.summary).toBe('重试成功');
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('batch 摘要 JSON 解析失败时应重试并降级为空', async () => {
+    const service = new SummaryService(baseConfig);
+    const call = vi.spyOn(service as unknown as { callLLM: () => Promise<string> }, 'callLLM');
+    call.mockResolvedValueOnce('not json');
+    call.mockResolvedValueOnce('still wrong');
+    call.mockResolvedValueOnce('also wrong');
+
+    const result = await service.generateChunkSummariesBatch(
+      [
+        { id: 'c1', content: 'a' },
+        { id: 'c2', content: 'b' },
+      ],
+      { maxRetries: 2, timeoutMs: 10, tokenBudget: 10 }
+    );
+
+    expect(result.map((item) => item.summary)).toEqual(['', '']);
+    expect(call).toHaveBeenCalledTimes(3);
   });
 });
