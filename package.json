@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.23.0",
+    "@lancedb/lancedb-darwin-arm64": "0.23.0",
     "@lancedb/lancedb-darwin-x64": "^0.22.3",
     "gpt-tokenizer": "^3.4.0",
     "nodejieba": "^2.6.0",

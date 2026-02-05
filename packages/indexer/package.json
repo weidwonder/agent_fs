@@ -23,6 +23,7 @@
     "@agent-fs/plugin-markdown": "workspace:*",
     "@agent-fs/plugin-pdf": "workspace:*",
     "@agent-fs/plugin-docx": "workspace:*",
+    "@agent-fs/plugin-excel": "workspace:*",
     "uuid": "^9.0.0"
   },
   "devDependencies": {

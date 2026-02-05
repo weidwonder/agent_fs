@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { createInterface, type Interface } from 'node:readline';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,8 +31,10 @@ export class ConverterClient {
   async start(): Promise<void> {
     if (this.process) return;
 
-    const converterPath =
-      this.options.dotnetPath ?? join(__dirname, '..', 'dotnet', 'excel-converter');
+    const converterPath = resolveConverterPath(this.options.dotnetPath);
+    if (!existsSync(converterPath)) {
+      throw new Error(`ExcelConverter 未找到: ${converterPath}`);
+    }
 
     this.process = spawn('dotnet', ['run', '--project', converterPath], {
       stdio: ['pipe', 'pipe', 'inherit'],
@@ -114,4 +117,39 @@ export class ConverterClient {
       // ignore
     }
   }
+}
+
+function resolveConverterPath(customPath?: string): string {
+  if (customPath) return customPath;
+
+  const defaultPath = join(
+    __dirname,
+    '..',
+    'dotnet',
+    'excel-converter',
+    'ExcelConverter.csproj'
+  );
+  if (existsSync(defaultPath)) return defaultPath;
+
+  const candidates = [process.cwd(), __dirname];
+  for (const startDir of candidates) {
+    let current = startDir;
+    for (let i = 0; i < 8; i += 1) {
+      const candidatePath = join(
+        current,
+        'packages',
+        'plugins',
+        'plugin-excel',
+        'dotnet',
+        'excel-converter',
+        'ExcelConverter.csproj'
+      );
+      if (existsSync(candidatePath)) return candidatePath;
+      const parent = dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+  }
+
+  return defaultPath;
 }

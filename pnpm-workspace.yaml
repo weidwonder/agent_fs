@@ -3,5 +3,6 @@ packages:
   - 'packages/plugins/*'
 onlyBuiltDependencies:
   - nodejieba
+  - electron
   - sharp
   - canvas
