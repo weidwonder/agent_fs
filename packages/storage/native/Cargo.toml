@@ -1,0 +1,16 @@
+[package]
+name = "agent_fs_storage"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "2", features = ["napi4", "serde-json", "tokio_rt"] }
+napi-derive = "2"
+zip = "2"
+memmap2 = "0.9"
+rayon = "1"
+lru = "0.12"
+parking_lot = "0.12"
