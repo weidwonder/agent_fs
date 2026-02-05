@@ -11,6 +11,7 @@
     { "path": "../llm" },
     { "path": "../plugins/plugin-markdown" },
     { "path": "../plugins/plugin-pdf" },
-    { "path": "../plugins/plugin-docx" }
+    { "path": "../plugins/plugin-docx" },
+    { "path": "../plugins/plugin-excel" }
   ]
 }
