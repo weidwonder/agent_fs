@@ -1,4 +1,16 @@
-import { pipeline, type FeatureExtractionPipeline } from '@xenova/transformers';
+import type { FeatureExtractionPipeline } from '@xenova/transformers';
+
+type TransformersModule = typeof import('@xenova/transformers');
+
+let transformersModule: TransformersModule | null = null;
+
+async function loadTransformers(): Promise<TransformersModule> {
+  if (!transformersModule) {
+    transformersModule = await import(/* @vite-ignore */ '@xenova/transformers');
+  }
+  return transformersModule;
+}
+
 
 /**
  * 本地 Embedding 提供者选项
@@ -47,6 +59,8 @@ export class LocalEmbeddingProvider {
 
   private async loadModel(): Promise<void> {
     console.log(`Loading embedding model: ${this.options.model}`);
+
+    const { pipeline } = await loadTransformers();
 
     this.pipeline = await pipeline('feature-extraction', this.options.model, {
       // quantized: true, // 使用量化模型减少内存
