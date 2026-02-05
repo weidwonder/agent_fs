@@ -1,0 +1,35 @@
+{
+  "name": "@agent-fs/storage",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "index.node"],
+  "scripts": {
+    "build": "napi build --release",
+    "build:debug": "napi build --debug",
+    "clean": "rm -rf dist index.node",
+    "test": "vitest run",
+    "lint": "eslint src"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.0",
+    "typescript": "^5.3.0",
+    "vitest": "^4.0.18"
+  },
+  "napi": {
+    "name": "storage",
+    "binary": {
+      "module_name": "index",
+      "package_name": "@agent-fs/storage",
+      "targets": [
+        "x86_64-apple-darwin",
+        "aarch64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu"
+      ]
+    }
+  }
+}
