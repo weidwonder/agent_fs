@@ -1,0 +1,14 @@
+appId: com.agent-fs.app
+productName: Agent FS
+directories:
+  buildResources: resources
+  output: dist
+files:
+  - out/**
+mac:
+  target: dmg
+  category: public.app-category.productivity
+win:
+  target: nsis
+linux:
+  target: AppImage
