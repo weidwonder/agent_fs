@@ -126,7 +126,7 @@ export class SummaryService {
 
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
-          const raw = await this.callLLM(messages, { maxRetries, timeoutMs });
+          const raw = await this.callLLM(messages, { maxRetries: 1, timeoutMs });
           parsed = this.parseBatchResponse(raw, expectedIds);
           if (parsed) {
             break;
