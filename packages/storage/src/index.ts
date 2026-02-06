@@ -5,8 +5,8 @@ const native = require('../storage.node') as {
   AfdStorage: new (documentsDir: string, cacheSize?: number) => {
     write(fileId: string, files: Record<string, string | Buffer>): Promise<void>;
     read(fileId: string, filePath: string): Promise<Buffer>;
-    read_text(fileId: string, filePath: string): Promise<string>;
-    read_batch(requests: { file_id: string; file_path: string }[]): Promise<Buffer[]>;
+    readText(fileId: string, filePath: string): Promise<string>;
+    readBatch(requests: { fileId: string; filePath: string }[]): Promise<Buffer[]>;
     exists(fileId: string): Promise<boolean>;
     delete(fileId: string): Promise<void>;
   };
@@ -38,13 +38,11 @@ export class AFDStorage {
   }
 
   readText(fileId: string, filePath: string) {
-    return this.inner.read_text(fileId, filePath);
+    return this.inner.readText(fileId, filePath);
   }
 
   readBatch(requests: ReadRequest[]) {
-    return this.inner.read_batch(
-      requests.map((r) => ({ file_id: r.fileId, file_path: r.filePath }))
-    );
+    return this.inner.readBatch(requests);
   }
 
   exists(fileId: string) {

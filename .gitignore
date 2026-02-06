@@ -40,3 +40,9 @@ test-data/
 # .NET build outputs
 **/bin/
 **/obj/
+
+# N-API native build outputs
+packages/storage/storage.node
+packages/storage/index.d.ts
+packages/storage/native/target/
+packages/storage/native/Cargo.lock

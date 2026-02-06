@@ -4,11 +4,11 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": ["dist", "index.node"],
+  "files": ["dist", "storage.node"],
   "scripts": {
     "build": "napi build --release --cargo-cwd native",
     "build:debug": "napi build --cargo-cwd native",
-    "clean": "rm -rf dist index.node",
+    "clean": "rm -rf dist storage.node index.d.ts",
     "test": "vitest run",
     "lint": "eslint src"
   },
