@@ -27,12 +27,13 @@ export class Indexer {
     this.options = options;
     this.config = loadConfig({ configPath: options.configPath });
     this.pluginManager = new PluginManager();
+    const pluginOptions = this.resolvePluginOptions();
 
     // 注册默认插件
     this.pluginManager.register(new MarkdownPlugin());
-    this.pluginManager.register(new PDFPlugin());
-    this.pluginManager.register(new DocxPlugin());
-    this.pluginManager.register(new ExcelPlugin());
+    this.pluginManager.register(new PDFPlugin(pluginOptions.pdf));
+    this.pluginManager.register(new DocxPlugin(pluginOptions.docx));
+    this.pluginManager.register(new ExcelPlugin(pluginOptions.excel));
   }
 
   async init(): Promise<void> {
@@ -198,6 +199,58 @@ export class Indexer {
 
   async dispose(): Promise<void> {
     await this.pluginManager.disposeAll();
+  }
+
+  private resolvePluginOptions(): {
+    pdf: ConstructorParameters<typeof PDFPlugin>[0];
+    docx: ConstructorParameters<typeof DocxPlugin>[0];
+    excel: ConstructorParameters<typeof ExcelPlugin>[0];
+  } {
+    const plugins = this.toRecord(this.config.plugins);
+
+    return {
+      pdf: this.resolvePdfPluginOptions(this.toRecord(plugins?.pdf)),
+      docx: this.resolveDocxPluginOptions(this.toRecord(plugins?.docx)),
+      excel: this.resolveExcelPluginOptions(this.toRecord(plugins?.excel)),
+    };
+  }
+
+  private resolvePdfPluginOptions(
+    raw: Record<string, unknown> | null
+  ): ConstructorParameters<typeof PDFPlugin>[0] {
+    const minerURaw = raw ? this.toRecord(raw.minerU) : null;
+    if (!minerURaw) return {};
+    return {
+      minerU: minerURaw as any,
+    };
+  }
+
+  private resolveDocxPluginOptions(
+    raw: Record<string, unknown> | null
+  ): ConstructorParameters<typeof DocxPlugin>[0] {
+    const converterRaw = raw ? this.toRecord(raw.converter) : null;
+    if (!converterRaw) return {};
+    return {
+      converter: converterRaw as any,
+    };
+  }
+
+  private resolveExcelPluginOptions(
+    raw: Record<string, unknown> | null
+  ): ConstructorParameters<typeof ExcelPlugin>[0] {
+    const converterRaw = raw ? this.toRecord(raw.converter) : null;
+    if (!converterRaw) return {};
+    return {
+      converter: converterRaw as any,
+    };
+  }
+
+  private toRecord(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return null;
+    }
+
+    return value as Record<string, unknown>;
   }
 }
 

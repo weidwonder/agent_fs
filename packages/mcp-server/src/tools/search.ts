@@ -25,6 +25,8 @@ interface SearchInput {
 interface RuntimeSearchItem {
   chunkId: string;
   fileId: string;
+  chunkLineStart?: number;
+  chunkLineEnd?: number;
   source: {
     filePath: string;
     locator: string;
@@ -195,6 +197,8 @@ export async function search(input: SearchInput) {
           (existing, next) => ({
             chunkId: existing.chunkId,
             fileId: existing.fileId || next.fileId,
+            chunkLineStart: existing.chunkLineStart ?? next.chunkLineStart,
+            chunkLineEnd: existing.chunkLineEnd ?? next.chunkLineEnd,
             source: {
               filePath: existing.source.filePath || next.source.filePath,
               locator: existing.source.locator || next.source.locator,
@@ -202,6 +206,9 @@ export async function search(input: SearchInput) {
           })
         )
       : [];
+
+  const topItems = fused.slice(0, topK).map((item) => item.item);
+  await enrichChunkRangesFromVectorStore(topItems, vectorStore);
 
   const markdownCache = new Map<string, string>();
   const summariesCache = new Map<string, Record<string, string>>();
@@ -449,6 +456,8 @@ function mapVectorItem(
   return {
     chunkId: item.chunk_id,
     fileId,
+    chunkLineStart: toPositiveInt(item.document.chunk_line_start),
+    chunkLineEnd: toPositiveInt(item.document.chunk_line_end),
     source: {
       filePath,
       locator: String(item.document.locator ?? ''),
@@ -489,7 +498,9 @@ async function hydrateResult(
   const markdown = await readMarkdown(storage, item.fileId, markdownCache);
   const summaries = await readSummaries(storage, item.fileId, summariesCache);
 
-  const parsedContent = extractByLocator(markdown, item.source.locator);
+  const parsedByLineRange = extractByLineRange(markdown, item.chunkLineStart, item.chunkLineEnd);
+  const parsedByLocator = parsedByLineRange ? '' : extractByLocator(markdown, item.source.locator);
+  const parsedContent = parsedByLineRange || parsedByLocator;
 
   return {
     ...item,
@@ -500,6 +511,70 @@ async function hydrateResult(
     content: parsedContent,
     summary: summaries[item.chunkId] ?? '',
   };
+}
+
+async function enrichChunkRangesFromVectorStore(
+  items: RuntimeSearchItem[],
+  store: VectorStore
+): Promise<void> {
+  const missingChunkIds = Array.from(
+    new Set(
+      items
+        .filter((item) => !hasLineRange(item))
+        .map((item) => item.chunkId)
+        .filter((chunkId) => chunkId.length > 0)
+    )
+  );
+
+  if (missingChunkIds.length === 0) {
+    return;
+  }
+
+  const getByChunkIds = (store as unknown as {
+    getByChunkIds?: (chunkIds: string[]) => Promise<Array<Record<string, unknown>>>;
+  }).getByChunkIds;
+
+  if (typeof getByChunkIds !== 'function') {
+    return;
+  }
+
+  let docs: Array<Record<string, unknown>>;
+  try {
+    docs = await getByChunkIds(missingChunkIds);
+  } catch {
+    return;
+  }
+
+  const lineRangeByChunkId = new Map<string, { start: number; end: number }>();
+  for (const doc of docs) {
+    const chunkId = String(doc.chunk_id ?? '');
+    if (!chunkId) continue;
+
+    const start = toPositiveInt(doc.chunk_line_start);
+    const end = toPositiveInt(doc.chunk_line_end);
+    if (start === undefined || end === undefined) continue;
+
+    lineRangeByChunkId.set(chunkId, { start, end });
+  }
+
+  for (const item of items) {
+    if (hasLineRange(item)) continue;
+
+    const lineRange = lineRangeByChunkId.get(item.chunkId);
+    if (!lineRange) continue;
+
+    item.chunkLineStart = lineRange.start;
+    item.chunkLineEnd = lineRange.end;
+  }
+}
+
+function hasLineRange(item: RuntimeSearchItem): boolean {
+  return (
+    typeof item.chunkLineStart === 'number' &&
+    typeof item.chunkLineEnd === 'number' &&
+    item.chunkLineStart > 0 &&
+    item.chunkLineEnd >= item.chunkLineStart
+  );
 }
 
 function getAfdStorage(dirPath: string): AFDStorage {
@@ -579,4 +654,34 @@ function extractByLocator(markdown: string, locator: string): string {
   }
 
   return '';
+}
+
+function extractByLineRange(
+  markdown: string,
+  lineStart?: number,
+  lineEnd?: number
+): string {
+  if (!markdown || !lineStart || !lineEnd || lineStart <= 0 || lineEnd < lineStart) {
+    return '';
+  }
+
+  const lines = markdown.split('\n');
+  return lines
+    .slice(Math.max(0, lineStart - 1), Math.min(lines.length, lineEnd))
+    .join('\n');
+}
+
+function toPositiveInt(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
+    return value;
+  }
+
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isInteger(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  return undefined;
 }

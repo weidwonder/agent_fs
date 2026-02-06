@@ -192,6 +192,7 @@ describe('search', () => {
           },
         ]),
         searchBySummary: vi.fn().mockResolvedValue([]),
+        getByChunkIds: vi.fn().mockResolvedValue([]),
       } as any,
       invertedIndex: {
         search: vi.fn().mockImplementation(async (query: string, options: { dirIds?: string[]; topK?: number }) => {
@@ -222,5 +223,98 @@ describe('search', () => {
 
     expect(invertedCalls).toHaveLength(1);
     expect(invertedCalls[0].options.dirIds).toEqual(['d1']);
+  });
+
+  it('非 line 定位符应回退使用 chunk 行范围提取正文（向量结果）', async () => {
+    __setSearchServicesForTest({
+      embeddingService: {
+        embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
+      } as any,
+      vectorStore: {
+        searchByContent: vi.fn().mockResolvedValue([
+          {
+            chunk_id: 'f1:0001',
+            score: 0.9,
+            document: {
+              chunk_id: 'f1:0001',
+              file_id: 'f1',
+              dir_id: 'd1',
+              rel_path: 'a.md',
+              file_path: join(projectDir, 'a.md'),
+              chunk_line_start: 2,
+              chunk_line_end: 2,
+              content_vector: [],
+              summary_vector: [],
+              locator: 'sheet:销售数据/range:A1:B10',
+              indexed_at: '',
+              deleted_at: '',
+            },
+          },
+        ]),
+        searchBySummary: vi.fn().mockResolvedValue([]),
+        getByChunkIds: vi.fn().mockResolvedValue([]),
+      } as any,
+      invertedIndex: {
+        search: vi.fn().mockResolvedValue([]),
+      } as any,
+    });
+
+    const result = await search({
+      query: '销售数据',
+      scope: projectDir,
+      top_k: 5,
+    });
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0].chunk_id).toBe('f1:0001');
+    expect(result.results[0].content).toBe('第二行');
+  });
+
+  it('keyword-only 且非 line 定位符时应通过向量元数据回填正文', async () => {
+    const getByChunkIds = vi.fn().mockResolvedValue([
+      {
+        chunk_id: 'f1:0001',
+        file_id: 'f1',
+        dir_id: 'd1',
+        rel_path: 'a.md',
+        file_path: join(projectDir, 'a.md'),
+        chunk_line_start: 2,
+        chunk_line_end: 2,
+        locator: 'line:2-2',
+      },
+    ]);
+
+    __setSearchServicesForTest({
+      embeddingService: {
+        embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
+      } as any,
+      vectorStore: {
+        searchByContent: vi.fn().mockResolvedValue([]),
+        searchBySummary: vi.fn().mockResolvedValue([]),
+        getByChunkIds,
+      } as any,
+      invertedIndex: {
+        search: vi.fn().mockResolvedValue([
+          {
+            chunkId: 'f1:0001',
+            fileId: 'f1',
+            dirId: 'd1',
+            locator: 'sheet:销售数据/range:A1:B10',
+            score: 1.1,
+          },
+        ]),
+      } as any,
+    });
+
+    const result = await search({
+      query: '销售数据',
+      keyword: '销售额',
+      scope: projectDir,
+      top_k: 5,
+    });
+
+    expect(getByChunkIds).toHaveBeenCalledWith(['f1:0001']);
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0].content).toBe('第二行');
   });
 });

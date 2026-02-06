@@ -4,7 +4,7 @@ import type {
   LocatorInfo,
   PositionMapping,
 } from '@agent-fs/core';
-import { DocxService } from './service';
+import { DocxService, type DocxServiceOptions } from './service';
 
 export interface DocxServiceLike {
   start(): Promise<void>;
@@ -17,6 +17,7 @@ export interface DocxServiceLike {
 
 export interface DocxPluginOptions {
   service?: DocxServiceLike;
+  converter?: Pick<DocxServiceOptions, 'converterPath' | 'timeoutMs'>;
 }
 
 export class DocxPlugin implements DocumentPlugin {
@@ -26,7 +27,7 @@ export class DocxPlugin implements DocumentPlugin {
   private service: DocxServiceLike;
 
   constructor(options: DocxPluginOptions = {}) {
-    this.service = options.service ?? new DocxService();
+    this.service = options.service ?? new DocxService(options.converter);
   }
 
   async init(): Promise<void> {

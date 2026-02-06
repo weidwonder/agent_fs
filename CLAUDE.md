@@ -44,7 +44,7 @@ Agent FS 让 AI Agent 能够检索用户本地文档：
 |------|------|
 | 主框架 | TypeScript / Node.js |
 | 向量库 | LanceDB（文件型） |
-| 全文搜索 | 自实现 BM25 + nodejieba |
+| 全文搜索 | SQLite 倒排索引 + nodejieba |
 | 桌面应用 | Electron + React |
 | MCP | stdio 模式 |
 
@@ -57,11 +57,12 @@ agent_fs/
 │   ├── requirements.md       # 需求文档
 │   ├── guides/               # 开发与操作指南
 │   └── plans/                # 设计与计划
-├── packages/                 # Monorepo（待创建）
+├── packages/                 # Monorepo 包
 │   ├── core/                 # 核心库
 │   ├── indexer/              # 索引服务
 │   ├── search/               # 搜索服务
 │   ├── llm/                  # LLM 服务
+│   ├── storage/              # AFD 存储（Rust + N-API）
 │   ├── mcp-server/           # MCP Server
 │   ├── electron-app/         # 桌面应用
 │   └── plugins/              # 文档处理插件
@@ -75,7 +76,7 @@ agent_fs/
 | `.fs_index` | 每个被索引目录下的索引存储目录 |
 | Chunk | 文档切分后的片段（0.6-1.2K token） |
 | Locator | 插件定义的原文位置标识符 |
-| Registry | `~/.agent_fs/registry.json`，记录所有已索引目录 |
+| Registry | `~/.agent_fs/registry.json`，记录已索引 Project 与子目录引用 |
 
 ## 更多信息
 

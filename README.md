@@ -7,7 +7,7 @@ Agent FS 让 AI Agent 能够检索和理解用户本地文档。通过索引 PDF
 ## 特性
 
 - **多格式支持** - PDF / DOCX / DOC / XLSX / XLS / Markdown
-- **混合搜索** - 向量语义搜索 + BM25 关键词搜索，RRF 融合排序
+- **混合搜索** - 向量语义搜索 + SQLite 倒排检索，RRF 融合排序
 - **中文优化** - nodejieba 中文分词，支持中文 Embedding 模型
 - **本地优先** - 数据存储在本地，保护隐私
 - **插件化** - 文档处理插件独立可扩展
@@ -65,12 +65,11 @@ import { Indexer } from '@agent-fs/indexer';
 
 // 创建索引器
 const indexer = new Indexer();
+await indexer.init();
 
 // 索引目录
-await indexer.index('/path/to/documents');
-
-// 搜索
-const results = await indexer.search('如何处理文档');
+await indexer.indexDirectory('/path/to/documents');
+await indexer.dispose();
 ```
 
 ## 项目结构
@@ -79,9 +78,12 @@ const results = await indexer.search('如何处理文档');
 agent_fs/
 ├── packages/
 │   ├── core/           # 核心类型和工具
-│   ├── search/         # 搜索引擎 (BM25 + 向量 + 融合)
+│   ├── search/         # 搜索引擎（倒排 + 向量 + 融合）
 │   ├── llm/            # LLM 服务 (Embedding + Summary)
 │   ├── indexer/        # 索引流程
+│   ├── storage/        # AFD 存储（Rust + N-API）
+│   ├── mcp-server/     # MCP 工具服务
+│   ├── electron-app/   # 桌面应用
 │   ├── plugins/        # 文档处理插件
 │   │   ├── plugin-markdown/
 │   │   ├── plugin-pdf/
@@ -127,9 +129,11 @@ pnpm clean           # 清理构建产物
 | 包 | 说明 |
 |---|---|
 | @agent-fs/core | 核心类型定义、配置加载、文本切分 |
-| @agent-fs/search | BM25 索引、向量存储、融合搜索 |
+| @agent-fs/search | SQLite 倒排索引、向量存储、融合搜索 |
 | @agent-fs/llm | Embedding 服务、Summary 生成 |
 | @agent-fs/indexer | 索引流程、插件管理 |
+| @agent-fs/storage | AFD 文档归档读写 |
+| @agent-fs/mcp-server | 面向 AI Agent 的检索工具接口 |
 | @agent-fs/plugin-* | 文档格式处理插件 |
 
 ## 文档
@@ -146,28 +150,17 @@ pnpm clean           # 清理构建产物
 | 主框架 | TypeScript / Node.js |
 | 包管理 | pnpm workspace |
 | 向量存储 | LanceDB |
-| 全文搜索 | 自实现 BM25 + nodejieba |
+| 全文搜索 | SQLite 倒排索引 + nodejieba |
 | Embedding | @xenova/transformers / OpenAI API |
 | 文档转换 | .NET 8 + NPOI |
 | 测试 | Vitest |
 
 ## 开发状态
 
-- [x] 核心基础设施 (A)
-- [x] 配置系统 (B1)
-- [x] 文本切分 (B2)
-- [x] BM25 搜索 (B3)
-- [x] Markdown 插件 (B4)
-- [x] Embedding 服务 (C1)
-- [x] Summary 服务 (C2)
-- [x] 向量存储 (D)
-- [x] 融合搜索 (E)
-- [x] 索引流程 (F)
-- [ ] PDF 插件 (P1) - 进行中
-- [x] Word 插件 (P2) 
-- [x] Excel 插件 (P3)
-- [ ] MCP Server (G1) - 计划中
-- [ ] Electron 应用 (G2) - 计划中
+当前进展请以实施计划为准：
+
+- `docs/plans/2026-02-05-storage-optimization-plan.md`
+- `docs/plans/2026-02-03-local-embedding-rerank.md`
 
 ## License
 

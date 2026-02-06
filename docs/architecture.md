@@ -1,396 +1,250 @@
 # Agent FS 架构文档
 
-> 面向 AI Agent 的文件系统智能索引工具
-
-## 1. 系统概述
-
-Agent FS 是一个让 AI Agent 能够检索用户本地文档的工具。核心流程：
-
-```
-用户选择文件夹 → 自动处理文档 → 生成索引 → AI Agent 通过 MCP 查询
-```
-
-### 1.1 设计目标
-
-- **本地优先**：数据存储在本地，保护隐私
-- **多格式支持**：PDF / DOCX / DOC / XLSX / XLS / Markdown
-- **混合搜索**：向量语义搜索 + BM25 关键词搜索
-- **插件化**：文档处理插件独立开发和扩展
-
-## 2. 技术栈
-
-| 组件 | 技术 | 版本 |
-|------|------|------|
-| 主框架 | TypeScript / Node.js | Node 18+ |
-| 包管理 | pnpm workspace | 8+ |
-| 向量存储 | LanceDB | 0.23+ |
-| 全文搜索 | 自实现 BM25 + nodejieba | - |
-| Embedding | @xenova/transformers / OpenAI API | 2.17+ |
-| 文档转换 | .NET 8 + NPOI (DOCX/Excel) | - |
-| 测试框架 | Vitest | 4.0+ |
-| 配置格式 | YAML + Zod 校验 | - |
-
-## 3. 系统架构
-
-### 3.1 分层架构
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    应用层 (Applications)                     │
-│  ┌──────────────────────┐  ┌──────────────────────────────┐ │
-│  │  MCP Server (G1)     │  │  Electron App (G2)           │ │
-│  │  - AI Agent 查询接口 │  │  - 索引管理 UI               │ │
-│  │  - stdio 模式        │  │  - 配置界面                  │ │
-│  └──────────────────────┘  └──────────────────────────────┘ │
-├─────────────────────────────────────────────────────────────┤
-│                    索引层 (Indexing)                         │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │  @agent-fs/indexer                                   │   │
-│  │  - Indexer: 主索引器                                 │   │
-│  │  - IndexPipeline: 索引流水线                         │   │
-│  │  - PluginManager: 插件管理                           │   │
-│  └──────────────────────────────────────────────────────┘   │
-├─────────────────────────────────────────────────────────────┤
-│                    服务层 (Services)                         │
-│  ┌────────────────────────┐  ┌───────────────────────────┐  │
-│  │  @agent-fs/search      │  │  @agent-fs/llm            │  │
-│  │  - BM25Index           │  │  - EmbeddingService       │  │
-│  │  - VectorStore         │  │  - SummaryService         │  │
-│  │  - SearchFusion (RRF)  │  │  - 本地/API 双模式        │  │
-│  └────────────────────────┘  └───────────────────────────┘  │
-├─────────────────────────────────────────────────────────────┤
-│                    插件层 (Plugins)                          │
-│  ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌──────────┐  │
-│  │ plugin-md  │ │ plugin-pdf │ │ plugin-docx│ │plugin-xl │  │
-│  │ 纯 TS      │ │ pdfjs-dist │ │ .NET+NPOI  │ │.NET+NPOI │  │
-│  └────────────┘ └────────────┘ └────────────┘ └──────────┘  │
-├─────────────────────────────────────────────────────────────┤
-│                    核心层 (Core)                             │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │  @agent-fs/core                                      │   │
-│  │  - 类型定义 (Chunk, Config, Plugin, Storage)         │   │
-│  │  - 配置加载 (YAML + 环境变量)                        │   │
-│  │  - 文本切分 (MarkdownChunker, SentenceSplitter)      │   │
-│  └──────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### 3.2 包依赖关系
-
-```
-@agent-fs/indexer
-    ├── @agent-fs/core
-    ├── @agent-fs/search
-    │       └── @agent-fs/core
-    ├── @agent-fs/llm
-    │       └── @agent-fs/core
-    └── plugins/*
-            └── @agent-fs/core
-```
-
-## 4. 核心模块
-
-### 4.1 @agent-fs/core
-
-核心类型定义和通用工具。
-
-**主要导出：**
-
-| 模块 | 说明 |
-|------|------|
-| `types/plugin.ts` | DocumentPlugin 接口定义 |
-| `types/chunk.ts` | Chunk 和 ChunkMetadata 类型 |
-| `types/config.ts` | Config、LLMConfig、EmbeddingConfig 等 |
-| `types/storage.ts` | VectorDocument、BM25Document (snake_case) |
-| `config/loader.ts` | 配置文件加载器 |
-| `chunker/markdown-chunker.ts` | Markdown 结构化切分 |
-| `chunker/sentence-splitter.ts` | 句子级切分 |
-
-### 4.2 @agent-fs/search
-
-搜索引擎实现。
-
-**组件：**
-
-| 组件 | 说明 |
-|------|------|
-| `BM25Index` | 自实现 BM25 算法，nodejieba 中文分词 |
-| `VectorStore` | LanceDB 向量存储封装 |
-| `SearchFusion` | RRF 多路融合搜索 |
-
-**BM25 特点：**
-- 自实现算法，不依赖 LanceDB FTS
-- nodejieba 中文分词
-- 支持持久化到磁盘
-
-### 4.3 @agent-fs/llm
-
-LLM 服务。
-
-**组件：**
-
-| 组件 | 说明 |
-|------|------|
-| `EmbeddingService` | 向量化服务（本地模型 / API） |
-| `SummaryService` | Summary 生成（OpenAI 兼容 API） |
-
-**Embedding 双模式：**
-- **本地模式**：@xenova/transformers，无需联网
-- **API 模式**：OpenAI 兼容接口
-
-### 4.4 @agent-fs/indexer
-
-索引流程整合。
-
-**类和函数：**
-
-| 类/函数 | 说明 |
-|---------|------|
-| `Indexer` | 主索引器，提供 `index()` 方法 |
-| `IndexPipeline` | 完整索引流水线 |
-| `PluginManager` | 插件注册和查找 |
-| `scanDirectory()` | 目录扫描 |
-
-### 4.5 文档插件
-
-| 插件 | 实现方式 | 支持格式 |
-|------|----------|----------|
-| plugin-markdown | 纯 TypeScript | .md |
-| plugin-pdf | TS + pdfjs-dist | .pdf |
-| plugin-docx | TS + .NET 8 (stdio) | .docx, .doc |
-| plugin-excel | TS + .NET 8 (stdio) | .xlsx, .xls |
-
-**插件接口：**
-
-```typescript
-interface DocumentPlugin {
-  name: string;
-  version: string;
-  supportedExtensions: string[];
-
-  convert(filePath: string, options?: any): Promise<DocumentConversionResult>;
-  parseLocator(locatorStr: string): LocatorInfo;
-}
-```
-
-## 5. 数据流
-
-### 5.1 索引流程
-
-```
-用户选择文件夹
-       │
-       ▼
-┌──────────────────┐
-│  scanDirectory() │  发现支持的文件
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│  PluginManager   │  按格式分发给对应插件
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│  Plugin.convert()│  转 Markdown + 位置映射
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│ MarkdownChunker  │  按结构切分 (0.6-1.2K token)
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│ EmbeddingService │  向量化
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│ SummaryService   │  生成 summary (可选)
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│ VectorStore      │  存入 LanceDB
-│ BM25Index        │  构建 BM25 索引
-└──────────────────┘
-```
-
-### 5.2 搜索流程
-
-```
-用户查询
-    │
-    ▼
-┌──────────────────┐
-│ EmbeddingService │  查询向量化
-└────────┬─────────┘
-         │
-         ▼
-┌──────────────────┐
-│  SearchFusion    │
-│  ┌─────────────┐ │
-│  │VectorStore  │─┼─→ 向量搜索 top-k
-│  │BM25Index    │─┼─→ BM25 搜索 top-k
-│  │RRF Fusion   │─┼─→ 倒数排名融合
-│  └─────────────┘ │
-└────────┬─────────┘
-         │
-         ▼
-    排序结果
-```
-
-## 6. 存储结构
-
-### 6.1 全局存储
-
-```
-~/.agent_fs/
-├── config.yaml          # 全局配置
-├── registry.json        # 已索引目录列表
-└── storage/
-    ├── vectors/         # LanceDB 向量库
-    ├── bm25/            # BM25 索引
-    └── cache/           # Embedding 缓存
-```
-
-### 6.2 本地索引元数据
-
-```
-项目目录/.fs_index/
-├── index.json           # 索引元数据
-└── documents/
-    └── {filename}/
-        └── content.md   # 转换后的 Markdown
-```
-
-### 6.3 字段命名约定
-
-| 场景 | 命名风格 | 示例 |
-|------|----------|------|
-| 外部文件 (JSON) | camelCase | `fileName`, `indexedAt` |
-| 内部存储 (DB) | snake_case | `file_name`, `chunk_id` |
-
-## 7. 配置系统
-
-### 7.1 配置文件位置
-
-优先级从高到低：
-1. 环境变量
-2. 项目目录 `.agent_fs/config.yaml`
-3. 全局 `~/.agent_fs/config.yaml`
-
-### 7.2 配置结构
-
-```yaml
-llm:
-  provider: openai
-  baseUrl: https://api.openai.com/v1
-  apiKey: ${OPENAI_API_KEY}
-  model: gpt-4o-mini
-
-embedding:
-  provider: local  # local | api
-  modelName: Xenova/bge-small-zh-v1.5
-
-indexing:
-  minTokens: 600
-  maxTokens: 1200
-
-search:
-  topK: 10
-  fusionMethod: rrf
-```
-
-## 8. 插件开发
-
-### 8.1 纯 TypeScript 插件
-
-适用于：不依赖外部程序的格式（如 Markdown）
-
-```typescript
-import { DocumentPlugin } from '@agent-fs/core';
-
-export const markdownPlugin: DocumentPlugin = {
-  name: 'markdown',
-  version: '1.0.0',
-  supportedExtensions: ['.md'],
-
-  async convert(filePath) {
-    // 读取并处理文件
-    return { markdown, mappings };
-  },
-
-  parseLocator(locatorStr) {
-    // 解析位置标识符
-    return { line, column };
-  }
-};
-```
-
-### 8.2 混合插件 (TS + 外部程序)
-
-适用于：需要调用外部程序的格式（如 DOCX、Excel）
-
-**通信协议：** stdio JSON
-
-```
-TypeScript 插件  ──stdin──>  外部程序 (.NET)
-                <──stdout──
-```
-
-**协议格式：**
-```json
-// Request (单行)
-{"action":"convert","filePath":"/path/to/file.docx"}
-
-// Response (单行)
-{"success":true,"markdown":"...", "mappings":[...]}
-```
-
-## 9. 测试策略
-
-### 9.1 测试类型
-
-| 类型 | 位置 | 框架 |
-|------|------|------|
-| 单元测试 | 各 package 内 | Vitest |
-| 集成测试 | packages/e2e | Vitest |
-
-### 9.2 E2E 测试套件
-
-位于 `packages/e2e/src/f-post/`：
-
-| 测试文件 | 覆盖范围 |
-|----------|----------|
-| markdown-plugin.e2e.ts | Markdown 插件 |
-| vector-store.e2e.ts | 向量存储 CRUD |
-| bm25-search.e2e.ts | BM25 搜索 |
-| fusion-search.e2e.ts | 多路融合 |
-| full-pipeline.e2e.ts | 完整流水线 |
-
-## 10. 开发计划状态
-
-| 计划 | 状态 | 说明 |
-|------|------|------|
-| A - Foundation | ✅ 完成 | Monorepo、类型定义 |
-| B1 - Config | ✅ 完成 | 配置系统 |
-| B2 - Chunker | ✅ 完成 | 文本切分 |
-| B3 - BM25 | ✅ 完成 | 全文搜索 |
-| B4 - Markdown Plugin | ✅ 完成 | Markdown 处理 |
-| C1 - Embedding | ✅ 完成 | 向量化服务 |
-| C2 - Summary | ✅ 完成 | Summary 生成 |
-| D - Vector Store | ✅ 完成 | 向量存储 |
-| E - Fusion | ✅ 完成 | 多路融合 |
-| F - Indexer | ✅ 完成 | 索引流程 |
-| P1 - PDF Plugin | ✅ 完成 | PDF 处理 |
-| P2 - DOCX Plugin | 🔄 进行中 | DOCX 处理 |
-| P3 - Excel Plugin | 🔄 进行中 | Excel 处理 |
-| G1 - MCP Server | 📋 计划中 | AI Agent 接口 |
-| G2 - Electron App | 📋 计划中 | 桌面应用 |
+> 面向 AI Agent 的本地文档索引与检索系统（2026-02，存储优化版）
+
+## 1. 系统定位
+
+Agent FS 让 AI Agent 在本地完成“索引 → 检索 → 定位原文”的完整闭环：
+
+1. 用户选择一个 Project 目录
+2. Indexer 递归处理子目录与文件
+3. 插件统一转换为 Markdown，并提供位置映射
+4. 系统同时写入：
+   - 向量索引（LanceDB）
+   - 倒排索引（SQLite）
+   - 原文归档（AFD，`.afd`）
+5. MCP Server 对外提供 `search / get_chunk / list_indexes / dir_tree`
 
 ---
 
-*文档版本: 1.0*
-*更新日期: 2025-02-04*
+## 2. 核心设计目标
+
+- **本地优先**：文档与索引均落地本机，不上传原文
+- **混合召回**：向量召回 + 倒排召回 + RRF 融合
+- **可定位**：每个 chunk 都可追溯到原文位置（locator + 行号）
+- **可增量**：基于文件变更检测，仅重建变化文件
+- **可层级检索**：支持 Project / 子目录 / 多目录范围检索
+
+---
+
+## 3. 分层架构
+
+```
+┌────────────────────────────────────────────────────────────┐
+│ 应用层                                                     │
+│ - @agent-fs/mcp-server（AI Agent 工具入口）               │
+│ - @agent-fs/electron-app（索引管理与可视化）              │
+├────────────────────────────────────────────────────────────┤
+│ 索引编排层                                                 │
+│ - @agent-fs/indexer（扫描、转换、切分、向量化、写入）     │
+├────────────────────────────────────────────────────────────┤
+│ 检索与模型层                                               │
+│ - @agent-fs/search（VectorStore / InvertedIndex / RRF）   │
+│ - @agent-fs/llm（Embedding / Summary）                    │
+├────────────────────────────────────────────────────────────┤
+│ 存储层                                                     │
+│ - @agent-fs/storage（Rust N-API：AFD 读写）               │
+│ - LanceDB（向量）                                          │
+│ - SQLite（倒排）                                           │
+├────────────────────────────────────────────────────────────┤
+│ 插件层                                                     │
+│ - plugin-markdown / plugin-pdf / plugin-docx / plugin-excel│
+└────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 4. 索引主流程（Indexer）
+
+## 4.1 目录级递归构建
+
+`IndexPipeline` 从 Project 根目录开始递归：
+
+- 扫描当前目录文件与子目录
+- 读取历史 `.fs_index/index.json`，做增量对比
+- 为当前目录生成 `IndexMetadata`
+- 递归处理子目录并回填聚合统计
+
+每个目录都产出自己的 `.fs_index/index.json`，根目录额外承担 Project 入口角色。
+
+## 4.2 文件级处理流水线
+
+单文件处理步骤：
+
+1. 插件 `toMarkdown()` 输出：
+   - `markdown`
+   - `mapping`
+   - 可选 `searchableText`
+2. `MarkdownChunker` 按结构切分 chunk
+3. 生成 chunk 摘要（可按配置跳过）
+4. 生成向量并写入 LanceDB（仅存向量与定位信息，不存大文本）
+5. 写入 SQLite 倒排索引
+6. 写入 AFD 文件（`content.md` + `metadata.json` + `summaries.json`）
+
+## 4.3 增量更新机制
+
+通过 `FileChecker` 判断文件是否变化：
+
+- 小文件：哈希检测（MD5）
+- 大文件：`size + mtime` 快速检测
+
+变化类型与处理：
+
+- **新增**：全量构建该文件索引
+- **修改**：先删除旧索引，再重建该文件
+- **删除**：清理向量、倒排与 AFD 归档
+
+对子目录删除场景，系统会基于 `SubdirectoryInfo.fileIds` 做兜底清理，避免孤儿 AFD 文件残留。
+
+---
+
+## 5. 查询主流程（MCP Server）
+
+## 5.1 `search`
+
+1. 解析 `scope`（Project / 子目录 / 多目录）
+2. 从 registry 展开目录范围并解析 `dirId`
+3. 并行执行：
+   - 向量召回（VectorStore）
+   - 倒排召回（InvertedIndex）
+4. 用 RRF 融合排序
+5. 从 AFD 按需读取 chunk 文本并返回
+
+## 5.2 `get_chunk`
+
+- 通过 `chunk_id` 解析 `fileId`
+- 递归遍历各级 `.fs_index/index.json` 定位文件
+- 从 **Project 根** `.fs_index/documents` 读取对应 AFD
+- 按行号范围（优先）或 locator（回退）截取正文
+- 可附带邻近 chunk（前后文）
+
+## 5.3 目录工具
+
+- `list_indexes`：返回 registry 中有效 Project 与扁平化子目录引用
+- `dir_tree`：返回递归目录树，支持 `depth` 限制，子索引缺失时返回回退节点
+
+---
+
+## 6. 关键数据模型
+
+## 6.1 插件输出契约
+
+```ts
+interface DocumentConversionResult {
+  markdown: string;
+  mapping: PositionMapping[];
+  searchableText?: SearchableEntry[];
+}
+```
+
+`searchableText` 用于结构化文档（如 Excel）精确控制倒排召回文本。
+
+## 6.2 目录索引元数据（`IndexMetadata`）
+
+关键字段：
+
+- `projectId`：Project 全局标识
+- `relativePath`：相对 Project 的路径（根目录为 `.`）
+- `parentDirId`：父目录 ID（根目录为 `null`）
+- `files[]`：文件级元数据（含 `fileId`、`hash`、`chunkCount`）
+- `subdirectories[]`：子目录信息（含 `fileIds`，用于删除清理）
+
+## 6.3 全局注册表（`Registry` v2.0）
+
+`~/.agent_fs/registry.json` 仅维护 Project：
+
+- `projects[]`：Project 列表
+- 每个 Project 包含扁平化 `subdirectories[]` 引用
+
+系统不兼容旧版 registry 结构（如 `indexRoots`）；检测到旧结构会报错提示重建索引。
+
+## 6.4 向量存储行结构（`VectorDocument`）
+
+核心字段：
+
+- `chunk_id`
+- `file_id`
+- `dir_id`
+- `rel_path`
+- `file_path`
+- `chunk_line_start` / `chunk_line_end`
+- `content_vector` / `summary_vector`
+- `locator`
+- `indexed_at` / `deleted_at`
+
+说明：向量表已移除 `content/summary` 文本字段，大文本统一从 AFD 读取。
+
+---
+
+## 7. 存储布局
+
+## 7.1 用户主目录（全局）
+
+```
+~/.agent_fs/
+├── config.yaml
+├── registry.json
+└── storage/
+    ├── vectors/                    # LanceDB
+    └── inverted-index/
+        └── inverted-index.db       # SQLite 倒排索引
+```
+
+## 7.2 Project 目录（本地索引）
+
+```
+<project>/
+├── .fs_index/
+│   ├── index.json                  # 根目录元数据
+│   └── documents/
+│       ├── <fileId>.afd            # AFD 归档
+│       └── ...
+├── <subdir>/
+│   └── .fs_index/index.json        # 子目录元数据
+└── ...
+```
+
+每个 `.afd` 内通常包含：
+
+- `content.md`
+- `metadata.json`（含 mapping）
+- `summaries.json`
+
+---
+
+## 8. 插件与索引协作规则
+
+- 插件必须提供稳定的 `locator`
+- `mapping` 用于 chunk 与原文位置关联
+- 若提供 `searchableText`，倒排索引优先使用它；否则回退到 chunk 内容
+- `markdownLine` 必须是 1-based，并与最终 markdown 行号一致
+
+详见：`docs/guides/plugin-development.md`
+
+---
+
+## 9. 测试与验证基线
+
+当前关键验证包含：
+
+- Indexer 单元与集成测试（含递归与增量）
+- MCP 工具单测（`search / get_chunk / dir_tree / list_indexes`）
+- E2E（Phase H）：
+  - `packages/e2e/src/storage-optimization/phase-h.e2e.ts`
+  - `packages/e2e/src/storage-optimization/phase-h-benchmark.e2e.ts`
+
+性能基线（本地样本）在 Phase H.5 文档中记录：
+`docs/plans/2026-02-05-storage-optimization-plan.md`
+
+---
+
+## 10. 已知边界
+
+- `registry.json` 仅支持 v2.0 结构
+- 旧 BM25 JSON 索引不再作为主链路
+- 搜索质量依赖插件 `locator` 与 `searchableText` 质量
+
+---
+
+*文档版本：2.0*  
+*更新日期：2026-02-06*
