@@ -1,7 +1,8 @@
 # 索引存储优化实施计划
 
-> 文档版本: 1.0
+> 文档版本: 1.1
 > 创建日期: 2026-02-05
+> 更新日期: 2026-02-06
 > 关联设计: [storage-optimization-design.md](./2026-02-05-storage-optimization-design.md)
 
 ## 1. 实施概览
@@ -49,6 +50,21 @@ Phase F         Phase G
         (e2e test)
 ```
 
+### 1.3 当前进展（截至 2026-02-06）
+
+- ✅ 已完成：Phase A（核心能力，除 CI 多平台编译和性能基准）
+- ✅ 已完成：Phase B（核心能力，除性能测试）
+- ✅ 已完成：Phase E.2（接入 AFDStorage + InvertedIndex，向量库去文本待 Phase C）
+- ✅ 已完成：Phase G.2 / G.3 / G.5（`search`、`get_chunk`、对应单测）
+- 🔄 进行中：Phase C / D / E（类型与向量 schema 统一改造）
+- ⏳ 待开始：Phase F、Phase H
+
+**已落地提交：**
+- `eeeb8b3` feat(storage): 实现 AFD 原生读写并修复 arm64 构建
+- `ff79ff7` feat(search): 新增 SQLite 倒排索引与目录解析能力
+- `c05d44f` feat(indexer): 接入 AFD 存储与倒排索引主流程
+- `4329ee7` feat(mcp-server): 接入 AFD 读取与倒排索引搜索
+
 ---
 
 ## 2. Phase A: @agent-fs/storage
@@ -59,16 +75,16 @@ Phase F         Phase G
 
 ### 2.2 任务清单
 
-- [ ] **A.1** 初始化 packages/storage 目录结构
-- [ ] **A.2** 配置 Cargo.toml 和 napi-rs
+- [x] **A.1** 初始化 packages/storage 目录结构
+- [x] **A.2** 配置 Cargo.toml 和 napi-rs
 - [ ] **A.3** 实现 Rust 核心功能
-  - [ ] A.3.1 ZIP 读写 (zip-rs)
-  - [ ] A.3.2 LRU 缓存
+  - [x] A.3.1 ZIP 读写 (zip-rs)
+  - [x] A.3.2 LRU 缓存
   - [ ] A.3.3 mmap 零拷贝
-  - [ ] A.3.4 并行读取 (Rayon)
-- [ ] **A.4** 实现 N-API 绑定
-- [ ] **A.5** TypeScript 包装层
-- [ ] **A.6** 单元测试
+  - [x] A.3.4 并行读取 (Rayon)
+- [x] **A.4** 实现 N-API 绑定
+- [x] **A.5** TypeScript 包装层
+- [x] **A.6** 单元测试
 - [ ] **A.7** 配置 GitHub Actions 多平台编译
 - [ ] **A.8** 性能基准测试
 
@@ -108,16 +124,16 @@ packages/storage/
 
 ### 3.2 任务清单
 
-- [ ] **B.1** 设计 SQLite schema
-- [ ] **B.2** 实现 InvertedIndex 类
-  - [ ] B.2.1 初始化和迁移
-  - [ ] B.2.2 addFile() 方法
-  - [ ] B.2.3 removeFile() 方法
-  - [ ] B.2.4 removeDirectory() 方法
-  - [ ] B.2.5 search() 方法
-- [ ] **B.3** 实现 IndexEntryBuilder（分词 + 构建 posting）
-- [ ] **B.4** 实现 DirectoryResolver（目录展开）
-- [ ] **B.5** 单元测试
+- [x] **B.1** 设计 SQLite schema
+- [x] **B.2** 实现 InvertedIndex 类
+  - [x] B.2.1 初始化和迁移
+  - [x] B.2.2 addFile() 方法
+  - [x] B.2.3 removeFile() 方法
+  - [x] B.2.4 removeDirectory() 方法
+  - [x] B.2.5 search() 方法
+- [x] **B.3** 实现 IndexEntryBuilder（分词 + 构建 posting）
+- [x] **B.4** 实现 DirectoryResolver（目录展开）
+- [x] **B.5** 单元测试
 - [ ] **B.6** 性能测试
 
 ### 3.3 验收标准
@@ -225,8 +241,8 @@ packages/core/src/types/
   - [ ] MD5（≤200MB）
   - [ ] size+mtime（>200MB）
 - [ ] **E.2** 重构 IndexPipeline
-  - [ ] 使用 AFDStorage 存储文档
-  - [ ] 使用 InvertedIndex 构建倒排索引
+  - [x] 使用 AFDStorage 存储文档
+  - [x] 使用 InvertedIndex 构建倒排索引
   - [ ] 向量库移除文本存储
 - [ ] **E.3** 实现层级索引
   - [ ] 递归索引子文件夹
@@ -315,14 +331,14 @@ packages/plugin-excel/
   - [ ] 只返回 Project 列表
   - [ ] 包含子文件夹树
 - [ ] **G.2** 更新 search 工具
-  - [ ] 支持多文件夹过滤
+  - [x] 支持多文件夹过滤
   - [ ] 自动展开子文件夹
-  - [ ] 从 AFD 读取 chunk 内容
-- [ ] **G.3** 更新 get_chunk 工具
-  - [ ] 从 AFD 读取内容
+  - [x] 从 AFD 读取 chunk 内容
+- [x] **G.3** 更新 get_chunk 工具
+  - [x] 从 AFD 读取内容
 - [ ] **G.4** 更新 dir_tree 工具
   - [ ] 支持层级目录结构
-- [ ] **G.5** 单元测试
+- [x] **G.5** 单元测试
 
 ### 8.3 交付物
 
