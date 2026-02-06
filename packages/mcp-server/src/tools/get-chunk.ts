@@ -1,7 +1,8 @@
-import { readFileSync, existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import type { Registry, IndexMetadata } from '@agent-fs/core';
+import type { IndexMetadata, Registry } from '@agent-fs/core';
+import { createAFDStorage } from '@agent-fs/storage';
 import { getVectorStore } from './search.js';
 
 interface GetChunkInput {
@@ -21,206 +22,187 @@ interface ChunkInfo {
   };
 }
 
+interface FileInfo {
+  dirPath: string;
+  fileName: string;
+}
+
+interface VectorChunkDoc {
+  chunk_id: string;
+  file_id: string;
+  file_path: string;
+  locator: string;
+  content?: string;
+  summary?: string;
+}
+
 function parseChunkId(chunkId: string): { fileId: string; chunkIndex: number } {
   const parts = chunkId.split(':');
   if (parts.length < 2) {
     throw new Error(`Invalid chunk_id format: ${chunkId}`);
   }
-  const chunkIndex = parseInt(parts[parts.length - 1], 10);
-  const fileId = parts.slice(0, -1).join(':');
-  return { fileId, chunkIndex };
+
+  const chunkIndex = Number.parseInt(parts[parts.length - 1], 10);
+  if (Number.isNaN(chunkIndex)) {
+    throw new Error(`Invalid chunk_id format: ${chunkId}`);
+  }
+
+  return {
+    fileId: parts.slice(0, -1).join(':'),
+    chunkIndex,
+  };
 }
 
-function findFileDirectory(fileId: string): { dirPath: string; fileName: string } | null {
+function findFileDirectory(fileId: string): FileInfo | null {
   const registryPath = join(homedir(), '.agent_fs', 'registry.json');
-  if (!existsSync(registryPath)) return null;
+  if (!existsSync(registryPath)) {
+    return null;
+  }
 
-  const registry: Registry = JSON.parse(readFileSync(registryPath, 'utf-8'));
+  const registry = JSON.parse(readFileSync(registryPath, 'utf-8')) as Registry;
 
-  for (const dir of registry.indexedDirectories) {
-    if (!dir.valid) continue;
+  for (const directory of registry.indexedDirectories) {
+    if (!directory.valid) continue;
 
-    const indexPath = join(dir.path, '.fs_index', 'index.json');
+    const indexPath = join(directory.path, '.fs_index', 'index.json');
     if (!existsSync(indexPath)) continue;
 
-    const metadata: IndexMetadata = JSON.parse(readFileSync(indexPath, 'utf-8'));
-    const file = metadata.files.find((f) => f.fileId === fileId);
+    const metadata = JSON.parse(readFileSync(indexPath, 'utf-8')) as IndexMetadata;
+    const file = metadata.files.find((item) => item.fileId === fileId);
     if (file) {
-      return { dirPath: dir.path, fileName: file.name };
+      return {
+        dirPath: directory.path,
+        fileName: file.name,
+      };
     }
   }
 
   return null;
 }
 
-export async function getChunk(input: GetChunkInput) {
-  const { chunk_id, include_neighbors = false, neighbor_count = 2 } = input;
-
-  try {
-    const vectorStore = getVectorStore();
-    const docs = await vectorStore.getByChunkIds([chunk_id]);
-
-    if (docs.length > 0) {
-      const doc = docs[0];
-      const result: { chunk: ChunkInfo; neighbors?: { before: ChunkInfo[]; after: ChunkInfo[] } } = {
-        chunk: {
-          id: doc.chunk_id,
-          content: doc.content,
-          summary: doc.summary,
-          token_count: Math.ceil(doc.content.length / 4),
-          source: {
-            file_path: doc.file_path,
-            locator: doc.locator,
-          },
-        },
-      };
-
-      if (include_neighbors) {
-        const { fileId, chunkIndex } = parseChunkId(chunk_id);
-        const neighborIds: string[] = [];
-
-        for (let i = Math.max(0, chunkIndex - neighbor_count); i < chunkIndex; i++) {
-          neighborIds.push(`${fileId}:${String(i).padStart(4, '0')}`);
-        }
-
-        for (let i = chunkIndex + 1; i <= chunkIndex + neighbor_count; i++) {
-          neighborIds.push(`${fileId}:${String(i).padStart(4, '0')}`);
-        }
-
-        const neighborDocs = await vectorStore.getByChunkIds(neighborIds);
-        const neighborMap = new Map(neighborDocs.map((d) => [d.chunk_id, d]));
-
-        const before: ChunkInfo[] = [];
-        const after: ChunkInfo[] = [];
-
-        for (let i = Math.max(0, chunkIndex - neighbor_count); i < chunkIndex; i++) {
-          const id = `${fileId}:${String(i).padStart(4, '0')}`;
-          const neighbor = neighborMap.get(id);
-          if (neighbor) {
-            before.push({
-              id: neighbor.chunk_id,
-              content: neighbor.content,
-              summary: neighbor.summary,
-              token_count: Math.ceil(neighbor.content.length / 4),
-              source: {
-                file_path: neighbor.file_path,
-                locator: neighbor.locator,
-              },
-            });
-          }
-        }
-
-        for (let i = chunkIndex + 1; i <= chunkIndex + neighbor_count; i++) {
-          const id = `${fileId}:${String(i).padStart(4, '0')}`;
-          const neighbor = neighborMap.get(id);
-          if (neighbor) {
-            after.push({
-              id: neighbor.chunk_id,
-              content: neighbor.content,
-              summary: neighbor.summary,
-              token_count: Math.ceil(neighbor.content.length / 4),
-              source: {
-                file_path: neighbor.file_path,
-                locator: neighbor.locator,
-              },
-            });
-          }
-        }
-
-        result.neighbors = { before, after };
-      }
-
-      return result;
-    }
-  } catch {
-    // VectorStore 未初始化，改为从文件系统读取
+function parseLocatorRange(locator: string): { start: number; end: number } | null {
+  const rangeMatch = /^(?:line|lines):(\d+)-(\d+)$/u.exec(locator.trim());
+  if (rangeMatch) {
+    return {
+      start: Number(rangeMatch[1]),
+      end: Number(rangeMatch[2]),
+    };
   }
 
-  const { fileId, chunkIndex } = parseChunkId(chunk_id);
-  const fileInfo = findFileDirectory(fileId);
+  const singleMatch = /^(?:line|lines):(\d+)$/u.exec(locator.trim());
+  if (singleMatch) {
+    const line = Number(singleMatch[1]);
+    return { start: line, end: line };
+  }
 
+  return null;
+}
+
+function extractByLocator(markdown: string, locator: string): string {
+  const range = parseLocatorRange(locator);
+  if (!range) {
+    return '';
+  }
+
+  const lines = markdown.split('\n');
+  return lines
+    .slice(Math.max(0, range.start - 1), Math.min(lines.length, range.end))
+    .join('\n');
+}
+
+function buildNeighborIds(fileId: string, chunkIndex: number, neighborCount: number): string[] {
+  const ids: string[] = [];
+
+  for (let i = Math.max(0, chunkIndex - neighborCount); i < chunkIndex; i += 1) {
+    ids.push(`${fileId}:${String(i).padStart(4, '0')}`);
+  }
+
+  for (let i = chunkIndex + 1; i <= chunkIndex + neighborCount; i += 1) {
+    ids.push(`${fileId}:${String(i).padStart(4, '0')}`);
+  }
+
+  return ids;
+}
+
+function toChunkInfo(
+  chunkId: string,
+  doc: VectorChunkDoc,
+  markdown: string,
+  summaries: Record<string, string>,
+  fallbackPath: string
+): ChunkInfo {
+  const parsedContent = extractByLocator(markdown, doc.locator);
+  const content = parsedContent || doc.content || '';
+  const summary = summaries[chunkId] ?? doc.summary ?? '';
+
+  return {
+    id: chunkId,
+    content,
+    summary,
+    token_count: Math.ceil(content.length / 4),
+    source: {
+      file_path: doc.file_path || fallbackPath,
+      locator: doc.locator,
+    },
+  };
+}
+
+export async function getChunk(input: GetChunkInput) {
+  const { chunk_id, include_neighbors = false, neighbor_count = 2 } = input;
+  const { fileId, chunkIndex } = parseChunkId(chunk_id);
+
+  const fileInfo = findFileDirectory(fileId);
   if (!fileInfo) {
     throw new Error(`Chunk not found: ${chunk_id}`);
   }
 
-  const chunksPath = join(
-    fileInfo.dirPath,
-    '.fs_index',
-    'documents',
-    fileInfo.fileName,
-    'chunks.json'
-  );
-  const summaryPath = join(
-    fileInfo.dirPath,
-    '.fs_index',
-    'documents',
-    fileInfo.fileName,
-    'summary.json'
-  );
+  const filePath = join(fileInfo.dirPath, fileInfo.fileName);
+  const storage = createAFDStorage({
+    documentsDir: join(fileInfo.dirPath, '.fs_index', 'documents'),
+  });
 
-  if (!existsSync(chunksPath)) {
-    throw new Error(`Chunks file not found for: ${fileInfo.fileName}`);
+  const markdown = await storage.readText(fileId, 'content.md');
+  let summaries: Record<string, string> = {};
+  try {
+    const summaryBuffer = await storage.read(fileId, 'summaries.json');
+    summaries = JSON.parse(summaryBuffer.toString('utf-8')) as Record<string, string>;
+  } catch {
+    summaries = {};
   }
 
-  const chunksData = JSON.parse(readFileSync(chunksPath, 'utf-8'));
-  const summaryData = existsSync(summaryPath) ? JSON.parse(readFileSync(summaryPath, 'utf-8')) : null;
+  const idsToLoad = include_neighbors
+    ? [chunk_id, ...buildNeighborIds(fileId, chunkIndex, neighbor_count)]
+    : [chunk_id];
 
-  const chunk = chunksData.chunks[chunkIndex];
-  if (!chunk) {
-    throw new Error(`Chunk index out of range: ${chunkIndex}`);
+  const vectorStore = getVectorStore();
+  const docs = (await vectorStore.getByChunkIds(idsToLoad)) as VectorChunkDoc[];
+  const docMap = new Map(docs.map((doc) => [doc.chunk_id, doc]));
+
+  const mainDoc = docMap.get(chunk_id);
+  if (!mainDoc) {
+    throw new Error(`Chunk not found: ${chunk_id}`);
   }
 
   const result: { chunk: ChunkInfo; neighbors?: { before: ChunkInfo[]; after: ChunkInfo[] } } = {
-    chunk: {
-      id: chunk_id,
-      content: chunk.content,
-      summary: summaryData?.chunks?.[chunkIndex] || '',
-      token_count: chunk.tokenCount || Math.ceil(chunk.content.length / 4),
-      source: {
-        file_path: join(fileInfo.dirPath, fileInfo.fileName),
-        locator: chunk.locator,
-      },
-    },
+    chunk: toChunkInfo(chunk_id, mainDoc, markdown, summaries, filePath),
   };
 
   if (include_neighbors) {
     const before: ChunkInfo[] = [];
     const after: ChunkInfo[] = [];
 
-    for (let i = Math.max(0, chunkIndex - neighbor_count); i < chunkIndex; i++) {
-      const c = chunksData.chunks[i];
-      if (c) {
-        before.push({
-          id: `${fileId}:${String(i).padStart(4, '0')}`,
-          content: c.content,
-          summary: summaryData?.chunks?.[i] || '',
-          token_count: c.tokenCount || Math.ceil(c.content.length / 4),
-          source: {
-            file_path: join(fileInfo.dirPath, fileInfo.fileName),
-            locator: c.locator,
-          },
-        });
-      }
+    for (let i = Math.max(0, chunkIndex - neighbor_count); i < chunkIndex; i += 1) {
+      const neighborId = `${fileId}:${String(i).padStart(4, '0')}`;
+      const neighborDoc = docMap.get(neighborId);
+      if (!neighborDoc) continue;
+      before.push(toChunkInfo(neighborId, neighborDoc, markdown, summaries, filePath));
     }
 
-    for (
-      let i = chunkIndex + 1;
-      i <= chunkIndex + neighbor_count && i < chunksData.chunks.length;
-      i++
-    ) {
-      const c = chunksData.chunks[i];
-      if (c) {
-        after.push({
-          id: `${fileId}:${String(i).padStart(4, '0')}`,
-          content: c.content,
-          summary: summaryData?.chunks?.[i] || '',
-          token_count: c.tokenCount || Math.ceil(c.content.length / 4),
-          source: {
-            file_path: join(fileInfo.dirPath, fileInfo.fileName),
-            locator: c.locator,
-          },
-        });
-      }
+    for (let i = chunkIndex + 1; i <= chunkIndex + neighbor_count; i += 1) {
+      const neighborId = `${fileId}:${String(i).padStart(4, '0')}`;
+      const neighborDoc = docMap.get(neighborId);
+      if (!neighborDoc) continue;
+      after.push(toChunkInfo(neighborId, neighborDoc, markdown, summaries, filePath));
     }
 
     result.neighbors = { before, after };

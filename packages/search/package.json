@@ -14,7 +14,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && mkdir -p dist/inverted-index && cp src/inverted-index/stopwords.txt dist/inverted-index/stopwords.txt",
     "clean": "rm -rf dist",
     "lint": "eslint src",
     "test": "vitest run"
