@@ -1,19 +1,23 @@
-import { v4 as uuidv4 } from 'uuid';
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
+import { v4 as uuidv4 } from 'uuid';
 import type {
-  IndexMetadata,
-  FileMetadata,
-  VectorDocument,
   ChunkMetadata,
+  DocumentConversionResult,
+  FileMetadata,
+  IndexMetadata,
+  SubdirectoryInfo,
   SummaryMode,
+  VectorDocument,
 } from '@agent-fs/core';
 import { MarkdownChunker } from '@agent-fs/core';
 import type { EmbeddingService, SummaryService } from '@agent-fs/llm';
-import type { InvertedIndex, IndexEntry, VectorStore } from '@agent-fs/search';
+import type { IndexEntry, InvertedIndex, VectorStore } from '@agent-fs/search';
 import type { AFDStorage } from '@agent-fs/storage';
+import { FileChecker } from './file-checker';
 import type { PluginManager } from './plugin-manager';
+import { scanDirectory, type ScanResult } from './scanner';
 
 export interface IndexProgress {
   phase: 'scan' | 'convert' | 'chunk' | 'summary' | 'embed' | 'write';
@@ -42,68 +46,230 @@ export interface SummaryPipelineOptions {
   timeoutMs?: number;
 }
 
+interface DirectoryContext {
+  dirPath: string;
+  relativePath: string;
+  dirId: string;
+  parentDirId: string | null;
+  scanResult: ScanResult;
+  children: DirectoryContext[];
+}
+
+interface DirectoryRunResult {
+  metadata: IndexMetadata;
+  totalFileCount: number;
+  totalChunkCount: number;
+  totalTokens: number;
+}
+
+interface ProcessFileInput {
+  filePath: string;
+  relativeFilePath: string;
+  displayName: string;
+  dirId: string;
+  fileId: string;
+  fileHash: string;
+  processed: number;
+  total: number;
+}
+
 export class IndexPipeline {
-  private options: IndexerOptions;
-  private dirId: string;
+  private readonly options: IndexerOptions;
+  private projectId: string;
+  private existingMetadataByRelativePath = new Map<string, IndexMetadata>();
+  private processedFiles = 0;
+  private totalFiles = 0;
+  private readonly fileChecker = new FileChecker();
 
   constructor(options: IndexerOptions) {
     this.options = options;
-    this.dirId = uuidv4();
+    this.projectId = uuidv4();
   }
 
   async run(): Promise<IndexMetadata> {
-    const { dirPath, pluginManager, onProgress } = this.options;
+    const { dirPath } = this.options;
+
+    // 根目录统一存放 AFD 文档
+    const rootFsIndexPath = join(dirPath, '.fs_index');
+    mkdirSync(rootFsIndexPath, { recursive: true });
+    mkdirSync(join(rootFsIndexPath, 'documents'), { recursive: true });
+
+    this.existingMetadataByRelativePath = this.loadExistingMetadataMap(dirPath);
+    const existingRoot = this.existingMetadataByRelativePath.get('.');
+    this.projectId = existingRoot?.projectId ?? uuidv4();
+    const rootDirId = existingRoot?.dirId ?? this.projectId;
+
+    const tree = this.scanDirectoryTree(
+      dirPath,
+      '.',
+      null,
+      rootDirId,
+      this.existingMetadataByRelativePath
+    );
+    this.totalFiles = this.countSupportedFiles(tree);
+
+    const result = await this.indexDirectoryTree(tree);
+    return result.metadata;
+  }
+
+  private scanDirectoryTree(
+    dirPath: string,
+    relativePath: string,
+    parentDirId: string | null,
+    dirId: string,
+    existingMap: Map<string, IndexMetadata>
+  ): DirectoryContext {
+    const extensions = this.options.pluginManager.getSupportedExtensions();
+    const scanResult = scanDirectory(dirPath, extensions);
+
+    const children = scanResult.subdirectories.map((name) => {
+      const childPath = join(dirPath, name);
+      const childRelativePath = relativePath === '.' ? name : `${relativePath}/${name}`;
+      const childDirId = existingMap.get(childRelativePath)?.dirId ?? uuidv4();
+      return this.scanDirectoryTree(childPath, childRelativePath, dirId, childDirId, existingMap);
+    });
+
+    return {
+      dirPath,
+      relativePath,
+      dirId,
+      parentDirId,
+      scanResult,
+      children,
+    };
+  }
+
+  private countSupportedFiles(context: DirectoryContext): number {
+    return (
+      context.scanResult.supportedFiles.length +
+      context.children.reduce((sum, child) => sum + this.countSupportedFiles(child), 0)
+    );
+  }
+
+  private loadExistingMetadataMap(rootDirPath: string): Map<string, IndexMetadata> {
+    const map = new Map<string, IndexMetadata>();
+    const rootMetadata = this.readIndexMetadata(rootDirPath);
+    if (!rootMetadata) {
+      return map;
+    }
+
+    const stack: IndexMetadata[] = [rootMetadata];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (!current) continue;
+
+      map.set(current.relativePath, current);
+      for (const subdirectory of current.subdirectories) {
+        const childPath = join(current.directoryPath, subdirectory.name);
+        const childMetadata = this.readIndexMetadata(childPath);
+        if (childMetadata) {
+          stack.push(childMetadata);
+        }
+      }
+    }
+
+    return map;
+  }
+
+  private readIndexMetadata(dirPath: string): IndexMetadata | null {
+    const indexPath = join(dirPath, '.fs_index', 'index.json');
+    if (!existsSync(indexPath)) {
+      return null;
+    }
+
+    return JSON.parse(readFileSync(indexPath, 'utf-8')) as IndexMetadata;
+  }
+
+  private async indexDirectoryTree(context: DirectoryContext): Promise<DirectoryRunResult> {
     const summaryOptions = this.options.summaryOptions ?? {
       mode: 'batch',
       tokenBudget: 10000,
     };
 
-    // 确保 .fs_index 目录存在
-    const fsIndexPath = join(dirPath, '.fs_index');
-    mkdirSync(fsIndexPath, { recursive: true });
-    mkdirSync(join(fsIndexPath, 'documents'), { recursive: true });
+    const previousMetadata = this.existingMetadataByRelativePath.get(context.relativePath);
+    const previousFilesByName = new Map(
+      (previousMetadata?.files ?? []).map((file) => [file.name, file])
+    );
 
-    // 扫描目录
-    const extensions = pluginManager.getSupportedExtensions();
-    const { scanDirectory } = await import('./scanner');
-    const scanResult = scanDirectory(dirPath, extensions);
+    const ownFiles: FileMetadata[] = [];
+    let ownChunks = 0;
+    let ownTokens = 0;
+    const currentFileNames = new Set<string>();
 
-    const files: FileMetadata[] = [];
-    let totalChunks = 0;
-    let totalTokens = 0;
+    for (const filename of context.scanResult.supportedFiles) {
+      currentFileNames.add(filename);
+      const filePath = join(context.dirPath, filename);
+      const relativeFilePath =
+        context.relativePath === '.' ? filename : `${context.relativePath}/${filename}`;
 
-    // 处理每个文件
-    const totalFiles = scanResult.supportedFiles.length;
-    for (let i = 0; i < totalFiles; i++) {
-      const filename = scanResult.supportedFiles[i];
-      const filePath = join(dirPath, filename);
-
-      onProgress?.({
-        phase: 'convert',
-        currentFile: filename,
-        processed: i,
-        total: totalFiles,
+      const previousFile = previousFilesByName.get(filename);
+      const hashResult = await this.fileChecker.checkFileChanged(filePath, {
+        hash: previousFile?.hash ?? '',
       });
 
-      const fileMetadata = await this.processFile(
-        filePath,
-        filename,
-        i,
-        totalFiles
-      );
-      files.push(fileMetadata);
-      totalChunks += fileMetadata.chunkCount;
-      totalTokens += fileMetadata.chunkIds.length * 800; // 估算
+      let fileMetadata: FileMetadata;
+      if (previousFile && !hashResult.changed) {
+        fileMetadata = previousFile;
+      } else {
+        if (previousFile) {
+          await this.cleanupFileArtifacts(previousFile.fileId);
+        }
+
+        const fileId = previousFile?.fileId ?? this.createFileId(relativeFilePath);
+        fileMetadata = await this.processFile({
+          filePath,
+          relativeFilePath,
+          displayName: filename,
+          dirId: context.dirId,
+          fileId,
+          fileHash: hashResult.hash,
+          processed: this.processedFiles,
+          total: this.totalFiles,
+        });
+      }
+      this.processedFiles += 1;
+
+      ownFiles.push(fileMetadata);
+      ownChunks += fileMetadata.chunkCount;
+      ownTokens += fileMetadata.chunkCount * 800; // 粗略估算
     }
 
-    // 生成目录 summary
+    const removedFileCandidates = previousMetadata?.files ?? [];
+    for (const removedFile of removedFileCandidates) {
+      if (currentFileNames.has(removedFile.name)) {
+        continue;
+      }
+      await this.cleanupFileArtifacts(removedFile.fileId);
+    }
+
+    const childResults: DirectoryRunResult[] = [];
+    const currentSubdirectoryNames = new Set(context.children.map((child) => basename(child.dirPath)));
+    for (const child of context.children) {
+      childResults.push(await this.indexDirectoryTree(child));
+    }
+
+    for (const oldSubdirectory of previousMetadata?.subdirectories ?? []) {
+      if (currentSubdirectoryNames.has(oldSubdirectory.name)) {
+        continue;
+      }
+
+      await this.cleanupRemovedDirectory(oldSubdirectory, join(context.dirPath, oldSubdirectory.name));
+    }
+
+    const childFileCount = childResults.reduce((sum, child) => sum + child.totalFileCount, 0);
+    const childChunkCount = childResults.reduce((sum, child) => sum + child.totalChunkCount, 0);
+    const childTokenCount = childResults.reduce((sum, child) => sum + child.totalTokens, 0);
+
     let directorySummary = '';
     if (summaryOptions.mode !== 'skip') {
-      const fileSummaries = files.map((f) => `${f.name}: ${f.summary}`);
+      const fileSummaries = ownFiles.map((file) => `${file.name}: ${file.summary}`);
+      const subdirectorySummaries = childResults
+        .map((child) => child.metadata.directorySummary)
+        .filter((summary) => summary.length > 0);
       const dirSummaryResult = await this.options.summaryService.generateDirectorySummary(
-        dirPath,
+        context.dirPath,
         fileSummaries,
-        [],
+        subdirectorySummaries,
         {
           maxRetries: summaryOptions.maxRetries,
           timeoutMs: summaryOptions.timeoutMs,
@@ -112,43 +278,105 @@ export class IndexPipeline {
       directorySummary = dirSummaryResult.summary;
     }
 
-    // 写入 index.json（使用 camelCase，这是外部 JSON 格式）
+    const now = new Date().toISOString();
     const metadata: IndexMetadata = {
-      version: '1.0',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      dirId: this.dirId,
-      directoryPath: dirPath,
+      version: '2.0',
+      createdAt: now,
+      updatedAt: now,
+      dirId: context.dirId,
+      directoryPath: context.dirPath,
       directorySummary,
+      projectId: this.projectId,
+      relativePath: context.relativePath,
+      parentDirId: context.parentDirId,
       stats: {
-        fileCount: files.length,
-        chunkCount: totalChunks,
-        totalTokens,
+        fileCount: ownFiles.length + childFileCount,
+        chunkCount: ownChunks + childChunkCount,
+        totalTokens: ownTokens + childTokenCount,
       },
-      files,
-      subdirectories: scanResult.subdirectories.map((name) => ({
-        name,
-        hasIndex: existsSync(join(dirPath, name, '.fs_index', 'index.json')),
-        summary: null,
-        lastUpdated: null,
+      files: ownFiles,
+      subdirectories: childResults.map((child) => ({
+        name: basename(child.metadata.directoryPath),
+        dirId: child.metadata.dirId,
+        hasIndex: true,
+        summary: child.metadata.directorySummary || null,
+        fileCount: child.totalFileCount,
+        lastUpdated: child.metadata.updatedAt,
+        fileIds: this.collectDirectoryFileIds(child.metadata),
       })),
-      unsupportedFiles: scanResult.unsupportedFiles,
+      unsupportedFiles: context.scanResult.unsupportedFiles,
     };
 
-    writeFileSync(
-      join(fsIndexPath, 'index.json'),
-      JSON.stringify(metadata, null, 2)
-    );
+    this.writeDirectoryMetadata(context.dirPath, metadata);
 
-    return metadata;
+    return {
+      metadata,
+      totalFileCount: metadata.stats.fileCount,
+      totalChunkCount: metadata.stats.chunkCount,
+      totalTokens: metadata.stats.totalTokens,
+    };
   }
 
-  private async processFile(
-    filePath: string,
-    filename: string,
-    fileIndex: number,
-    totalFiles: number
-  ): Promise<FileMetadata> {
+  private writeDirectoryMetadata(dirPath: string, metadata: IndexMetadata): void {
+    const fsIndexPath = join(dirPath, '.fs_index');
+    mkdirSync(fsIndexPath, { recursive: true });
+    writeFileSync(join(fsIndexPath, 'index.json'), JSON.stringify(metadata, null, 2));
+  }
+
+  private createFileId(relativeFilePath: string): string {
+    return createHash('sha256')
+      .update(`${this.projectId}:${relativeFilePath}`)
+      .digest('hex')
+      .slice(0, 16);
+  }
+
+  private collectDirectoryFileIds(metadata: IndexMetadata): string[] {
+    const ownFileIds = metadata.files.map((file) => file.fileId);
+    const childFileIds = metadata.subdirectories.flatMap((subdirectory) => subdirectory.fileIds ?? []);
+    return Array.from(new Set([...ownFileIds, ...childFileIds]));
+  }
+
+  private async cleanupFileArtifacts(fileId: string): Promise<void> {
+    await this.options.vectorStore.deleteByFileId(fileId);
+    await this.options.invertedIndex.removeFile(fileId);
+    await this.deleteAfdFile(fileId);
+  }
+
+  private async cleanupRemovedDirectory(
+    subdirectory: SubdirectoryInfo,
+    dirPath: string
+  ): Promise<void> {
+    const metadata = this.readIndexMetadata(dirPath);
+    if (metadata) {
+      for (const file of metadata.files) {
+        await this.deleteAfdFile(file.fileId);
+      }
+
+      for (const childSubdirectory of metadata.subdirectories) {
+        const childPath = join(metadata.directoryPath, childSubdirectory.name);
+        await this.cleanupRemovedDirectory(childSubdirectory, childPath);
+      }
+    } else {
+      for (const fileId of subdirectory.fileIds ?? []) {
+        await this.deleteAfdFile(fileId);
+      }
+    }
+
+    await this.options.vectorStore.deleteByDirId(subdirectory.dirId);
+    await this.options.invertedIndex.removeDirectory(subdirectory.dirId);
+  }
+
+  private async deleteAfdFile(fileId: string): Promise<void> {
+    try {
+      await this.options.afdStorage.delete(fileId);
+    } catch {
+      // 文件可能已不存在，忽略
+    }
+  }
+
+  private async processFile(input: ProcessFileInput): Promise<FileMetadata> {
+    const { filePath, relativeFilePath, displayName, dirId, fileId, fileHash, processed, total } =
+      input;
     const {
       pluginManager,
       embeddingService,
@@ -156,58 +384,49 @@ export class IndexPipeline {
       vectorStore,
       invertedIndex,
       afdStorage,
-    } =
-      this.options;
-    const { onProgress } = this.options;
+      onProgress,
+    } = this.options;
 
-    // 获取插件
-    const ext = filename.split('.').pop() || '';
+    const ext = displayName.split('.').pop() || '';
     const plugin = pluginManager.getPlugin(ext);
-    if (!plugin) throw new Error(`No plugin for extension: ${ext}`);
+    if (!plugin) {
+      throw new Error(`No plugin for extension: ${ext}`);
+    }
 
-    // 转换为 Markdown
     onProgress?.({
       phase: 'convert',
-      currentFile: filename,
-      processed: fileIndex,
-      total: totalFiles,
+      currentFile: relativeFilePath,
+      processed,
+      total,
     });
     const conversionResult = await plugin.toMarkdown(filePath);
 
-    // 切分
     onProgress?.({
       phase: 'chunk',
-      currentFile: filename,
-      processed: fileIndex,
-      total: totalFiles,
+      currentFile: relativeFilePath,
+      processed,
+      total,
     });
     const chunker = new MarkdownChunker(this.options.chunkOptions);
     const chunks = chunker.chunk(conversionResult.markdown);
 
-    // 计算文件 hash
     const content = readFileSync(filePath);
-    const fileHash = createHash('sha256').update(content).digest('hex');
-    const fileId = createHash('sha256')
-      .update(`${this.dirId}:${filename}:${fileHash}`)
-      .digest('hex')
-      .slice(0, 16);
+    const sourceSha256 = createHash('sha256').update(content).digest('hex');
 
     const summaryOptions = this.options.summaryOptions ?? {
       mode: 'batch',
       tokenBudget: 10000,
     };
 
-    // 生成 chunk summary
     onProgress?.({
       phase: 'summary',
-      currentFile: filename,
-      processed: fileIndex,
-      total: totalFiles,
+      currentFile: relativeFilePath,
+      processed,
+      total,
     });
 
     const chunkIds = chunks.map((_, index) => `${fileId}:${String(index).padStart(4, '0')}`);
     let chunkSummaries: string[] = [];
-
     if (summaryOptions.mode === 'skip') {
       chunkSummaries = chunks.map(() => '');
     } else {
@@ -225,19 +444,16 @@ export class IndexPipeline {
       chunkSummaries = batchResults.map((result) => result.summary);
     }
 
-    // 生成 embedding
     const vectorDocs: VectorDocument[] = [];
-
-    for (let i = 0; i < chunks.length; i++) {
+    for (let i = 0; i < chunks.length; i += 1) {
       const chunk = chunks[i];
-      const chunkId = chunkIds[i];
       const chunkSummary = chunkSummaries[i] ?? '';
 
       onProgress?.({
         phase: 'embed',
-        currentFile: filename,
-        processed: fileIndex,
-        total: totalFiles,
+        currentFile: relativeFilePath,
+        processed,
+        total,
       });
 
       const [contentEmbed, summaryEmbed] = await Promise.all([
@@ -246,46 +462,37 @@ export class IndexPipeline {
       ]);
 
       const now = new Date().toISOString();
-
-      // 使用 snake_case（内部存储格式）
       vectorDocs.push({
-        chunk_id: chunkId,
+        chunk_id: chunkIds[i],
         file_id: fileId,
-        dir_id: this.dirId,
-        rel_path: filename,
+        dir_id: dirId,
+        rel_path: relativeFilePath,
         file_path: filePath,
-        content: chunk.content,
-        summary: chunkSummary,
+        chunk_line_start: chunk.lineStart,
+        chunk_line_end: chunk.lineEnd,
         content_vector: contentEmbed,
         summary_vector: summaryEmbed,
         locator: chunk.locator,
         indexed_at: now,
-        deleted_at: '', // 空字符串表示未删除
+        deleted_at: '',
       });
-
     }
 
-    // 写入存储
     await vectorStore.addDocuments(vectorDocs);
-    const indexEntries = this.buildIndexEntries(
-      conversionResult as ConversionResultWithSearchableText,
-      chunks,
-      chunkIds
-    );
-    await invertedIndex.addFile(fileId, this.dirId, indexEntries);
+    const indexEntries = this.buildIndexEntries(conversionResult, chunks, chunkIds);
+    await invertedIndex.addFile(fileId, dirId, indexEntries);
 
-    // 生成文档 summary
     onProgress?.({
       phase: 'summary',
-      currentFile: filename,
-      processed: fileIndex,
-      total: totalFiles,
+      currentFile: relativeFilePath,
+      processed,
+      total,
     });
 
     let documentSummary = '';
     if (summaryOptions.mode !== 'skip') {
       const docSummaryResult = await summaryService.generateDocumentSummary(
-        filename,
+        relativeFilePath,
         chunkSummaries,
         {
           maxRetries: summaryOptions.maxRetries,
@@ -295,12 +502,11 @@ export class IndexPipeline {
       documentSummary = docSummaryResult.summary;
     }
 
-    // 保存文档处理结果
     onProgress?.({
       phase: 'write',
-      currentFile: filename,
-      processed: fileIndex,
-      total: totalFiles,
+      currentFile: relativeFilePath,
+      processed,
+      total,
     });
     const summaries = Object.fromEntries(
       chunkIds.map((chunkId, index) => [chunkId, chunkSummaries[index] ?? ''])
@@ -309,8 +515,8 @@ export class IndexPipeline {
       'content.md': conversionResult.markdown,
       'metadata.json': JSON.stringify(
         {
-          sourceFile: filename,
-          sourceHash: `sha256:${fileHash}`,
+          sourceFile: relativeFilePath,
+          sourceHash: `sha256:${sourceSha256}`,
           plugin: ext,
           createdAt: new Date().toISOString(),
           mapping: conversionResult.mapping,
@@ -322,20 +528,19 @@ export class IndexPipeline {
     });
 
     return {
-      name: filename,
+      name: displayName,
       type: ext,
       size: content.length,
-      hash: `sha256:${fileHash}`,
+      hash: fileHash,
       fileId,
       indexedAt: new Date().toISOString(),
       chunkCount: chunkIds.length,
-      chunkIds,
       summary: documentSummary,
     };
   }
 
   private buildIndexEntries(
-    conversionResult: ConversionResultWithSearchableText,
+    conversionResult: DocumentConversionResult,
     chunks: ChunkMetadata[],
     chunkIds: string[]
   ): IndexEntry[] {
@@ -343,11 +548,7 @@ export class IndexPipeline {
     if (searchableText?.length) {
       const lineToChunk = new Map<number, string>();
       for (const [index, chunk] of chunks.entries()) {
-        for (
-          let line = chunk.markdownRange.startLine;
-          line <= chunk.markdownRange.endLine;
-          line += 1
-        ) {
+        for (let line = chunk.lineStart; line <= chunk.lineEnd; line += 1) {
           lineToChunk.set(line, chunkIds[index]);
         }
       }
@@ -374,16 +575,4 @@ export class IndexPipeline {
       locator: chunk.locator,
     }));
   }
-}
-
-interface SearchableTextEntry {
-  text: string;
-  locator: string;
-  markdownLine: number;
-}
-
-interface ConversionResultWithSearchableText {
-  markdown: string;
-  mapping: unknown[];
-  searchableText?: SearchableTextEntry[];
 }

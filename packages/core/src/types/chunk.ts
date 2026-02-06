@@ -22,6 +22,12 @@ export interface Chunk {
 
   /** 切片索引（从 0 开始） */
   index: number;
+
+  /** Markdown 行起始（1-based） */
+  lineStart: number;
+
+  /** Markdown 行结束（1-based） */
+  lineEnd: number;
 }
 
 /**
@@ -42,6 +48,12 @@ export interface ChunkMetadata {
     startLine: number;
     endLine: number;
   };
+
+  /** Markdown 行起始（1-based） */
+  lineStart: number;
+
+  /** Markdown 行结束（1-based） */
+  lineEnd: number;
 }
 
 /**

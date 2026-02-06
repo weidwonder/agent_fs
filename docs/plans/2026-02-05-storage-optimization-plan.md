@@ -54,10 +54,14 @@ Phase F         Phase G
 
 - ✅ 已完成：Phase A（核心能力，除 CI 多平台编译和性能基准）
 - ✅ 已完成：Phase B（核心能力，除性能测试）
-- ✅ 已完成：Phase E.2（接入 AFDStorage + InvertedIndex，向量库去文本待 Phase C）
-- ✅ 已完成：Phase G.2 / G.3 / G.5（`search`、`get_chunk`、对应单测）
-- 🔄 进行中：Phase C / D / E（类型与向量 schema 统一改造）
-- ⏳ 待开始：Phase F、Phase H
+- ✅ 已完成：Phase C.1 / C.2 / C.3（向量 schema、VectorStore、单测）
+- ✅ 已完成：Phase D（核心类型、Registry 结构、类型导出）
+- ✅ 已完成：Phase E.2（接入 AFDStorage + InvertedIndex + 向量去文本）
+- ✅ 已完成：Phase E.1 / E.3 / E.4（FileChecker、递归层级索引、Registry 扁平子目录）
+- ✅ 已完成：Phase E.5 / E.6 / E.7（增量更新闭环、Indexer 单测、集成测试）
+- ✅ 已完成：Phase F.1 / F.2 / F.3 / F.4 / F.5 / F.6（Excel 语义化输出、searchableText、适配与验证）
+- ✅ 已完成：Phase G.1 / G.2 / G.3 / G.4 / G.5（`list_indexes`、`search`、`get_chunk`、`dir_tree`、对应单测）
+- ✅ 已完成：Phase H.1 / H.2 / H.3 / H.4 / H.5（E2E 闭环 + 性能基准测试）
 
 **已落地提交：**
 - `eeeb8b3` feat(storage): 实现 AFD 原生读写并修复 arm64 构建
@@ -167,13 +171,13 @@ packages/search/src/
 
 ### 4.2 任务清单
 
-- [ ] **C.1** 更新 VectorDocument 类型
-  - [ ] 移除 content、summary 字段
-  - [ ] 新增 chunk_line_start、chunk_line_end 字段
-- [ ] **C.2** 更新 VectorStore 实现
-  - [ ] addDocuments() 适配新 schema
-  - [ ] searchByContent() 返回行范围
-- [ ] **C.3** 更新单元测试
+- [x] **C.1** 更新 VectorDocument 类型
+  - [x] 移除 content、summary 字段
+  - [x] 新增 chunk_line_start、chunk_line_end 字段
+- [x] **C.2** 更新 VectorStore 实现
+  - [x] addDocuments() 适配新 schema
+  - [x] searchByContent() 返回行范围
+- [x] **C.3** 更新单元测试
 - [ ] **C.4** 验证存储体积减少
 
 ### 4.3 验收标准
@@ -204,18 +208,18 @@ packages/core/src/types/
 
 ### 5.2 任务清单
 
-- [ ] **D.1** 更新 Plugin 接口
-  - [ ] 新增 SearchableEntry 类型
-  - [ ] PluginOutput 新增 searchableText 字段
-- [ ] **D.2** 更新 IndexMetadata 类型
-  - [ ] 新增层级信息字段 (projectId, relativePath, parentDirId)
-  - [ ] FileMetadata 移除 chunkIds
-  - [ ] FileMetadata 新增 hash 字段
-- [ ] **D.3** 更新 Registry 类型
-  - [ ] 改名为 projects
-  - [ ] 新增 SubdirectoryRef
-- [ ] **D.4** 新增 Chunk 行范围信息
-- [ ] **D.5** 更新类型导出
+- [x] **D.1** 更新 Plugin 接口
+  - [x] 新增 SearchableEntry 类型
+  - [x] PluginOutput 新增 searchableText 字段
+- [x] **D.2** 更新 IndexMetadata 类型
+  - [x] 新增层级信息字段 (projectId, relativePath, parentDirId)
+  - [x] FileMetadata 移除 chunkIds
+  - [x] FileMetadata 新增 hash 字段
+- [x] **D.3** 更新 Registry 类型
+  - [x] 改名为 projects
+  - [x] 新增 SubdirectoryRef
+- [x] **D.4** 新增 Chunk 行范围信息
+- [x] **D.5** 更新类型导出
 
 ### 5.3 交付物
 
@@ -237,24 +241,24 @@ packages/core/src/types/
 
 ### 6.2 任务清单
 
-- [ ] **E.1** 实现 FileChecker（文件变更检测）
-  - [ ] MD5（≤200MB）
-  - [ ] size+mtime（>200MB）
-- [ ] **E.2** 重构 IndexPipeline
+- [x] **E.1** 实现 FileChecker（文件变更检测）
+  - [x] MD5（≤200MB）
+  - [x] size+mtime（>200MB）
+- [x] **E.2** 重构 IndexPipeline
   - [x] 使用 AFDStorage 存储文档
   - [x] 使用 InvertedIndex 构建倒排索引
-  - [ ] 向量库移除文本存储
-- [ ] **E.3** 实现层级索引
-  - [ ] 递归索引子文件夹
-  - [ ] 维护 projectId、relativePath、parentDirId
-- [ ] **E.4** 更新 Registry 管理
-  - [ ] 只记录 Project
-  - [ ] 扁平化存储子文件夹引用
-- [ ] **E.5** 实现增量更新
-  - [ ] 检测文件变更
-  - [ ] 更新单个文件索引
-- [ ] **E.6** 单元测试
-- [ ] **E.7** 集成测试
+  - [x] 向量库移除文本存储
+- [x] **E.3** 实现层级索引
+  - [x] 递归索引子文件夹
+  - [x] 维护 projectId、relativePath、parentDirId
+- [x] **E.4** 更新 Registry 管理
+  - [x] 只记录 Project
+  - [x] 扁平化存储子文件夹引用
+- [x] **E.5** 实现增量更新
+  - [x] 检测文件变更
+  - [x] 更新单个文件索引
+- [x] **E.6** 单元测试
+- [x] **E.7** 集成测试
 
 ### 6.3 验收标准
 
@@ -286,15 +290,15 @@ packages/indexer/src/
 
 ### 7.2 任务清单
 
-- [ ] **F.1** 设计 Excel 语义化 markdown 格式
-- [ ] **F.2** 实现 searchableText 生成
-  - [ ] 按区域组织可搜索文本
-  - [ ] 每个 entry 关联 markdown 行号
-  - [ ] 每个 entry 带 locator
-- [ ] **F.3** 更新 .NET 转换器输出格式
-- [ ] **F.4** 更新 TypeScript 适配层
-- [ ] **F.5** 单元测试
-- [ ] **F.6** 验证搜索准确性
+- [x] **F.1** 设计 Excel 语义化 markdown 格式
+- [x] **F.2** 实现 searchableText 生成
+  - [x] 按区域组织可搜索文本
+  - [x] 每个 entry 关联 markdown 行号
+  - [x] 每个 entry 带 locator
+- [x] **F.3** 更新 .NET 转换器输出格式
+- [x] **F.4** 更新 TypeScript 适配层
+- [x] **F.5** 单元测试
+- [x] **F.6** 验证搜索准确性
 
 ### 7.3 验收标准
 
@@ -327,17 +331,17 @@ packages/plugin-excel/
 
 ### 8.2 任务清单
 
-- [ ] **G.1** 更新 list_indexes 工具
-  - [ ] 只返回 Project 列表
-  - [ ] 包含子文件夹树
-- [ ] **G.2** 更新 search 工具
+- [x] **G.1** 更新 list_indexes 工具
+  - [x] 只返回 Project 列表
+  - [x] 包含子文件夹树
+- [x] **G.2** 更新 search 工具
   - [x] 支持多文件夹过滤
-  - [ ] 自动展开子文件夹
+  - [x] 自动展开子文件夹
   - [x] 从 AFD 读取 chunk 内容
 - [x] **G.3** 更新 get_chunk 工具
   - [x] 从 AFD 读取内容
-- [ ] **G.4** 更新 dir_tree 工具
-  - [ ] 支持层级目录结构
+- [x] **G.4** 更新 dir_tree 工具
+  - [x] 支持层级目录结构
 - [x] **G.5** 单元测试
 
 ### 8.3 交付物
@@ -360,21 +364,21 @@ E2E 测试验证完整流程。
 
 ### 9.2 任务清单
 
-- [ ] **H.1** 完整索引流程测试
-  - [ ] 递归索引 Project
-  - [ ] 向量搜索验证
-  - [ ] 倒排索引搜索验证
-  - [ ] 融合搜索验证
-- [ ] **H.2** 增量更新测试
-  - [ ] 文件新增
-  - [ ] 文件删除
-  - [ ] 文件修改
-- [ ] **H.3** 层级搜索测试
-  - [ ] 搜索 Project
-  - [ ] 搜索子文件夹
-  - [ ] 多文件夹搜索
-- [ ] **H.4** MCP 工具测试
-- [ ] **H.5** 性能基准测试
+- [x] **H.1** 完整索引流程测试
+  - [x] 递归索引 Project
+  - [x] 向量搜索验证
+  - [x] 倒排索引搜索验证
+  - [x] 融合搜索验证
+- [x] **H.2** 增量更新测试
+  - [x] 文件新增
+  - [x] 文件删除
+  - [x] 文件修改
+- [x] **H.3** 层级搜索测试
+  - [x] 搜索 Project
+  - [x] 搜索子文件夹
+  - [x] 多文件夹搜索
+- [x] **H.4** MCP 工具测试
+- [x] **H.5** 性能基准测试
 
 ### 9.3 验收标准
 
@@ -388,14 +392,29 @@ E2E 测试验证完整流程。
 ### 9.4 交付物
 
 ```
-packages/e2e/src/
-├── storage-optimization/
-│   ├── full-pipeline.e2e.ts
-│   ├── incremental-update.e2e.ts
-│   ├── hierarchical-search.e2e.ts
-│   └── mcp-tools.e2e.ts
-└── ...
+packages/e2e/src/storage-optimization/
+├── phase-h.e2e.ts            # H.1/H.2/H.3/H.4
+└── phase-h-benchmark.e2e.ts  # H.5
 ```
+
+### 9.5 性能基准结果（2026-02-06）
+
+执行命令：
+
+```bash
+cd packages/e2e
+pnpm exec vitest run src/storage-optimization/phase-h.e2e.ts src/storage-optimization/phase-h-benchmark.e2e.ts --config vitest.config.ts
+```
+
+实测结果（本地基线，96 文件）：
+
+| 指标 | 实测值 | 设计目标 | 结论 |
+|------|-------|---------|------|
+| 完整索引耗时 | 691.526ms | 无硬阈值（记录基线） | ✅ 基线已记录 |
+| 增量更新耗时 | 569.927ms（20 文件变更） | `<100ms/文件` | ✅ 28.496ms/文件 |
+| 向量搜索平均耗时 | 41.014ms | `<100ms` | ✅ 达标 |
+| 倒排搜索平均耗时 | 0.502ms | `<50ms` | ✅ 达标 |
+| 融合（RRF）平均耗时 | 0.016ms | `<50ms` | ✅ 达标 |
 
 ---
 
@@ -437,22 +456,22 @@ packages/e2e/src/
 
 ### 11.3 Phase E 完成检查
 
-- [ ] 递归索引功能正常
-- [ ] 增量更新功能正常
-- [ ] Registry 结构正确
-- [ ] 集成测试通过
+- [x] 递归索引功能正常
+- [x] 增量更新功能正常
+- [x] Registry 结构正确
+- [x] 集成测试通过
 
 ### 11.4 Phase F-G 完成检查
 
-- [ ] Excel 插件输出正确
-- [ ] MCP 工具功能正常
-- [ ] 搜索结果准确
+- [x] Excel 插件输出正确
+- [x] MCP 工具功能正常
+- [x] 搜索结果准确
 
 ### 11.5 Phase H 完成检查
 
-- [ ] 所有 E2E 测试通过
-- [ ] 性能指标达标
-- [ ] 无回归问题
+- [x] 所有 E2E 测试通过
+- [x] 性能指标达标
+- [x] 无回归问题
 
 ---
 

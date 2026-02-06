@@ -5,7 +5,17 @@ import { join } from 'node:path';
 
 const state = {
   homeDir: '',
-  vectorDocs: new Map<string, { chunk_id: string; file_id: string; file_path: string; locator: string; content: string; summary: string }>(),
+  vectorDocs: new Map<
+    string,
+    {
+      chunk_id: string;
+      file_id: string;
+      file_path: string;
+      locator: string;
+      chunk_line_start: number;
+      chunk_line_end: number;
+    }
+  >(),
   afdFiles: new Map<string, { content: string; summaries: Record<string, string> }>(),
 };
 
@@ -66,18 +76,19 @@ describe('getChunk', () => {
       join(baseDir, '.agent_fs', 'registry.json'),
       JSON.stringify(
         {
-          version: '1.0',
+          version: '2.0',
           embeddingModel: 'mock',
           embeddingDimension: 3,
-          indexedDirectories: [
+          projects: [
             {
               path: projectDir,
               alias: 'project',
-              dirId: 'd1',
+              projectId: 'd1',
               summary: 'test',
               lastUpdated: '2026-02-06T00:00:00.000Z',
-              fileCount: 1,
-              chunkCount: 2,
+              totalFileCount: 1,
+              totalChunkCount: 2,
+              subdirectories: [],
               valid: true,
             },
           ],
@@ -91,12 +102,15 @@ describe('getChunk', () => {
       join(projectDir, '.fs_index', 'index.json'),
       JSON.stringify(
         {
-          version: '1.0',
+          version: '2.0',
           createdAt: '2026-02-06T00:00:00.000Z',
           updatedAt: '2026-02-06T00:00:00.000Z',
           dirId: 'd1',
           directoryPath: projectDir,
           directorySummary: 'test',
+          projectId: 'd1',
+          relativePath: '.',
+          parentDirId: null,
           stats: { fileCount: 1, chunkCount: 2, totalTokens: 10 },
           files: [
             {
@@ -107,7 +121,6 @@ describe('getChunk', () => {
               fileId: 'f1',
               indexedAt: '2026-02-06T00:00:00.000Z',
               chunkCount: 2,
-              chunkIds: ['f1:0000', 'f1:0001'],
               summary: 'doc summary',
             },
           ],
@@ -133,8 +146,8 @@ describe('getChunk', () => {
       file_id: 'f1',
       file_path: join(projectDir, 'a.md'),
       locator: 'line:1-1',
-      content: '旧内容一',
-      summary: '旧摘要一',
+      chunk_line_start: 1,
+      chunk_line_end: 1,
     });
 
     state.vectorDocs.set('f1:0001', {
@@ -142,8 +155,8 @@ describe('getChunk', () => {
       file_id: 'f1',
       file_path: join(projectDir, 'a.md'),
       locator: 'line:2-2',
-      content: '旧内容二',
-      summary: '旧摘要二',
+      chunk_line_start: 2,
+      chunk_line_end: 2,
     });
   });
 
@@ -165,6 +178,133 @@ describe('getChunk', () => {
 
   it('chunk_id 非法时抛错', async () => {
     await expect(getChunk({ chunk_id: 'invalid' })).rejects.toThrow('Invalid chunk_id format');
+  });
+
+  it('应支持在子目录索引中定位 chunk', async () => {
+    const subDir = join(projectDir, 'docs');
+    mkdirSync(join(subDir, '.fs_index'), { recursive: true });
+
+    writeFileSync(
+      join(baseDir, '.agent_fs', 'registry.json'),
+      JSON.stringify(
+        {
+          version: '2.0',
+          embeddingModel: 'mock',
+          embeddingDimension: 3,
+          projects: [
+            {
+              path: projectDir,
+              alias: 'project',
+              projectId: 'd1',
+              summary: 'test',
+              lastUpdated: '2026-02-06T00:00:00.000Z',
+              totalFileCount: 1,
+              totalChunkCount: 1,
+              subdirectories: [
+                {
+                  relativePath: 'docs',
+                  dirId: 'd2',
+                  fileCount: 1,
+                  chunkCount: 1,
+                  lastUpdated: '2026-02-06T00:00:00.000Z',
+                },
+              ],
+              valid: true,
+            },
+          ],
+        },
+        null,
+        2
+      )
+    );
+
+    writeFileSync(
+      join(projectDir, '.fs_index', 'index.json'),
+      JSON.stringify(
+        {
+          version: '2.0',
+          createdAt: '2026-02-06T00:00:00.000Z',
+          updatedAt: '2026-02-06T00:00:00.000Z',
+          dirId: 'd1',
+          directoryPath: projectDir,
+          directorySummary: 'test',
+          projectId: 'd1',
+          relativePath: '.',
+          parentDirId: null,
+          stats: { fileCount: 1, chunkCount: 1, totalTokens: 10 },
+          files: [],
+          subdirectories: [
+            {
+              name: 'docs',
+              dirId: 'd2',
+              hasIndex: true,
+              summary: 'docs',
+              fileCount: 1,
+              lastUpdated: '2026-02-06T00:00:00.000Z',
+              fileIds: ['f-sub'],
+            },
+          ],
+          unsupportedFiles: [],
+        },
+        null,
+        2
+      )
+    );
+
+    writeFileSync(
+      join(subDir, '.fs_index', 'index.json'),
+      JSON.stringify(
+        {
+          version: '2.0',
+          createdAt: '2026-02-06T00:00:00.000Z',
+          updatedAt: '2026-02-06T00:00:00.000Z',
+          dirId: 'd2',
+          directoryPath: subDir,
+          directorySummary: 'docs',
+          projectId: 'd1',
+          relativePath: 'docs',
+          parentDirId: 'd1',
+          stats: { fileCount: 1, chunkCount: 1, totalTokens: 10 },
+          files: [
+            {
+              name: 'b.md',
+              type: 'md',
+              size: 10,
+              hash: 'hash-sub',
+              fileId: 'f-sub',
+              indexedAt: '2026-02-06T00:00:00.000Z',
+              chunkCount: 1,
+              summary: 'sub summary',
+            },
+          ],
+          subdirectories: [],
+          unsupportedFiles: [],
+        },
+        null,
+        2
+      )
+    );
+
+    const projectDocumentsDir = join(projectDir, '.fs_index', 'documents');
+    state.afdFiles.set(`${projectDocumentsDir}:f-sub`, {
+      content: '子目录第一行\n子目录第二行',
+      summaries: {
+        'f-sub:0000': '子目录摘要',
+      },
+    });
+
+    state.vectorDocs.set('f-sub:0000', {
+      chunk_id: 'f-sub:0000',
+      file_id: 'f-sub',
+      file_path: join(subDir, 'b.md'),
+      locator: 'line:1-1',
+      chunk_line_start: 1,
+      chunk_line_end: 1,
+    });
+
+    const result = await getChunk({ chunk_id: 'f-sub:0000' });
+    expect(result.chunk.content).toBe('子目录第一行');
+    expect(result.chunk.summary).toBe('子目录摘要');
   });
 
   afterEach(() => {

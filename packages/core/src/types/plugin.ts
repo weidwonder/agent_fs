@@ -38,6 +38,9 @@ export interface DocumentConversionResult {
 
   /** 位置映射表 */
   mapping: PositionMapping[];
+
+  /** 可搜索文本（结构化插件可选提供） */
+  searchableText?: SearchableEntry[];
 }
 
 /**
@@ -53,6 +56,20 @@ export interface PositionMapping {
 
   /** 原文档定位符（插件自定义格式） */
   originalLocator: string;
+}
+
+/**
+ * 可搜索文本条目
+ */
+export interface SearchableEntry {
+  /** 可搜索文本内容 */
+  text: string;
+
+  /** 对应 Markdown 行号（1-based） */
+  markdownLine: number;
+
+  /** 原文定位符（插件自定义格式） */
+  locator: string;
 }
 
 /**

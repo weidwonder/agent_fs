@@ -30,6 +30,8 @@ public class ExcelToMarkdownServiceTests
             Assert.Empty(region.Tables);
             Assert.Contains("Range[A1:B2]:", region.Markdown);
             Assert.Contains("|A|B|", region.Markdown);
+            Assert.NotEmpty(region.SearchableEntries);
+            Assert.Contains(region.SearchableEntries, entry => entry.Locator == "sheet:Sheet1/range:A1:B2");
         }
         finally
         {

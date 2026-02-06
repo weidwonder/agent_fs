@@ -7,6 +7,8 @@ describe('Chunk Types', () => {
     expectTypeOf<Chunk>().toHaveProperty('content');
     expectTypeOf<Chunk>().toHaveProperty('summary');
     expectTypeOf<Chunk>().toHaveProperty('tokenCount');
+    expectTypeOf<Chunk>().toHaveProperty('lineStart');
+    expectTypeOf<Chunk>().toHaveProperty('lineEnd');
   });
 
   it('ChunkerOptions should have min and max tokens', () => {

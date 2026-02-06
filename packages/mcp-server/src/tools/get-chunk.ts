@@ -23,6 +23,7 @@ interface ChunkInfo {
 }
 
 interface FileInfo {
+  projectPath: string;
   dirPath: string;
   fileName: string;
 }
@@ -32,8 +33,13 @@ interface VectorChunkDoc {
   file_id: string;
   file_path: string;
   locator: string;
-  content?: string;
-  summary?: string;
+  chunk_line_start?: number;
+  chunk_line_end?: number;
+}
+
+interface RuntimeProject {
+  path: string;
+  valid: boolean;
 }
 
 function parseChunkId(chunkId: string): { fileId: string; chunkIndex: number } {
@@ -60,20 +66,51 @@ function findFileDirectory(fileId: string): FileInfo | null {
   }
 
   const registry = JSON.parse(readFileSync(registryPath, 'utf-8')) as Registry;
+  if (!Array.isArray(registry.projects)) {
+    throw new Error('registry.json 不是 2.0 格式，请删除后重新索引');
+  }
+  const projects = registry.projects.map((project) => ({
+    path: project.path,
+    valid: project.valid,
+  }));
 
-  for (const directory of registry.indexedDirectories) {
-    if (!directory.valid) continue;
+  for (const project of projects) {
+    if (!project.valid) continue;
 
-    const indexPath = join(directory.path, '.fs_index', 'index.json');
-    if (!existsSync(indexPath)) continue;
+    const found = findFileDirectoryRecursive(project.path, project.path, fileId);
+    if (found) {
+      return found;
+    }
+  }
 
-    const metadata = JSON.parse(readFileSync(indexPath, 'utf-8')) as IndexMetadata;
-    const file = metadata.files.find((item) => item.fileId === fileId);
-    if (file) {
-      return {
-        dirPath: directory.path,
-        fileName: file.name,
-      };
+  return null;
+}
+
+function findFileDirectoryRecursive(
+  projectPath: string,
+  dirPath: string,
+  fileId: string
+): FileInfo | null {
+  const indexPath = join(dirPath, '.fs_index', 'index.json');
+  if (!existsSync(indexPath)) {
+    return null;
+  }
+
+  const metadata = JSON.parse(readFileSync(indexPath, 'utf-8')) as IndexMetadata;
+  const file = metadata.files.find((item) => item.fileId === fileId);
+  if (file) {
+    return {
+      projectPath,
+      dirPath,
+      fileName: file.name,
+    };
+  }
+
+  for (const subdirectory of metadata.subdirectories) {
+    const childPath = join(dirPath, subdirectory.name);
+    const found = findFileDirectoryRecursive(projectPath, childPath, fileId);
+    if (found) {
+      return found;
     }
   }
 
@@ -110,6 +147,21 @@ function extractByLocator(markdown: string, locator: string): string {
     .join('\n');
 }
 
+function extractByLineRange(
+  markdown: string,
+  lineStart?: number,
+  lineEnd?: number
+): string {
+  if (!lineStart || !lineEnd || lineStart <= 0 || lineEnd < lineStart) {
+    return '';
+  }
+
+  const lines = markdown.split('\n');
+  return lines
+    .slice(Math.max(0, lineStart - 1), Math.min(lines.length, lineEnd))
+    .join('\n');
+}
+
 function buildNeighborIds(fileId: string, chunkIndex: number, neighborCount: number): string[] {
   const ids: string[] = [];
 
@@ -131,9 +183,10 @@ function toChunkInfo(
   summaries: Record<string, string>,
   fallbackPath: string
 ): ChunkInfo {
-  const parsedContent = extractByLocator(markdown, doc.locator);
-  const content = parsedContent || doc.content || '';
-  const summary = summaries[chunkId] ?? doc.summary ?? '';
+  const parsedByRange = extractByLineRange(markdown, doc.chunk_line_start, doc.chunk_line_end);
+  const parsedByLocator = parsedByRange ? '' : extractByLocator(markdown, doc.locator);
+  const content = parsedByRange || parsedByLocator || '';
+  const summary = summaries[chunkId] ?? '';
 
   return {
     id: chunkId,
@@ -158,7 +211,7 @@ export async function getChunk(input: GetChunkInput) {
 
   const filePath = join(fileInfo.dirPath, fileInfo.fileName);
   const storage = createAFDStorage({
-    documentsDir: join(fileInfo.dirPath, '.fs_index', 'documents'),
+    documentsDir: join(fileInfo.projectPath, '.fs_index', 'documents'),
   });
 
   const markdown = await storage.readText(fileId, 'content.md');

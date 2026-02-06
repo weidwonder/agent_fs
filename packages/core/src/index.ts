@@ -7,6 +7,7 @@ export const VERSION = '0.1.0';
 export type {
   DocumentPlugin,
   DocumentConversionResult,
+  SearchableEntry,
   PositionMapping,
   LocatorInfo,
 } from './types/plugin';
@@ -43,7 +44,8 @@ export type {
   FileMetadata,
   SubdirectoryInfo,
   Registry,
-  RegisteredDirectory,
+  RegisteredProject,
+  SubdirectoryRef,
 } from './types/index-meta';
 
 // Storage types

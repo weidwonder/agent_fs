@@ -72,7 +72,7 @@ ipcMain.handle('get-registry', async () => {
 
   const path = join(homedir(), '.agent_fs', 'registry.json');
   if (!existsSync(path)) {
-    return { indexedDirectories: [] };
+    return { projects: [] };
   }
   return JSON.parse(readFileSync(path, 'utf-8'));
 });

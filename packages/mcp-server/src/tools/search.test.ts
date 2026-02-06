@@ -38,6 +38,11 @@ vi.mock('@agent-fs/storage', () => ({
 vi.mock('@agent-fs/search', () => ({
   createVectorStore: vi.fn(),
   InvertedIndex: class {},
+  DirectoryResolver: class {
+    expandDirIds(dirIds: string[]) {
+      return dirIds;
+    }
+  },
   fusionRRF: <T>(
     lists: Array<{ name: string; items: T[] }>,
     getId: (item: T) => string,
@@ -87,18 +92,19 @@ describe('search', () => {
       join(baseDir, '.agent_fs', 'registry.json'),
       JSON.stringify(
         {
-          version: '1.0',
+          version: '2.0',
           embeddingModel: 'mock',
           embeddingDimension: 3,
-          indexedDirectories: [
+          projects: [
             {
               path: projectDir,
               alias: 'project',
-              dirId: 'd1',
+              projectId: 'd1',
               summary: 'test',
               lastUpdated: '2026-02-06T00:00:00.000Z',
-              fileCount: 1,
-              chunkCount: 2,
+              totalFileCount: 1,
+              totalChunkCount: 2,
+              subdirectories: [],
               valid: true,
             },
           ],
@@ -112,12 +118,15 @@ describe('search', () => {
       join(projectDir, '.fs_index', 'index.json'),
       JSON.stringify(
         {
-          version: '1.0',
+          version: '2.0',
           createdAt: '2026-02-06T00:00:00.000Z',
           updatedAt: '2026-02-06T00:00:00.000Z',
           dirId: 'd1',
           directoryPath: projectDir,
           directorySummary: 'test',
+          projectId: 'd1',
+          relativePath: '.',
+          parentDirId: null,
           stats: { fileCount: 1, chunkCount: 2, totalTokens: 10 },
           files: [
             {
@@ -128,7 +137,6 @@ describe('search', () => {
               fileId: 'f1',
               indexedAt: '2026-02-06T00:00:00.000Z',
               chunkCount: 2,
-              chunkIds: ['f1:0000', 'f1:0001'],
               summary: 'doc summary',
             },
           ],
@@ -173,8 +181,8 @@ describe('search', () => {
               dir_id: 'd1',
               rel_path: 'a.md',
               file_path: join(projectDir, 'a.md'),
-              content: '旧内容',
-              summary: '旧摘要',
+              chunk_line_start: 1,
+              chunk_line_end: 1,
               content_vector: [],
               summary_vector: [],
               locator: 'line:1-1',

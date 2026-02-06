@@ -10,20 +10,31 @@ export async function listIndexes() {
     return { indexes: [] };
   }
 
-  const registry: Registry = JSON.parse(readFileSync(registryPath, 'utf-8'));
+  const registry = JSON.parse(readFileSync(registryPath, 'utf-8')) as Registry;
+  if (!Array.isArray(registry.projects)) {
+    throw new Error('registry.json 不是 2.0 格式，请删除后重新索引');
+  }
 
   return {
-    indexes: registry.indexedDirectories
-      .filter((d) => d.valid)
-      .map((d) => ({
-        path: d.path,
-        alias: d.alias,
-        summary: d.summary,
-        last_updated: d.lastUpdated,
+    indexes: registry.projects
+      .filter((project) => project.valid)
+      .map((project) => ({
+        path: project.path,
+        alias: project.alias,
+        project_id: project.projectId,
+        summary: project.summary,
+        last_updated: project.lastUpdated,
         stats: {
-          file_count: d.fileCount,
-          chunk_count: d.chunkCount,
+          file_count: project.totalFileCount,
+          chunk_count: project.totalChunkCount,
         },
+        subdirectories: project.subdirectories.map((subdirectory) => ({
+          relative_path: subdirectory.relativePath,
+          dir_id: subdirectory.dirId,
+          file_count: subdirectory.fileCount,
+          chunk_count: subdirectory.chunkCount,
+          last_updated: subdirectory.lastUpdated,
+        })),
       })),
   };
 }

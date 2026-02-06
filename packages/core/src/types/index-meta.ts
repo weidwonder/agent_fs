@@ -20,6 +20,15 @@ export interface IndexMetadata {
   /** 目录摘要 */
   directorySummary: string;
 
+  /** 所属 Project ID */
+  projectId: string;
+
+  /** 相对于 Project 的路径（根目录为 "."） */
+  relativePath: string;
+
+  /** 父目录 ID（Project 根目录为 null） */
+  parentDirId: string | null;
+
   /** 统计信息 */
   stats: IndexStats;
 
@@ -72,9 +81,6 @@ export interface FileMetadata {
   /** Chunk 数量 */
   chunkCount: number;
 
-  /** Chunk ID 列表 */
-  chunkIds: string[];
-
   /** 文件摘要 */
   summary: string;
 }
@@ -86,14 +92,23 @@ export interface SubdirectoryInfo {
   /** 子目录名 */
   name: string;
 
+  /** 子目录 ID */
+  dirId: string;
+
   /** 是否已索引 */
   hasIndex: boolean;
 
   /** 子目录摘要 */
   summary: string | null;
 
+  /** 子目录文件数（递归） */
+  fileCount: number;
+
   /** 最后更新时间 */
   lastUpdated: string | null;
+
+  /** 子目录递归 fileId 列表（用于增量删除清理） */
+  fileIds: string[];
 }
 
 /**
@@ -109,22 +124,22 @@ export interface Registry {
   /** Embedding 向量维度 */
   embeddingDimension: number;
 
-  /** 已索引目录列表 */
-  indexedDirectories: RegisteredDirectory[];
+  /** 已索引 Project 列表 */
+  projects: RegisteredProject[];
 }
 
 /**
- * 已注册目录
+ * 已注册 Project
  */
-export interface RegisteredDirectory {
+export interface RegisteredProject {
   /** 目录路径 */
   path: string;
 
   /** 别名 */
   alias: string;
 
-  /** 目录 ID */
-  dirId: string;
+  /** Project ID */
+  projectId: string;
 
   /** 目录摘要 */
   summary: string;
@@ -132,12 +147,35 @@ export interface RegisteredDirectory {
   /** 最后更新时间 */
   lastUpdated: string;
 
-  /** 文件数量 */
-  fileCount: number;
+  /** 文件总数 */
+  totalFileCount: number;
 
-  /** Chunk 数量 */
-  chunkCount: number;
+  /** Chunk 总数 */
+  totalChunkCount: number;
+
+  /** 扁平化子目录引用 */
+  subdirectories: SubdirectoryRef[];
 
   /** 是否有效 */
   valid: boolean;
+}
+
+/**
+ * 子目录引用
+ */
+export interface SubdirectoryRef {
+  /** 相对路径 */
+  relativePath: string;
+
+  /** 子目录 ID */
+  dirId: string;
+
+  /** 文件数 */
+  fileCount: number;
+
+  /** Chunk 数 */
+  chunkCount: number;
+
+  /** 最后更新时间 */
+  lastUpdated: string;
 }

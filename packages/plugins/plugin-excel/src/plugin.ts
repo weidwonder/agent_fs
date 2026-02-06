@@ -3,6 +3,7 @@ import type {
   DocumentConversionResult,
   PositionMapping,
   LocatorInfo,
+  SearchableEntry,
 } from '@agent-fs/core';
 import { ConverterClient, type ConverterClientOptions } from './converter-client';
 
@@ -35,10 +36,11 @@ export class ExcelPlugin implements DocumentPlugin {
 
     let markdown = '';
     const mapping: PositionMapping[] = [];
+    const searchableText: SearchableEntry[] = [];
     let currentLine = 1;
 
     for (const sheet of response.sheets) {
-      markdown += `## Sheet: ${sheet.name}\n\n`;
+      markdown += `## 工作表：${sheet.name}\n\n`;
       currentLine += 2;
 
       for (const region of sheet.regions) {
@@ -46,9 +48,9 @@ export class ExcelPlugin implements DocumentPlugin {
         currentLine += 1;
 
         if (region.tables.length > 0) {
-          markdown += `Tables: ${region.tables.join(', ')}\n\n`;
+          markdown += `表格区域：${region.tables.join('、')}\n\n`;
         } else {
-          markdown += 'Tables: (none)\n\n';
+          markdown += '表格区域：无\n\n';
         }
         currentLine += 2;
 
@@ -69,11 +71,36 @@ export class ExcelPlugin implements DocumentPlugin {
           originalLocator: `sheet:${sheet.name}/range:${region.range}`,
         });
 
+        const regionSearchableEntries =
+          region.searchableEntries?.filter((entry) => entry.text.trim().length > 0) ?? [];
+        if (regionSearchableEntries.length > 0) {
+          for (const entry of regionSearchableEntries) {
+            searchableText.push({
+              text: this.normalizeSearchText(entry.text),
+              markdownLine: regionStartLine,
+              locator: entry.locator,
+            });
+          }
+        } else {
+          const fallbackText = this.normalizeSearchText(region.markdown);
+          if (fallbackText.length > 0) {
+            searchableText.push({
+              text: fallbackText,
+              markdownLine: regionStartLine,
+              locator: `sheet:${sheet.name}/range:${region.range}`,
+            });
+          }
+        }
+
         currentLine += regionLines.length + 1;
       }
     }
 
-    return { markdown, mapping };
+    return {
+      markdown,
+      mapping,
+      searchableText,
+    };
   }
 
   parseLocator(locator: string): LocatorInfo {
@@ -92,6 +119,14 @@ export class ExcelPlugin implements DocumentPlugin {
   async dispose(): Promise<void> {
     await this.client?.stop();
     this.client = null;
+  }
+
+  private normalizeSearchText(text: string): string {
+    return text
+      .replace(/[|]/g, ' ')
+      .replace(/[#*_`]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 }
 

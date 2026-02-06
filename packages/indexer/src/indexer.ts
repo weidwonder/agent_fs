@@ -107,43 +107,93 @@ export class Indexer {
 
     let registry: Registry;
     if (existsSync(registryPath)) {
-      registry = JSON.parse(readFileSync(registryPath, 'utf-8'));
+      const parsed = JSON.parse(readFileSync(registryPath, 'utf-8')) as Registry;
+      if (!Array.isArray(parsed.projects)) {
+        throw new Error('registry.json 不是 2.0 格式，请删除后重新索引');
+      }
+      registry = parsed;
     } else {
       registry = {
-        version: '1.0',
+        version: '2.0',
         embeddingModel: this.config.embedding.local?.model || this.config.embedding.api?.model || '',
         embeddingDimension: 512,
-        indexedDirectories: [],
+        projects: [],
       };
     }
 
-    // 更新或添加目录
-    const existing = registry.indexedDirectories.find(
-      (d) => d.path === metadata.directoryPath
-    );
+    // 更新或添加项目
+    const existing = registry.projects.find((project) => project.path === metadata.directoryPath);
+    const projectSubdirectories = this.collectSubdirectoryRefs(metadata.directoryPath);
 
     if (existing) {
-      existing.dirId = metadata.dirId;
+      existing.projectId = metadata.projectId;
       existing.summary = metadata.directorySummary;
       existing.lastUpdated = metadata.updatedAt;
-      existing.fileCount = metadata.stats.fileCount;
-      existing.chunkCount = metadata.stats.chunkCount;
+      existing.totalFileCount = metadata.stats.fileCount;
+      existing.totalChunkCount = metadata.stats.chunkCount;
+      existing.subdirectories = projectSubdirectories;
       existing.valid = true;
     } else {
-      registry.indexedDirectories.push({
+      registry.projects.push({
         path: metadata.directoryPath,
         alias: metadata.directoryPath.split('/').pop() || '',
-        dirId: metadata.dirId,
+        projectId: metadata.projectId,
         summary: metadata.directorySummary,
         lastUpdated: metadata.updatedAt,
-        fileCount: metadata.stats.fileCount,
-        chunkCount: metadata.stats.chunkCount,
+        totalFileCount: metadata.stats.fileCount,
+        totalChunkCount: metadata.stats.chunkCount,
+        subdirectories: projectSubdirectories,
         valid: true,
       });
     }
 
     mkdirSync(join(homedir(), '.agent_fs'), { recursive: true });
     writeFileSync(registryPath, JSON.stringify(registry, null, 2));
+  }
+
+  private collectSubdirectoryRefs(
+    projectPath: string
+  ): Registry['projects'][number]['subdirectories'] {
+    const rootMetadata = this.readIndexMetadata(projectPath);
+    if (!rootMetadata) {
+      return [];
+    }
+
+    const refs: Registry['projects'][number]['subdirectories'] = [];
+    const stack: IndexMetadata[] = [rootMetadata];
+
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (!current) continue;
+
+      for (const subdirectory of current.subdirectories) {
+        const childDirPath = join(current.directoryPath, subdirectory.name);
+        const childMetadata = this.readIndexMetadata(childDirPath);
+        if (!childMetadata) {
+          continue;
+        }
+
+        refs.push({
+          relativePath: childMetadata.relativePath,
+          dirId: childMetadata.dirId,
+          fileCount: childMetadata.stats.fileCount,
+          chunkCount: childMetadata.stats.chunkCount,
+          lastUpdated: childMetadata.updatedAt,
+        });
+        stack.push(childMetadata);
+      }
+    }
+
+    return refs.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+  }
+
+  private readIndexMetadata(dirPath: string): IndexMetadata | null {
+    const indexPath = join(dirPath, '.fs_index', 'index.json');
+    if (!existsSync(indexPath)) {
+      return null;
+    }
+
+    return JSON.parse(readFileSync(indexPath, 'utf-8')) as IndexMetadata;
   }
 
   async dispose(): Promise<void> {

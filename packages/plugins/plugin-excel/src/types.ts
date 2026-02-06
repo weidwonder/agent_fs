@@ -12,6 +12,12 @@ export interface RegionResult {
   range: string;
   tables: string[];
   markdown: string;
+  searchableEntries?: RegionSearchableEntry[];
+}
+
+export interface RegionSearchableEntry {
+  text: string;
+  locator: string;
 }
 
 export interface JsonRpcRequest {

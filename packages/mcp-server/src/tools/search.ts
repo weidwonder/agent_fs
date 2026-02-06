@@ -6,7 +6,13 @@ import { loadConfig } from '@agent-fs/core';
 import type { EmbeddingService } from '@agent-fs/llm';
 import { createEmbeddingService } from '@agent-fs/llm';
 import type { InvertedIndex, InvertedSearchResult, VectorStore } from '@agent-fs/search';
-import { InvertedIndex as InvertedIndexClass, createVectorStore, fusionRRF } from '@agent-fs/search';
+import {
+  InvertedIndex as InvertedIndexClass,
+  createVectorStore,
+  fusionRRF,
+  DirectoryResolver,
+  type RegistryProject as ResolverProject,
+} from '@agent-fs/search';
 import { createAFDStorage, type AFDStorage } from '@agent-fs/storage';
 
 interface SearchInput {
@@ -23,13 +29,29 @@ interface RuntimeSearchItem {
     filePath: string;
     locator: string;
   };
-  fallbackContent: string;
-  fallbackSummary: string;
 }
 
 interface FileLookup {
   dirPath: string;
   filePath: string;
+}
+
+interface RuntimeProject {
+  path: string;
+  alias: string;
+  projectId: string;
+  summary: string;
+  lastUpdated: string;
+  totalFileCount: number;
+  totalChunkCount: number;
+  subdirectories: Array<{
+    relativePath: string;
+    dirId: string;
+    fileCount: number;
+    chunkCount: number;
+    lastUpdated: string;
+  }>;
+  valid: boolean;
 }
 
 let embeddingService: EmbeddingService | null = null;
@@ -177,8 +199,6 @@ export async function search(input: SearchInput) {
               filePath: existing.source.filePath || next.source.filePath,
               locator: existing.source.locator || next.source.locator,
             },
-            fallbackContent: existing.fallbackContent || next.fallbackContent,
-            fallbackSummary: existing.fallbackSummary || next.fallbackSummary,
           })
         )
       : [];
@@ -234,16 +254,43 @@ function resolveScopedContext(scopes: string[]): {
 } {
   const fileLookup = new Map<string, FileLookup>();
   const dirIds = new Set<string>();
-
-  const registry = loadRegistry();
   const candidates = new Set<string>();
 
-  if (registry) {
-    for (const directory of registry.indexedDirectories) {
-      if (!directory.valid) continue;
-      const directoryPath = normalizePath(directory.path);
-      if (scopes.some((scope) => isPathRelated(directoryPath, scope))) {
-        candidates.add(directoryPath);
+  const registry = loadRegistry();
+  const projects = registry?.projects ?? [];
+
+  if (projects.length > 0) {
+    const requestedDirIds = collectRequestedDirIds(projects, scopes);
+    const resolver = new DirectoryResolver(
+      projects.map<ResolverProject>((project) => ({
+        projectId: project.projectId,
+        subdirectories: project.subdirectories.map((subdirectory) => ({
+          dirId: subdirectory.dirId,
+          relativePath: subdirectory.relativePath,
+        })),
+      }))
+    );
+    const expandedDirIds = resolver.expandDirIds(requestedDirIds);
+    for (const dirId of expandedDirIds) {
+      dirIds.add(dirId);
+    }
+
+    for (const project of projects) {
+      if (!project.valid) continue;
+
+      const projectPath = normalizePath(project.path);
+      const projectRelated = scopes.some((scope) => isPathRelated(projectPath, scope));
+      if (!projectRelated && !expandedDirIds.some((dirId) => hasDirId(project, dirId))) {
+        continue;
+      }
+
+      if (expandedDirIds.includes(project.projectId)) {
+        candidates.add(projectPath);
+      }
+
+      for (const subdirectory of project.subdirectories) {
+        if (!expandedDirIds.includes(subdirectory.dirId)) continue;
+        candidates.add(join(project.path, normalizeRelativePath(subdirectory.relativePath)));
       }
     }
   }
@@ -288,7 +335,58 @@ function loadRegistry(): Registry | null {
     return null;
   }
 
-  return JSON.parse(readFileSync(registryPath, 'utf-8')) as Registry;
+  const registry = JSON.parse(readFileSync(registryPath, 'utf-8')) as Registry;
+  if (!Array.isArray(registry.projects)) {
+    throw new Error('registry.json 不是 2.0 格式，请删除后重新索引');
+  }
+
+  return registry;
+}
+
+function collectRequestedDirIds(projects: RuntimeProject[], scopes: string[]): string[] {
+  const dirIds = new Set<string>();
+
+  for (const project of projects) {
+    if (!project.valid) continue;
+
+    const normalizedProjectPath = normalizePath(project.path);
+    for (const scope of scopes) {
+      if (!isPathRelated(normalizedProjectPath, scope)) {
+        continue;
+      }
+
+      if (scope === normalizedProjectPath) {
+        dirIds.add(project.projectId);
+        continue;
+      }
+
+      if (scope.startsWith(`${normalizedProjectPath}/`)) {
+        const relativePath = normalizeRelativePath(scope.slice(normalizedProjectPath.length + 1));
+        const matchedSubdir = project.subdirectories.find(
+          (subdirectory) =>
+            normalizeRelativePath(subdirectory.relativePath) === relativePath
+        );
+        if (matchedSubdir) {
+          dirIds.add(matchedSubdir.dirId);
+        } else {
+          dirIds.add(project.projectId);
+        }
+      }
+    }
+  }
+
+  return [...dirIds];
+}
+
+function normalizeRelativePath(path: string): string {
+  return path.replace(/^\/+|\/+$/gu, '');
+}
+
+function hasDirId(project: RuntimeProject, dirId: string): boolean {
+  return (
+    project.projectId === dirId ||
+    project.subdirectories.some((subdirectory) => subdirectory.dirId === dirId)
+  );
 }
 
 function readIndexMetadata(dirPath: string): IndexMetadata | null {
@@ -355,8 +453,6 @@ function mapVectorItem(
       filePath,
       locator: String(item.document.locator ?? ''),
     },
-    fallbackContent: String(item.document.content ?? ''),
-    fallbackSummary: String(item.document.summary ?? ''),
   };
 }
 
@@ -371,8 +467,6 @@ function mapKeywordItem(
       filePath: fileLookup.get(item.fileId)?.filePath || '',
       locator: item.locator,
     },
-    fallbackContent: '',
-    fallbackSummary: '',
   };
 }
 
@@ -386,8 +480,8 @@ async function hydrateResult(
   if (!fileInfo) {
     return {
       ...item,
-      content: item.fallbackContent,
-      summary: item.fallbackSummary,
+      content: '',
+      summary: '',
     };
   }
 
@@ -403,8 +497,8 @@ async function hydrateResult(
       filePath: fileInfo.filePath,
       locator: item.source.locator,
     },
-    content: parsedContent || item.fallbackContent,
-    summary: summaries[item.chunkId] ?? item.fallbackSummary,
+    content: parsedContent,
+    summary: summaries[item.chunkId] ?? '',
   };
 }
 

@@ -20,11 +20,11 @@ export interface VectorDocument {
   /** 绝对路径 */
   file_path: string;
 
-  /** Chunk 内容 */
-  content: string;
+  /** Chunk 行范围起始（1-based） */
+  chunk_line_start: number;
 
-  /** Chunk 摘要 */
-  summary: string;
+  /** Chunk 行范围结束（1-based） */
+  chunk_line_end: number;
 
   /** 内容向量 */
   content_vector: number[];

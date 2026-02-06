@@ -22,8 +22,8 @@ describe('VectorStore', () => {
     dir_id: dirId,
     rel_path: filePath.split('/').pop() ?? '',
     file_path: filePath,
-    content: `content-${id}`,
-    summary: `summary-${id}`,
+    chunk_line_start: 1,
+    chunk_line_end: 3,
     content_vector: contentVector,
     summary_vector: summaryVector,
     locator: `line:${id}`,
@@ -62,6 +62,8 @@ describe('VectorStore', () => {
     const results = await store.searchByContent([1, 0, 0], { topK: 1 });
     expect(results.length).toBe(1);
     expect(results[0].chunk_id).toBe('c1');
+    expect(results[0].document.chunk_line_start).toBe(1);
+    expect(results[0].document.chunk_line_end).toBe(3);
   });
 
   it('should search by summary', async () => {

@@ -38,6 +38,8 @@ export class MarkdownChunker {
           content: section.content,
           tokenCount,
           locator: `line:${section.startLine}-${section.endLine}`,
+          lineStart: section.startLine,
+          lineEnd: section.endLine,
           markdownRange: {
             startLine: section.startLine,
             endLine: section.endLine,
@@ -54,6 +56,8 @@ export class MarkdownChunker {
             content: subChunk.content,
             tokenCount: subChunk.tokenCount,
             locator: `line:${section.startLine}-${section.endLine}`,
+            lineStart: section.startLine,
+            lineEnd: section.endLine,
             markdownRange: {
               startLine: section.startLine,
               endLine: section.endLine,
@@ -146,10 +150,12 @@ export class MarkdownChunker {
         current = {
           content: `${current.content}\n\n${chunk.content}`,
           tokenCount: combinedTokens,
-          locator: `line:${current.markdownRange.startLine}-${chunk.markdownRange.endLine}`,
+          locator: `line:${current.lineStart}-${chunk.lineEnd}`,
+          lineStart: current.lineStart,
+          lineEnd: chunk.lineEnd,
           markdownRange: {
-            startLine: current.markdownRange.startLine,
-            endLine: chunk.markdownRange.endLine,
+            startLine: current.lineStart,
+            endLine: chunk.lineEnd,
           },
         };
       } else {

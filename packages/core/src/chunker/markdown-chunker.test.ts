@@ -118,6 +118,8 @@ More content.
     const chunks = chunker.chunk(markdown);
 
     for (const chunk of chunks) {
+      expect(chunk.lineStart).toBeGreaterThanOrEqual(1);
+      expect(chunk.lineEnd).toBeGreaterThanOrEqual(chunk.lineStart);
       expect(chunk.markdownRange.startLine).toBeGreaterThanOrEqual(1);
       expect(chunk.markdownRange.endLine).toBeGreaterThanOrEqual(
         chunk.markdownRange.startLine

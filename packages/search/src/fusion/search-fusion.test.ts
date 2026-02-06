@@ -8,22 +8,23 @@ import type { EmbeddingService } from '@agent-fs/llm';
 const createVectorDoc = (
   id: string,
   filePath: string,
-  summary: string = `summary-${id}`,
   locator: string = `loc-${id}`
-): VectorDocument => ({
-  chunk_id: id,
-  file_id: `file_${id}`,
-  dir_id: 'dir1',
-  rel_path: filePath.split('/').pop() ?? '',
-  file_path: filePath,
-  content: `content-${id}`,
-  summary,
-  content_vector: [0, 0],
-  summary_vector: [0, 0],
-  locator,
-  indexed_at: '2025-02-02T00:00:00.000Z',
-  deleted_at: '',
-});
+): VectorDocument => {
+  return {
+    chunk_id: id,
+    file_id: `file_${id}`,
+    dir_id: 'dir1',
+    rel_path: filePath.split('/').pop() ?? '',
+    file_path: filePath,
+    chunk_line_start: 1,
+    chunk_line_end: 1,
+    content_vector: [0, 0],
+    summary_vector: [0, 0],
+    locator,
+    indexed_at: '2025-02-02T00:00:00.000Z',
+    deleted_at: '',
+  };
+};
 
 const createVectorResult = (doc: VectorDocument, score = 0.9): VectorSearchResult => ({
   chunk_id: doc.chunk_id,
@@ -107,7 +108,7 @@ describe('SearchFusion', () => {
 
     expect(response.results).toHaveLength(2);
     expect(response.results[0].chunkId).toBe('c1');
-    expect(response.results[0].summary).toBe('summary-c1');
+    expect(response.results[0].summary).toBe('');
     expect(response.results[0].source.locator).toBe('loc-c1');
   });
 
@@ -131,7 +132,7 @@ describe('SearchFusion', () => {
     expect(response.results[0].chunkId).toBe('s1');
   });
 
-  it('should use keyword for bm25 and fill missing fields via getByChunkIds', async () => {
+  it('should use keyword for bm25 and fill missing locator via getByChunkIds', async () => {
     const bm25Doc1 = createBm25Doc('b1', '/project/b1.md');
     const bm25Doc2 = createBm25Doc('b2', '/project/b2.md');
     const vectorDoc1 = createVectorDoc('b1', '/project/b1.md');
@@ -155,7 +156,7 @@ describe('SearchFusion', () => {
     expect(vectorStore.getByChunkIds).toHaveBeenCalledWith(['b1', 'b2']);
 
     expect(response.results).toHaveLength(2);
-    expect(response.results[0].summary).not.toBe('');
+    expect(response.results[0].summary).toBe('');
     expect(response.results[0].source.locator).not.toBe('');
   });
 
@@ -197,7 +198,7 @@ describe('SearchFusion', () => {
   });
 
   it('should merge bm25 results with vector fields without extra lookup', async () => {
-    const sharedDoc = createVectorDoc('x1', '/project/x1.md', 'sum-x1', 'loc-x1');
+    const sharedDoc = createVectorDoc('x1', '/project/x1.md', 'loc-x1');
     const bm25Doc = createBm25Doc('x1', '/project/x1.md');
 
     const { fusion, vectorStore } = createFusion({
@@ -210,7 +211,7 @@ describe('SearchFusion', () => {
       { useContentVector: true, useSummaryVector: false, useBM25: true }
     );
 
-    expect(response.results[0].summary).toBe('sum-x1');
+    expect(response.results[0].summary).toBe('');
     expect(response.results[0].source.locator).toBe('loc-x1');
     expect(vectorStore.getByChunkIds).not.toHaveBeenCalled();
   });

@@ -8,15 +8,15 @@ interface IndexProgress {
   total: number;
 }
 
-// RegisteredDirectory 类型（与 @agent-fs/core 一致）
-interface RegisteredDirectory {
+// RegisteredProject 类型（与 @agent-fs/core 一致）
+interface RegisteredProject {
   path: string;
   alias: string;
-  dirId: string;
+  projectId: string;
   summary: string;
   lastUpdated: string;
-  fileCount: number;
-  chunkCount: number;
+  totalFileCount: number;
+  totalChunkCount: number;
   valid: boolean;
 }
 
@@ -25,7 +25,7 @@ declare global {
     electronAPI: {
       selectDirectory: () => Promise<string | undefined>;
       startIndexing: (path: string) => Promise<{ success: boolean; metadata?: any; error?: string }>;
-      getRegistry: () => Promise<{ indexedDirectories: RegisteredDirectory[] }>;
+      getRegistry: () => Promise<{ projects: RegisteredProject[] }>;
       onIndexingProgress: (callback: (progress: IndexProgress) => void) => void;
     };
   }
@@ -42,7 +42,7 @@ const PHASE_NAMES: Record<IndexProgress['phase'], string> = {
 };
 
 export default function App() {
-  const [directories, setDirectories] = useState<RegisteredDirectory[]>([]);
+  const [directories, setDirectories] = useState<RegisteredProject[]>([]);
   const [indexing, setIndexing] = useState(false);
   const [progress, setProgress] = useState<IndexProgress | null>(null);
 
@@ -53,7 +53,7 @@ export default function App() {
 
   const loadRegistry = async () => {
     const registry = await window.electronAPI.getRegistry();
-    setDirectories(registry.indexedDirectories?.filter(d => d.valid) || []);
+    setDirectories(registry.projects?.filter((project) => project.valid) || []);
   };
 
   const handleSelectDirectory = async () => {
@@ -113,11 +113,11 @@ export default function App() {
           ) : (
             <ul className="space-y-2">
               {directories.map((dir) => (
-                <li key={dir.dirId} className="p-4 bg-white rounded shadow-sm">
+                <li key={dir.projectId} className="p-4 bg-white rounded shadow-sm">
                   <p className="font-medium text-stone-800">{dir.alias || dir.path}</p>
                   <p className="text-sm text-stone-500 truncate">{dir.path}</p>
                   <p className="text-sm text-stone-400 mt-1">
-                    {dir.fileCount} 文件 · {dir.chunkCount} chunks
+                    {dir.totalFileCount} 文件 · {dir.totalChunkCount} chunks
                   </p>
                   {dir.summary && (
                     <p className="text-sm text-stone-600 mt-2 line-clamp-2">{dir.summary}</p>

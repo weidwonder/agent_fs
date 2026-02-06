@@ -17,4 +17,11 @@ public class RegionResult
     public string Range { get; set; } = string.Empty;
     public List<string> Tables { get; set; } = new();
     public string Markdown { get; set; } = string.Empty;
+    public List<SearchableEntryResult> SearchableEntries { get; set; } = new();
+}
+
+public class SearchableEntryResult
+{
+    public string Text { get; set; } = string.Empty;
+    public string Locator { get; set; } = string.Empty;
 }

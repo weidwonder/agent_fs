@@ -41,6 +41,7 @@ public class ExcelToMarkdownService
                 {
                     var tableResult = _tableDetector.DetectTables(_loader, sheetName, "border", region, false);
                     var tables = tableResult.Tables.Select(t => t.Range).ToList();
+                    var range = _regionManager.ToRangeString(region);
 
                     var overview = _overviewGenerator.GenerateOverview(
                         _loader,
@@ -54,9 +55,10 @@ public class ExcelToMarkdownService
 
                     sheetResult.Regions.Add(new RegionResult
                     {
-                        Range = _regionManager.ToRangeString(region),
+                        Range = range,
                         Tables = tables,
-                        Markdown = overview.Overview
+                        Markdown = overview.Overview,
+                        SearchableEntries = BuildSearchableEntries(sheetName, range, tables, overview.Overview)
                     });
                 }
 
@@ -69,5 +71,47 @@ public class ExcelToMarkdownService
         {
             _loader.Close();
         }
+    }
+
+    private static List<SearchableEntryResult> BuildSearchableEntries(
+        string sheetName,
+        string regionRange,
+        List<string> tables,
+        string markdown)
+    {
+        var entries = new List<SearchableEntryResult>();
+        var regionLocator = $"sheet:{sheetName}/range:{regionRange}";
+        var normalizedMarkdown = NormalizeSearchText(markdown);
+        if (!string.IsNullOrWhiteSpace(normalizedMarkdown))
+        {
+            entries.Add(new SearchableEntryResult
+            {
+                Text = normalizedMarkdown,
+                Locator = regionLocator
+            });
+        }
+
+        foreach (var tableRange in tables.Distinct())
+        {
+            entries.Add(new SearchableEntryResult
+            {
+                Text = $"表格 {tableRange}",
+                Locator = $"sheet:{sheetName}/range:{tableRange}"
+            });
+        }
+
+        return entries;
+    }
+
+    private static string NormalizeSearchText(string value)
+    {
+        var normalized = value
+            .Replace("|", " ")
+            .Replace("#", " ")
+            .Replace("\r", " ")
+            .Replace("\n", " ")
+            .Trim();
+
+        return string.Join(" ", normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries));
     }
 }
