@@ -3,6 +3,7 @@ packages:
   - 'packages/plugins/*'
 onlyBuiltDependencies:
   - nodejieba
+  - better-sqlite3
   - electron
   - sharp
   - canvas

@@ -23,3 +23,6 @@ export type { VectorStoreOptions, VectorSearchOptions } from './vector-store';
 // Fusion
 export { SearchFusion, createSearchFusion, fusionRRF, rrfScore, DEFAULT_RRF_PARAMS } from './fusion';
 export type { FusionOptions, RRFParams, RankedItem, FusedItem } from './fusion';
+
+// Inverted Index
+export * from './inverted-index';
