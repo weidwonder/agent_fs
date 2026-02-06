@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { IndexPipeline } from './pipeline';
@@ -33,8 +33,12 @@ describe('IndexPipeline summary mode', () => {
       addDocuments: vi.fn().mockResolvedValue(undefined),
     };
 
-    const bm25Index = {
-      addDocuments: vi.fn(),
+    const afdStorage = {
+      write: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const invertedIndex = {
+      addFile: vi.fn().mockResolvedValue(undefined),
     };
 
     const pipeline = new IndexPipeline({
@@ -43,7 +47,8 @@ describe('IndexPipeline summary mode', () => {
       embeddingService: embeddingService as any,
       summaryService: summaryService as any,
       vectorStore: vectorStore as any,
-      bm25Index: bm25Index as any,
+      afdStorage: afdStorage as any,
+      invertedIndex: invertedIndex as any,
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
@@ -58,14 +63,20 @@ describe('IndexPipeline summary mode', () => {
     expect(summaryService.generateDocumentSummary).not.toHaveBeenCalled();
     expect(summaryService.generateDirectorySummary).not.toHaveBeenCalled();
 
-    const summaryPath = join(dirPath, '.fs_index', 'documents', 'test.md', 'summary.json');
-    const summaryData = JSON.parse(readFileSync(summaryPath, 'utf-8')) as {
-      document: string;
-      chunks: string[];
-    };
+    expect(afdStorage.write).toHaveBeenCalledTimes(1);
+    const afdPayload = afdStorage.write.mock.calls[0][1] as Record<string, string>;
+    const summaries = JSON.parse(afdPayload['summaries.json']) as Record<string, string>;
+    expect(Object.values(summaries).every((item) => item === '')).toBe(true);
 
-    expect(summaryData.document).toBe('');
-    expect(summaryData.chunks.every((chunk) => chunk === '')).toBe(true);
+    expect(invertedIndex.addFile).toHaveBeenCalledTimes(1);
+    const invertedEntries = invertedIndex.addFile.mock.calls[0][2] as Array<{
+      text: string;
+      chunkId: string;
+      locator: string;
+    }>;
+    expect(invertedEntries.length).toBeGreaterThan(0);
+    expect(invertedEntries[0].text).toContain('标题');
+
     expect(metadata.directorySummary).toBe('');
 
     rmSync(dirPath, { recursive: true, force: true });

@@ -17,6 +17,7 @@ export type { Chunk, ChunkMetadata, ChunkResult, ChunkerOptions } from './types/
 // Config types
 export type {
   Config,
+  SummaryMode,
   LLMConfig,
   EmbeddingConfig,
   LocalEmbeddingConfig,

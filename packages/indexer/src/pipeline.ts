@@ -6,12 +6,13 @@ import type {
   IndexMetadata,
   FileMetadata,
   VectorDocument,
-  BM25Document,
+  ChunkMetadata,
   SummaryMode,
 } from '@agent-fs/core';
 import { MarkdownChunker } from '@agent-fs/core';
 import type { EmbeddingService, SummaryService } from '@agent-fs/llm';
-import type { VectorStore, BM25Index } from '@agent-fs/search';
+import type { InvertedIndex, IndexEntry, VectorStore } from '@agent-fs/search';
+import type { AFDStorage } from '@agent-fs/storage';
 import type { PluginManager } from './plugin-manager';
 
 export interface IndexProgress {
@@ -27,7 +28,8 @@ export interface IndexerOptions {
   embeddingService: EmbeddingService;
   summaryService: SummaryService;
   vectorStore: VectorStore;
-  bm25Index: BM25Index;
+  invertedIndex: InvertedIndex;
+  afdStorage: AFDStorage;
   chunkOptions: { minTokens: number; maxTokens: number };
   summaryOptions: SummaryPipelineOptions;
   onProgress?: (progress: IndexProgress) => void;
@@ -86,7 +88,6 @@ export class IndexPipeline {
       const fileMetadata = await this.processFile(
         filePath,
         filename,
-        fsIndexPath,
         i,
         totalFiles
       );
@@ -145,11 +146,17 @@ export class IndexPipeline {
   private async processFile(
     filePath: string,
     filename: string,
-    fsIndexPath: string,
     fileIndex: number,
     totalFiles: number
   ): Promise<FileMetadata> {
-    const { pluginManager, embeddingService, summaryService, vectorStore, bm25Index } =
+    const {
+      pluginManager,
+      embeddingService,
+      summaryService,
+      vectorStore,
+      invertedIndex,
+      afdStorage,
+    } =
       this.options;
     const { onProgress } = this.options;
 
@@ -220,7 +227,6 @@ export class IndexPipeline {
 
     // 生成 embedding
     const vectorDocs: VectorDocument[] = [];
-    const bm25Docs: BM25Document[] = [];
 
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
@@ -257,21 +263,16 @@ export class IndexPipeline {
         deleted_at: '', // 空字符串表示未删除
       });
 
-      bm25Docs.push({
-        chunk_id: chunkId,
-        file_id: fileId,
-        dir_id: this.dirId,
-        file_path: filePath,
-        content: chunk.content,
-        tokens: [],
-        indexed_at: now,
-        deleted_at: '',
-      });
     }
 
     // 写入存储
     await vectorStore.addDocuments(vectorDocs);
-    bm25Index.addDocuments(bm25Docs);
+    const indexEntries = this.buildIndexEntries(
+      conversionResult as ConversionResultWithSearchableText,
+      chunks,
+      chunkIds
+    );
+    await invertedIndex.addFile(fileId, this.dirId, indexEntries);
 
     // 生成文档 summary
     onProgress?.({
@@ -301,18 +302,24 @@ export class IndexPipeline {
       processed: fileIndex,
       total: totalFiles,
     });
-    const docDir = join(fsIndexPath, 'documents', filename);
-    mkdirSync(docDir, { recursive: true });
-    writeFileSync(join(docDir, 'content.md'), conversionResult.markdown);
-    writeFileSync(join(docDir, 'mapping.json'), JSON.stringify(conversionResult.mapping, null, 2));
-    writeFileSync(
-      join(docDir, 'chunks.json'),
-      JSON.stringify({ document: filename, chunks }, null, 2)
+    const summaries = Object.fromEntries(
+      chunkIds.map((chunkId, index) => [chunkId, chunkSummaries[index] ?? ''])
     );
-    writeFileSync(
-      join(docDir, 'summary.json'),
-      JSON.stringify({ document: documentSummary, chunks: chunkSummaries }, null, 2)
-    );
+    await afdStorage.write(fileId, {
+      'content.md': conversionResult.markdown,
+      'metadata.json': JSON.stringify(
+        {
+          sourceFile: filename,
+          sourceHash: `sha256:${fileHash}`,
+          plugin: ext,
+          createdAt: new Date().toISOString(),
+          mapping: conversionResult.mapping,
+        },
+        null,
+        2
+      ),
+      'summaries.json': JSON.stringify(summaries, null, 2),
+    });
 
     return {
       name: filename,
@@ -326,4 +333,57 @@ export class IndexPipeline {
       summary: documentSummary,
     };
   }
+
+  private buildIndexEntries(
+    conversionResult: ConversionResultWithSearchableText,
+    chunks: ChunkMetadata[],
+    chunkIds: string[]
+  ): IndexEntry[] {
+    const searchableText = conversionResult.searchableText;
+    if (searchableText?.length) {
+      const lineToChunk = new Map<number, string>();
+      for (const [index, chunk] of chunks.entries()) {
+        for (
+          let line = chunk.markdownRange.startLine;
+          line <= chunk.markdownRange.endLine;
+          line += 1
+        ) {
+          lineToChunk.set(line, chunkIds[index]);
+        }
+      }
+
+      const entries: IndexEntry[] = [];
+      for (const entry of searchableText) {
+        const chunkId = lineToChunk.get(entry.markdownLine);
+        if (!chunkId) continue;
+        entries.push({
+          text: entry.text,
+          chunkId,
+          locator: entry.locator,
+        });
+      }
+
+      if (entries.length > 0) {
+        return entries;
+      }
+    }
+
+    return chunks.map((chunk, index) => ({
+      text: chunk.content,
+      chunkId: chunkIds[index],
+      locator: chunk.locator,
+    }));
+  }
+}
+
+interface SearchableTextEntry {
+  text: string;
+  locator: string;
+  markdownLine: number;
+}
+
+interface ConversionResultWithSearchableText {
+  markdown: string;
+  mapping: unknown[];
+  searchableText?: SearchableTextEntry[];
 }

@@ -4,7 +4,8 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import type { Registry, IndexMetadata, Config } from '@agent-fs/core';
 import { loadConfig } from '@agent-fs/core';
 import { createEmbeddingService, createSummaryService } from '@agent-fs/llm';
-import { createVectorStore, BM25Index, saveIndex as saveBM25 } from '@agent-fs/search';
+import { createVectorStore, InvertedIndex } from '@agent-fs/search';
+import { createAFDStorage } from '@agent-fs/storage';
 import { MarkdownPlugin } from '@agent-fs/plugin-markdown';
 import { PDFPlugin } from '@agent-fs/plugin-pdf';
 import { DocxPlugin } from '@agent-fs/plugin-docx';
@@ -41,7 +42,7 @@ export class Indexer {
   async indexDirectory(dirPath: string): Promise<IndexMetadata> {
     const storagePath = join(homedir(), '.agent_fs', 'storage');
     mkdirSync(join(storagePath, 'vectors'), { recursive: true });
-    mkdirSync(join(storagePath, 'bm25'), { recursive: true });
+    mkdirSync(join(storagePath, 'inverted-index'), { recursive: true });
 
     // 初始化服务
     const embeddingService = createEmbeddingService(this.config.embedding);
@@ -55,7 +56,14 @@ export class Indexer {
     });
     await vectorStore.init();
 
-    const bm25Index = new BM25Index();
+    const invertedIndex = new InvertedIndex({
+      dbPath: join(storagePath, 'inverted-index', 'inverted-index.db'),
+    });
+    await invertedIndex.init();
+
+    const afdStorage = createAFDStorage({
+      documentsDir: join(dirPath, '.fs_index', 'documents'),
+    });
 
     // 运行流水线
     const chunkSize = this.config.indexing.chunk_size;
@@ -66,7 +74,8 @@ export class Indexer {
       embeddingService,
       summaryService,
       vectorStore,
-      bm25Index,
+      invertedIndex,
+      afdStorage,
       chunkOptions: {
         minTokens: chunkSize.min_tokens,
         maxTokens: chunkSize.max_tokens,
@@ -82,13 +91,11 @@ export class Indexer {
 
     const metadata = await pipeline.run();
 
-    // 保存 BM25 索引
-    saveBM25(bm25Index, join(storagePath, 'bm25', 'index.json'));
-
     // 更新 registry
     this.updateRegistry(metadata);
 
     // 清理
+    await invertedIndex.close();
     await vectorStore.close();
     await embeddingService.dispose();
 

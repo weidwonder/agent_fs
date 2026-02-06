@@ -189,6 +189,9 @@ importers:
       '@agent-fs/search':
         specifier: workspace:*
         version: link:../search
+      '@agent-fs/storage':
+        specifier: workspace:*
+        version: link:../storage
       uuid:
         specifier: ^9.0.0
         version: 9.0.1

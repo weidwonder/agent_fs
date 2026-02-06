@@ -6,8 +6,8 @@
   "types": "./dist/index.d.ts",
   "files": ["dist", "storage.node"],
   "scripts": {
-    "build": "napi build --release --cargo-cwd native",
-    "build:debug": "napi build --cargo-cwd native",
+    "build": "tsc && napi build --release --cargo-cwd native",
+    "build:debug": "tsc && napi build --cargo-cwd native",
     "clean": "rm -rf dist storage.node index.d.ts",
     "test": "vitest run",
     "lint": "eslint src"

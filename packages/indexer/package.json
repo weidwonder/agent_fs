@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@agent-fs/core": "workspace:*",
+    "@agent-fs/storage": "workspace:*",
     "@agent-fs/search": "workspace:*",
     "@agent-fs/llm": "workspace:*",
     "@agent-fs/plugin-markdown": "workspace:*",
