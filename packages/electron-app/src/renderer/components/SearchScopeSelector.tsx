@@ -22,13 +22,13 @@ export function SearchScopeSelector({
     <div className="flex items-center gap-2">
       <div className="flex flex-wrap gap-1.5 flex-1">
         {projects.map((project) => {
-          const selected = selectedScopes.includes(project.path);
+          const selected = selectedScopes.includes(project.projectId);
           return (
             <Badge
-              key={project.path}
+              key={project.projectId}
               variant={selected ? 'default' : 'outline'}
               className="cursor-pointer"
-              onClick={() => onToggle(project.path)}
+              onClick={() => onToggle(project.projectId)}
             >
               {project.alias}
             </Badge>

@@ -33,7 +33,7 @@ interface SearchMeta {
 interface SearchInput {
   query: string;
   keyword?: string;
-  scope: string[];
+  scope: string[];      // projectId 数组
   top_k?: number;
 }
 

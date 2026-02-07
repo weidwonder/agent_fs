@@ -31,7 +31,7 @@ export function SearchPanel({ projects, onSearchComplete }: SearchPanelProps) {
   } = useSearch();
 
   useEffect(() => {
-    initScopes(projects.map((p) => p.path));
+    initScopes(projects.map((p) => p.projectId));
   }, [projects, initScopes]);
 
   useEffect(() => {
@@ -85,7 +85,7 @@ export function SearchPanel({ projects, onSearchComplete }: SearchPanelProps) {
           projects={projects}
           selectedScopes={selectedScopes}
           onToggle={toggleScope}
-          onSelectAll={() => selectAll(projects.map((p) => p.path))}
+          onSelectAll={() => selectAll(projects.map((p) => p.projectId))}
           onDeselectAll={deselectAll}
         />
       </div>

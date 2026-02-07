@@ -281,21 +281,17 @@ ipcMain.handle('search', async (_event, input: {
     const topK = input.top_k ?? 10;
     const scopes = input.scope;
 
-    // 解析 scope → dirIds + fileLookup
+    // 解析 scope (projectId 数组) → dirIds + fileLookup
     const registry = readRegistry();
+    const scopeSet = new Set(scopes);
     const dirIds: string[] = [];
     const fileLookup = new Map<string, { dirPath: string; filePath: string }>();
 
     for (const project of registry.projects) {
       if (!project.valid) continue;
-      const projectPath = resolve(project.path).replace(/\/+$/u, '');
+      if (!scopeSet.has(project.projectId)) continue;
 
-      const isRelated = scopes.some((scope: string) => {
-        const s = scope.replace(/\/+$/u, '');
-        return s === projectPath || s.startsWith(`${projectPath}/`) || projectPath.startsWith(`${s}/`);
-      });
-
-      if (!isRelated) continue;
+      const projectPath = resolve(project.path);
 
       dirIds.push(project.projectId);
       for (const sub of project.subdirectories || []) {
@@ -318,6 +314,10 @@ ipcMain.handle('search', async (_event, input: {
     }
 
     // 三路搜索
+    console.log('[search] scopes:', scopes);
+    console.log('[search] dirIds:', dirIds);
+    console.log('[search] fileLookup size:', fileLookup.size);
+
     const searchRequests = dirIds.length > 0
       ? dirIds.map((dirId: string) => ({ dirId }))
       : [{}];
@@ -328,6 +328,7 @@ ipcMain.handle('search', async (_event, input: {
     // 语义搜索（需要 query）
     if (input.query.trim()) {
       const queryVector = await services.embeddingService.embed(input.query);
+      console.log('[search] queryVector length:', queryVector.length);
 
       for (const req of searchRequests) {
         const cResults = await services.vectorStore.searchByContent(queryVector, {
@@ -342,6 +343,8 @@ ipcMain.handle('search', async (_event, input: {
       }
     }
 
+    console.log('[search] contentResults:', contentResults.length, 'summaryResults:', summaryResults.length);
+
     // 关键词搜索（query 或 keyword 任一存在即可）
     const keywordText = input.keyword?.trim() || input.query?.trim() || '';
     const keywordResults = keywordText
@@ -350,6 +353,8 @@ ipcMain.handle('search', async (_event, input: {
           { dirIds: dirIds.length > 0 ? dirIds : undefined, topK: topK * 3 },
         )
       : [];
+
+    console.log('[search] keywordResults:', keywordResults.length);
 
     // 构建融合输入
     interface FusionItem {
