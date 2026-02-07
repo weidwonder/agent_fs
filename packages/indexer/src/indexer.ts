@@ -106,20 +106,14 @@ export class Indexer {
   private updateRegistry(metadata: IndexMetadata): void {
     const registryPath = join(homedir(), '.agent_fs', 'registry.json');
 
-    let registry: Registry;
+    let registry = this.createEmptyRegistry();
     if (existsSync(registryPath)) {
-      const parsed = JSON.parse(readFileSync(registryPath, 'utf-8')) as Registry;
-      if (!Array.isArray(parsed.projects)) {
-        throw new Error('registry.json 不是 2.0 格式，请删除后重新索引');
+      try {
+        const parsed = JSON.parse(readFileSync(registryPath, 'utf-8')) as unknown;
+        registry = this.parseRegistryOrEmpty(parsed);
+      } catch {
+        registry = this.createEmptyRegistry();
       }
-      registry = parsed;
-    } else {
-      registry = {
-        version: '2.0',
-        embeddingModel: this.config.embedding.local?.model || this.config.embedding.api?.model || '',
-        embeddingDimension: 512,
-        projects: [],
-      };
     }
 
     // 更新或添加项目
@@ -150,6 +144,29 @@ export class Indexer {
 
     mkdirSync(join(homedir(), '.agent_fs'), { recursive: true });
     writeFileSync(registryPath, JSON.stringify(registry, null, 2));
+  }
+
+  private createEmptyRegistry(): Registry {
+    return {
+      version: '2.0',
+      embeddingModel: this.config.embedding.local?.model || this.config.embedding.api?.model || '',
+      embeddingDimension: 512,
+      projects: [],
+    };
+  }
+
+  private parseRegistryOrEmpty(registryData: unknown): Registry {
+    const registryRecord = this.toRecord(registryData);
+    if (!registryRecord) {
+      return this.createEmptyRegistry();
+    }
+
+    const projectsRaw = registryRecord.projects;
+    if (!Array.isArray(projectsRaw)) {
+      return this.createEmptyRegistry();
+    }
+
+    return registryRecord as unknown as Registry;
   }
 
   private collectSubdirectoryRefs(

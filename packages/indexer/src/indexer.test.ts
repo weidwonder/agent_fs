@@ -183,4 +183,45 @@ describe('Indexer 插件配置注入', () => {
       },
     });
   });
+
+  it('应在 1.0 registry 格式时直接重置为空 2.0', async () => {
+    const { Indexer } = await import('./indexer');
+    const indexer = new Indexer() as any;
+
+    const normalized = indexer.parseRegistryOrEmpty({
+      version: '1.0',
+      embeddingModel: 'embedding-2',
+      embeddingDimension: 512,
+      indexedDirectories: [
+        {
+          path: '/tmp/demo',
+          alias: 'demo',
+          dirId: 'dir-123',
+          summary: '旧摘要',
+          lastUpdated: '2026-01-01T00:00:00.000Z',
+          fileCount: 3,
+          chunkCount: 20,
+          valid: true,
+        },
+      ],
+    });
+
+    expect(normalized.version).toBe('2.0');
+    expect(Array.isArray(normalized.projects)).toBe(true);
+    expect(normalized.projects).toHaveLength(0);
+  });
+
+  it('应在 registry 非法时回退到空 2.0', async () => {
+    const { Indexer } = await import('./indexer');
+    const indexer = new Indexer() as any;
+
+    const normalized = indexer.parseRegistryOrEmpty({
+      version: 'legacy',
+      data: [],
+    });
+
+    expect(normalized.version).toBe('2.0');
+    expect(Array.isArray(normalized.projects)).toBe(true);
+    expect(normalized.projects).toHaveLength(0);
+  });
 });
