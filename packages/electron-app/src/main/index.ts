@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
 import type { IndexProgress, Indexer } from '@agent-fs/indexer';
@@ -110,7 +110,23 @@ ipcMain.handle('start-indexing', async (_event, dirPath: string) => {
 // --- IPC: Registry ---
 
 ipcMain.handle('get-registry', async () => {
-  return readRegistry();
+  const registry = readRegistry();
+
+  // 将所有路径 resolve 为绝对路径
+  for (const p of registry.projects) {
+    p.path = resolve(p.path);
+  }
+
+  // 过滤掉作为其他项目子路径的条目（只保留顶层项目）
+  const paths = registry.projects.map((p: any) => p.path.replace(/\/+$/u, ''));
+  registry.projects = registry.projects.filter((p: any) => {
+    const normalized = p.path.replace(/\/+$/u, '');
+    return !paths.some((other: string) =>
+      other !== normalized && normalized.startsWith(`${other}/`),
+    );
+  });
+
+  return registry;
 });
 
 ipcMain.handle('update-project-summary', async (_event, projectId: string, newSummary: string) => {
