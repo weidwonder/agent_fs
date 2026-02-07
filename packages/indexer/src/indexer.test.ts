@@ -136,4 +136,51 @@ describe('Indexer 插件配置注入', () => {
       },
     });
   });
+
+  it('应兼容 minerU.apiHost 并映射到 serverUrl', async () => {
+    mocks.loadConfig.mockReturnValue({
+      llm: {
+        provider: 'openai-compatible',
+        base_url: 'https://example.com/v1',
+        api_key: 'test-key',
+        model: 'gpt-4o-mini',
+      },
+      embedding: {
+        default: 'local',
+        local: {
+          model: 'test-model',
+          device: 'cpu',
+        },
+      },
+      indexing: {
+        chunk_size: {
+          min_tokens: 10,
+          max_tokens: 100,
+        },
+      },
+      search: {
+        default_top_k: 10,
+        fusion: { method: 'rrf' },
+      },
+      plugins: {
+        pdf: {
+          minerU: {
+            apiHost: 'http://127.0.0.1:30000',
+            timeout: 30000,
+          },
+        },
+      },
+    });
+
+    const { Indexer } = await import('./indexer');
+    new Indexer();
+
+    expect(mocks.pdfCtor).toHaveBeenCalledTimes(1);
+    expect(mocks.pdfCtor).toHaveBeenCalledWith({
+      minerU: {
+        serverUrl: 'http://127.0.0.1:30000',
+        timeout: 30000,
+      },
+    });
+  });
 });

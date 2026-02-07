@@ -220,8 +220,18 @@ export class Indexer {
   ): ConstructorParameters<typeof PDFPlugin>[0] {
     const minerURaw = raw ? this.toRecord(raw.minerU) : null;
     if (!minerURaw) return {};
+
+    const normalizedMinerU: Record<string, unknown> = { ...minerURaw };
+    const serverUrl = this.pickFirstString(minerURaw, ['serverUrl', 'server_url', 'apiHost', 'api_host']);
+    if (serverUrl) {
+      normalizedMinerU.serverUrl = serverUrl;
+      delete normalizedMinerU.server_url;
+      delete normalizedMinerU.apiHost;
+      delete normalizedMinerU.api_host;
+    }
+
     return {
-      minerU: minerURaw as any,
+      minerU: normalizedMinerU as any,
     };
   }
 
@@ -251,6 +261,19 @@ export class Indexer {
     }
 
     return value as Record<string, unknown>;
+  }
+
+  private pickFirstString(
+    source: Record<string, unknown>,
+    keys: string[]
+  ): string | null {
+    for (const key of keys) {
+      const value = source[key];
+      if (typeof value === 'string' && value.trim().length > 0) {
+        return value;
+      }
+    }
+    return null;
   }
 }
 
