@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "main": "./out/main/index.js",
   "scripts": {
+    "predev": "pnpm --dir ../.. native:sync && pnpm --filter @agent-fs/indexer... build && node ../../scripts/fix-esm-specifiers.mjs ../core/dist ../llm/dist ../search/dist ../storage/dist ../plugins/plugin-markdown/dist ../plugins/plugin-pdf/dist ../plugins/plugin-docx/dist ../plugins/plugin-excel/dist ../indexer/dist",
     "dev": "electron-vite dev",
+    "prebuild": "pnpm --dir ../.. native:sync && pnpm --filter @agent-fs/indexer... build && node ../../scripts/fix-esm-specifiers.mjs ../core/dist ../llm/dist ../search/dist ../storage/dist ../plugins/plugin-markdown/dist ../plugins/plugin-pdf/dist ../plugins/plugin-docx/dist ../plugins/plugin-excel/dist ../indexer/dist",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "package": "electron-builder"
