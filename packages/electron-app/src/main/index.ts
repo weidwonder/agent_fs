@@ -288,7 +288,7 @@ ipcMain.handle('search', async (_event, input: {
 
     for (const project of registry.projects) {
       if (!project.valid) continue;
-      const projectPath = project.path.replace(/\/+$/u, '');
+      const projectPath = resolve(project.path).replace(/\/+$/u, '');
 
       const isRelated = scopes.some((scope: string) => {
         const s = scope.replace(/\/+$/u, '');
@@ -318,8 +318,6 @@ ipcMain.handle('search', async (_event, input: {
     }
 
     // 三路搜索
-    const queryVector = await services.embeddingService.embed(input.query);
-
     const searchRequests = dirIds.length > 0
       ? dirIds.map((dirId: string) => ({ dirId }))
       : [{}];
@@ -327,22 +325,31 @@ ipcMain.handle('search', async (_event, input: {
     const contentResults: any[] = [];
     const summaryResults: any[] = [];
 
-    for (const req of searchRequests) {
-      const cResults = await services.vectorStore.searchByContent(queryVector, {
-        ...req, topK: topK * 3,
-      });
-      contentResults.push(...cResults);
+    // 语义搜索（需要 query）
+    if (input.query.trim()) {
+      const queryVector = await services.embeddingService.embed(input.query);
 
-      const sResults = await services.vectorStore.searchBySummary(queryVector, {
-        ...req, topK: topK * 3,
-      });
-      summaryResults.push(...sResults);
+      for (const req of searchRequests) {
+        const cResults = await services.vectorStore.searchByContent(queryVector, {
+          ...req, topK: topK * 3,
+        });
+        contentResults.push(...cResults);
+
+        const sResults = await services.vectorStore.searchBySummary(queryVector, {
+          ...req, topK: topK * 3,
+        });
+        summaryResults.push(...sResults);
+      }
     }
 
-    const keywordResults = await services.invertedIndex.search(
-      input.keyword || input.query,
-      { dirIds: dirIds.length > 0 ? dirIds : undefined, topK: topK * 3 },
-    );
+    // 关键词搜索（query 或 keyword 任一存在即可）
+    const keywordText = input.keyword?.trim() || input.query?.trim() || '';
+    const keywordResults = keywordText
+      ? await services.invertedIndex.search(
+          keywordText,
+          { dirIds: dirIds.length > 0 ? dirIds : undefined, topK: topK * 3 },
+        )
+      : [];
 
     // 构建融合输入
     interface FusionItem {

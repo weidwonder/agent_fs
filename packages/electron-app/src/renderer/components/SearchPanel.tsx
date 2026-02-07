@@ -60,7 +60,7 @@ export function SearchPanel({ projects, onSearchComplete }: SearchPanelProps) {
           <Button
             size="icon"
             className="cursor-pointer shrink-0"
-            disabled={isSearching || !query.trim() || selectedScopes.length === 0}
+            disabled={isSearching || (!query.trim() && !keyword.trim()) || selectedScopes.length === 0}
             onClick={() => search()}
           >
             {isSearching ? (

@@ -28,7 +28,7 @@ export function useSearch() {
   }, []);
 
   const search = useCallback(async () => {
-    if (!query.trim() || selectedScopes.length === 0) return;
+    if ((!query.trim() && !keyword.trim()) || selectedScopes.length === 0) return;
 
     setIsSearching(true);
     setError(null);
