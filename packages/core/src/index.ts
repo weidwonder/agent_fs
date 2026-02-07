@@ -77,6 +77,9 @@ export {
   validateConfig,
   loadEnvFiles,
   resolveEnvVariables,
+  readRawConfig,
+  saveConfig,
   type LoadConfigOptions,
   type ResolvedConfig,
+  type RawConfigResult,
 } from './config';
