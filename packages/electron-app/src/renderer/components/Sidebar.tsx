@@ -28,7 +28,7 @@ export function Sidebar({
 }: SidebarProps) {
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="w-[280px] h-full flex flex-col bg-sidebar border-r border-sidebar-border">
+      <div className="w-[280px] shrink-0 h-full flex flex-col bg-sidebar border-r border-sidebar-border">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3">
           <span className="text-sm font-medium">项目</span>
