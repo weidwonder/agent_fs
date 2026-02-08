@@ -30,13 +30,13 @@ export function ProjectCard({
   onSummaryChange,
 }: ProjectCardProps) {
   return (
-    <Card className="p-3 space-y-2 hover:bg-accent/50 cursor-default transition-colors duration-150">
+    <Card className="min-w-0 w-full max-w-full p-3 pr-3 space-y-2 hover:bg-accent/50 cursor-default transition-colors duration-150">
       {/* Header: title + action buttons */}
-      <div className="flex items-start justify-between gap-2">
-        <span className="font-medium text-sm leading-tight truncate">
+      <div className="relative min-w-0 pr-14">
+        <span className="block min-w-0 font-medium text-sm leading-tight truncate">
           {project.alias}
         </span>
-        <div className="flex items-center shrink-0">
+        <div className="absolute right-1 top-0 z-10 flex items-center shrink-0">
           <Button
             variant="ghost"
             size="sm"
@@ -61,7 +61,7 @@ export function ProjectCard({
       {/* Path */}
       <Tooltip>
         <TooltipTrigger asChild>
-          <p className="text-xs text-muted-foreground truncate">
+          <p className="min-w-0 text-xs text-muted-foreground truncate">
             {project.path}
           </p>
         </TooltipTrigger>
@@ -71,8 +71,8 @@ export function ProjectCard({
       </Tooltip>
 
       {/* Stats + time */}
-      <div className="flex items-center justify-between gap-2">
-        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+        <Badge variant="secondary" className="min-w-0 max-w-[160px] truncate text-[10px] px-1.5 py-0">
           {project.totalFileCount} 文件 · {project.totalChunkCount} chunks
         </Badge>
         <span className="text-xs text-muted-foreground shrink-0">

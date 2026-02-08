@@ -61,7 +61,7 @@ export default function App() {
         </header>
 
         {/* Main Content */}
-        <div className="flex flex-1 overflow-hidden">
+        <div className="flex flex-1 min-w-0 overflow-hidden">
           {/* Sidebar */}
           <Sidebar
             projects={projects}
@@ -78,10 +78,10 @@ export default function App() {
             onSummaryChange={handleSummaryChange}
           />
 
-          <Separator orientation="vertical" />
+          <Separator orientation="vertical" className="relative z-20 shrink-0" />
 
           {/* Search Panel */}
-          <main className="flex-1 flex flex-col overflow-hidden">
+          <main className="relative z-0 flex-1 min-w-0 flex flex-col overflow-hidden">
             <SearchPanel projects={projects} onSearchComplete={setSearchMeta} />
           </main>
         </div>

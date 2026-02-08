@@ -28,7 +28,7 @@ export function Sidebar({
 }: SidebarProps) {
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="w-[280px] min-w-[280px] max-w-[280px] shrink-0 h-full flex flex-col overflow-hidden bg-sidebar border-r border-sidebar-border">
+      <div className="relative z-30 w-[320px] min-w-[320px] max-w-[320px] shrink-0 h-full flex flex-col overflow-hidden bg-sidebar border-r border-sidebar-border">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3">
           <span className="text-sm font-medium">项目</span>
@@ -41,7 +41,7 @@ export function Sidebar({
 
         {/* Project list */}
         <ScrollArea className="flex-1">
-          <div className="p-3 space-y-2">
+          <div className="p-3 pr-4 space-y-2 w-full max-w-full break-words">
             {projects.length > 0 ? (
               projects.map((project) => (
                 <ProjectCard

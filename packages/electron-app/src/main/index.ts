@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
 import type { IndexProgress, Indexer } from '@agent-fs/indexer';
+import { collectScopeContext, resolveProjectPath } from './search-scope';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -114,7 +115,7 @@ ipcMain.handle('get-registry', async () => {
 
   // 将所有路径 resolve 为绝对路径
   for (const p of registry.projects) {
-    p.path = resolve(p.path);
+    p.path = resolveProjectPath(p.path);
   }
 
   // 过滤掉作为其他项目子路径的条目（只保留顶层项目）
@@ -246,23 +247,31 @@ async function initSearchServices() {
   const { createVectorStore, InvertedIndex } = await import('@agent-fs/search');
 
   const config = loadConfig();
+  console.log('[search-init] embedding config:', JSON.stringify(config.embedding));
   const storagePath = join(homedir(), '.agent_fs', 'storage');
+
+  const vectorsPath = join(storagePath, 'vectors');
+  const invertedDbPath = join(storagePath, 'inverted-index', 'inverted-index.db');
+  console.log('[search-init] vectorsPath:', vectorsPath, 'exists:', existsSync(vectorsPath));
+  console.log('[search-init] invertedDbPath:', invertedDbPath, 'exists:', existsSync(invertedDbPath));
 
   const embeddingService = createEmbeddingService(config.embedding);
   await embeddingService.init();
+  console.log('[search-init] embedding dimension:', embeddingService.getDimension());
 
   const vectorStore = createVectorStore({
-    storagePath: join(storagePath, 'vectors'),
+    storagePath: vectorsPath,
     dimension: embeddingService.getDimension(),
   });
   await vectorStore.init();
 
   const invertedIndex = new InvertedIndex({
-    dbPath: join(storagePath, 'inverted-index', 'inverted-index.db'),
+    dbPath: invertedDbPath,
   });
   await invertedIndex.init();
 
   searchServices = { embeddingService, vectorStore, invertedIndex };
+  console.log('[search-init] all services initialized');
   return searchServices;
 }
 
@@ -283,35 +292,7 @@ ipcMain.handle('search', async (_event, input: {
 
     // 解析 scope (projectId 数组) → dirIds + fileLookup
     const registry = readRegistry();
-    const scopeSet = new Set(scopes);
-    const dirIds: string[] = [];
-    const fileLookup = new Map<string, { dirPath: string; filePath: string }>();
-
-    for (const project of registry.projects) {
-      if (!project.valid) continue;
-      if (!scopeSet.has(project.projectId)) continue;
-
-      const projectPath = resolve(project.path);
-
-      dirIds.push(project.projectId);
-      for (const sub of project.subdirectories || []) {
-        dirIds.push(sub.dirId);
-      }
-
-      // 读取 index.json 获取 fileLookup
-      const indexPath = join(projectPath, '.fs_index', 'index.json');
-      if (existsSync(indexPath)) {
-        try {
-          const metadata = JSON.parse(readFileSync(indexPath, 'utf-8'));
-          for (const file of metadata.files || []) {
-            fileLookup.set(file.fileId, {
-              dirPath: projectPath,
-              filePath: join(projectPath, file.name),
-            });
-          }
-        } catch { /* skip */ }
-      }
-    }
+    const { dirIds, fileLookup } = collectScopeContext(registry.projects || [], scopes);
 
     // 三路搜索
     console.log('[search] scopes:', scopes);

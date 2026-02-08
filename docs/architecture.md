@@ -98,13 +98,16 @@ Agent FS 让 AI Agent 在本地完成“索引 → 检索 → 定位原文”的
 
 ---
 
-## 5. 查询主流程（MCP Server）
+## 5. 查询主流程（MCP Server / Electron 客户端）
 
 ## 5.1 `search`
 
 1. 解析 `scope`（Project / 子目录 / 多目录）
-2. 从 registry 展开目录范围并解析 `dirId`
-3. 并行执行：
+2. 解析检索范围：
+   - 优先读取各目录 `.fs_index/index.json`，递归收集真实 `dirId`
+   - 同时构建 `fileId -> {dirPath, filePath}` 映射，用于结果回填
+   - 若目录缺少索引元数据，回退使用 registry 的 `projectId/subdirectories[].dirId`
+3. 执行多路召回：
    - 向量召回（VectorStore）
    - 倒排召回（InvertedIndex）
 4. 用 RRF 融合排序
@@ -122,6 +125,16 @@ Agent FS 让 AI Agent 在本地完成“索引 → 检索 → 定位原文”的
 
 - `list_indexes`：返回 registry 中有效 Project 与扁平化子目录引用
 - `dir_tree`：返回递归目录树，支持 `depth` 限制，子索引缺失时返回回退节点
+
+## 5.4 Electron 客户端查询链路
+
+- 通过 `ipcMain.handle('search')` 复用同一套向量/倒排/RRF 能力
+- `get-registry` 会将相对路径解析为绝对路径，并过滤被父目录包含的重复条目
+- 相对路径解析策略按优先级：
+  1. workspace 根目录（包含 `pnpm-workspace.yaml`）
+  2. `INIT_CWD`
+  3. `process.cwd()`
+- 启动前执行 `electron-rebuild`，保证 `better-sqlite3` / `nodejieba` 与 Electron ABI 一致
 
 ---
 
@@ -229,6 +242,8 @@ interface DocumentConversionResult {
 
 - Indexer 单元与集成测试（含递归与增量）
 - MCP 工具单测（`search / get_chunk / dir_tree / list_indexes`）
+- Electron 查询范围解析单测：`packages/electron-app/src/main/search-scope.test.ts`
+- Electron 构建前原生依赖重建：`pnpm --filter @agent-fs/electron-app run predev`
 - E2E（Phase H）：
   - `packages/e2e/src/storage-optimization/phase-h.e2e.ts`
   - `packages/e2e/src/storage-optimization/phase-h-benchmark.e2e.ts`
@@ -243,8 +258,9 @@ interface DocumentConversionResult {
 - `registry.json` 仅支持 v2.0 结构
 - 旧 BM25 JSON 索引不再作为主链路
 - 搜索质量依赖插件 `locator` 与 `searchableText` 质量
+- 若切换 Node/Electron 版本导致 ABI 变化，需重新执行 Electron 端原生模块重建
 
 ---
 
-*文档版本：2.0*  
-*更新日期：2026-02-06*
+*文档版本：2.1*  
+*更新日期：2026-02-08*

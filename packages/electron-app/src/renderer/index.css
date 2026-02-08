@@ -41,4 +41,10 @@
     @apply bg-background text-foreground;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   }
+
+  [data-radix-scroll-area-viewport] > div {
+    display: block !important;
+    width: 100% !important;
+    min-width: 0 !important;
+  }
 }

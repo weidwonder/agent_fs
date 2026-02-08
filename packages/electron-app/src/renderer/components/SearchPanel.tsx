@@ -45,7 +45,7 @@ export function SearchPanel({ projects, onSearchComplete }: SearchPanelProps) {
   };
 
   return (
-    <div className="flex flex-col h-full p-4">
+    <div className="flex min-w-0 flex-col h-full p-4">
       {/* Search area - sticky */}
       <div className="sticky top-0 bg-background z-10 pb-4 space-y-2">
         {/* Main query row */}

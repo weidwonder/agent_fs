@@ -66,7 +66,7 @@ export function ProjectSummaryEditor({ summary, onSave }: ProjectSummaryEditorPr
     return (
       <div className="space-y-1.5">
         <p
-          className="text-xs text-muted-foreground cursor-pointer"
+          className="text-xs text-muted-foreground break-words cursor-pointer"
           onClick={() => setState('collapsed')}
         >
           {summary || '暂无描述'}
@@ -87,7 +87,7 @@ export function ProjectSummaryEditor({ summary, onSave }: ProjectSummaryEditorPr
   // collapsed (default)
   return (
     <p
-      className="text-xs text-muted-foreground line-clamp-2 cursor-pointer"
+      className="text-xs text-muted-foreground break-words line-clamp-2 cursor-pointer"
       onClick={() => setState('expanded')}
     >
       {summary || '暂无描述'}

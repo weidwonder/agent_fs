@@ -30,6 +30,20 @@ export interface VectorSearchOptions {
 }
 
 const toRecord = (doc: VectorDocument): Record<string, unknown> => ({ ...doc });
+const REQUIRED_SCHEMA_FIELDS = new Set([
+  'chunk_id',
+  'file_id',
+  'dir_id',
+  'rel_path',
+  'file_path',
+  'chunk_line_start',
+  'chunk_line_end',
+  'content_vector',
+  'summary_vector',
+  'locator',
+  'indexed_at',
+  'deleted_at',
+]);
 
 export class VectorStore {
   private db: lancedb.Connection | null = null;
@@ -49,6 +63,11 @@ export class VectorStore {
     const tables = await this.db.tableNames();
     if (tables.includes(this.options.tableName)) {
       this.table = await this.db.openTable(this.options.tableName);
+      const isExpectedSchema = await this.hasExpectedSchema(this.table);
+      if (!isExpectedSchema) {
+        await this.db.dropTable(this.options.tableName);
+        this.table = null;
+      }
     }
   }
 
@@ -56,28 +75,49 @@ export class VectorStore {
     if (!this.db) throw new Error('Database not initialized');
 
     if (!this.table) {
-      // 创建空表（使用初始数据定义 schema）
-      const emptyDoc: VectorDocument = {
-        chunk_id: '',
-        file_id: '',
-        dir_id: '',
-        rel_path: '',
-        file_path: '',
-        chunk_line_start: 0,
-        chunk_line_end: 0,
-        content_vector: new Array(this.options.dimension).fill(0),
-        summary_vector: new Array(this.options.dimension).fill(0),
-        locator: '',
-        indexed_at: '',
-        deleted_at: '',
-      };
-      const seedData = [toRecord(emptyDoc)];
-      this.table = await this.db.createTable(this.options.tableName, seedData);
-      // 删除占位记录
-      await this.table.delete(`chunk_id = ''`);
+      this.table = await this.createEmptyTable();
     }
 
     return this.table;
+  }
+
+  private async createEmptyTable(): Promise<lancedb.Table> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    const emptyDoc: VectorDocument = {
+      chunk_id: '',
+      file_id: '',
+      dir_id: '',
+      rel_path: '',
+      file_path: '',
+      chunk_line_start: 0,
+      chunk_line_end: 0,
+      content_vector: new Array(this.options.dimension).fill(0),
+      summary_vector: new Array(this.options.dimension).fill(0),
+      locator: '',
+      indexed_at: '',
+      deleted_at: '',
+    };
+    const table = await this.db.createTable(this.options.tableName, [toRecord(emptyDoc)]);
+    await table.delete(`chunk_id = ''`);
+    return table;
+  }
+
+  private async hasExpectedSchema(table: lancedb.Table): Promise<boolean> {
+    const schema = await table.schema();
+    const existingFields = new Set(schema.fields.map((field) => field.name));
+
+    if (existingFields.size !== REQUIRED_SCHEMA_FIELDS.size) {
+      return false;
+    }
+
+    for (const name of REQUIRED_SCHEMA_FIELDS) {
+      if (!existingFields.has(name)) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   async addDocuments(docs: VectorDocument[]): Promise<void> {

@@ -94,7 +94,7 @@ export function SearchResultCard({
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
             摘要
           </p>
-          <p className="text-sm text-foreground line-clamp-3">
+          <p className="text-sm text-foreground line-clamp-3 break-words">
             {result.summary}
           </p>
         </div>
@@ -107,7 +107,7 @@ export function SearchResultCard({
             正文
           </p>
           <div className="relative max-h-[160px] overflow-hidden">
-            <p className="text-sm">{highlightedContent}</p>
+            <p className="text-sm break-words">{highlightedContent}</p>
             <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-card to-transparent pointer-events-none" />
           </div>
         </div>

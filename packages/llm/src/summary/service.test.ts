@@ -148,7 +148,8 @@ describe('SummaryService', () => {
 
     expect(result.map((item) => item.summary)).toEqual(['', '']);
     expect(call).toHaveBeenCalledTimes(3);
-    for (const [_, options] of call.mock.calls) {
+    for (const callArgs of call.mock.calls as unknown[][]) {
+      const options = callArgs[1] as { maxRetries: number; timeoutMs?: number };
       expect(options).toMatchObject({ maxRetries: 1, timeoutMs: 10 });
     }
   });

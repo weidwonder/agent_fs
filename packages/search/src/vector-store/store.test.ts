@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import * as lancedb from '@lancedb/lancedb';
 import { VectorStore } from './store';
 import type { VectorDocument } from '@agent-fs/core';
 
@@ -49,6 +50,42 @@ describe('VectorStore', () => {
   it('should initialize empty table', async () => {
     const count = await store.countRows();
     expect(count).toBe(0);
+  });
+
+  it('应在旧版 schema 时自动删表重建并可写入新文档', async () => {
+    await store.close();
+    rmSync(testDir, { recursive: true, force: true });
+    mkdirSync(testDir, { recursive: true });
+
+    const db = await lancedb.connect(testDir);
+    await db.createTable('chunks', [
+      {
+        chunk_id: 'legacy-1',
+        file_id: 'legacy-file-1',
+        dir_id: 'legacy-dir',
+        rel_path: 'legacy.md',
+        file_path: '/legacy.md',
+        content: 'legacy content',
+        summary: 'legacy summary',
+        content_vector: [0, 0, 0],
+        summary_vector: [0, 0, 0],
+        locator: 'line:1',
+        indexed_at: new Date().toISOString(),
+        deleted_at: '',
+      },
+    ]);
+
+    store = new VectorStore({ storagePath: testDir, dimension });
+    await store.init();
+
+    await expect(
+      store.addDocuments([createDoc('new-1', 'dir1', '/project/docs/new.md', [1, 0, 0], [0, 1, 0])])
+    ).resolves.toBeUndefined();
+
+    const results = await store.getByChunkIds(['new-1']);
+    expect(results).toHaveLength(1);
+    expect(results[0].chunk_line_start).toBe(1);
+    expect(results[0].chunk_line_end).toBe(3);
   });
 
   it('should add documents and search by content', async () => {
