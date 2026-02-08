@@ -6,7 +6,17 @@ export default defineConfig({
     build: {
       outDir: 'out/main',
       rollupOptions: {
-        external: ['nodejieba', '@xenova/transformers', '@lancedb/lancedb'],
+        external: [
+          '@agent-fs/indexer',
+          '@agent-fs/core',
+          '@agent-fs/search',
+          '@agent-fs/llm',
+          '@agent-fs/storage',
+          'nodejieba',
+          'better-sqlite3',
+          '@xenova/transformers',
+          '@lancedb/lancedb',
+        ],
       },
     },
   },

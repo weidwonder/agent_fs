@@ -1,133 +1,133 @@
-import React, { useState, useEffect } from 'react';
-
-// IndexProgress 类型（与 @agent-fs/indexer 一致）
-interface IndexProgress {
-  phase: 'scan' | 'convert' | 'chunk' | 'summary' | 'embed' | 'write';
-  currentFile: string;
-  processed: number;
-  total: number;
-}
-
-// RegisteredProject 类型（与 @agent-fs/core 一致）
-interface RegisteredProject {
-  path: string;
-  alias: string;
-  projectId: string;
-  summary: string;
-  lastUpdated: string;
-  totalFileCount: number;
-  totalChunkCount: number;
-  valid: boolean;
-}
-
-declare global {
-  interface Window {
-    electronAPI: {
-      selectDirectory: () => Promise<string | undefined>;
-      startIndexing: (path: string) => Promise<{ success: boolean; metadata?: any; error?: string }>;
-      getRegistry: () => Promise<{ projects: RegisteredProject[] }>;
-      onIndexingProgress: (callback: (progress: IndexProgress) => void) => void;
-    };
-  }
-}
-
-// Phase 显示名称映射
-const PHASE_NAMES: Record<IndexProgress['phase'], string> = {
-  scan: '扫描文件',
-  convert: '转换文档',
-  chunk: '切分内容',
-  summary: '生成摘要',
-  embed: '计算向量',
-  write: '写入索引',
-};
+import React, { useState, useCallback } from 'react';
+import { Settings } from 'lucide-react';
+import { TooltipProvider } from './components/ui/tooltip';
+import { Button } from './components/ui/button';
+import { Separator } from './components/ui/separator';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from './components/ui/alert-dialog';
+import { Sidebar } from './components/Sidebar';
+import { SearchPanel } from './components/SearchPanel';
+import { StatusBar } from './components/StatusBar';
+import { SettingsDialog } from './components/SettingsDialog';
+import { useRegistry } from './hooks/useRegistry';
+import { useIndexing } from './hooks/useIndexing';
 
 export default function App() {
-  const [directories, setDirectories] = useState<RegisteredProject[]>([]);
-  const [indexing, setIndexing] = useState(false);
-  const [progress, setProgress] = useState<IndexProgress | null>(null);
+  const { projects, refresh } = useRegistry();
+  const { indexingPath, progress, error: indexError, startIndexing, selectAndIndex } = useIndexing(refresh);
 
-  useEffect(() => {
-    loadRegistry();
-    window.electronAPI.onIndexingProgress(setProgress);
-  }, []);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [removeTarget, setRemoveTarget] = useState<{ projectId: string; alias: string; path: string } | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [searchMeta, setSearchMeta] = useState<SearchMeta | null>(null);
 
-  const loadRegistry = async () => {
-    const registry = await window.electronAPI.getRegistry();
-    setDirectories(registry.projects?.filter((project) => project.valid) || []);
-  };
-
-  const handleSelectDirectory = async () => {
-    const path = await window.electronAPI.selectDirectory();
-    if (path) {
-      setIndexing(true);
-      const result = await window.electronAPI.startIndexing(path);
-      setIndexing(false);
-      setProgress(null);
-      if (result.success) {
-        loadRegistry();
-      } else {
-        alert('索引失败: ' + result.error);
-      }
+  // 移除项目
+  const handleRemoveConfirm = useCallback(async () => {
+    if (!removeTarget) return;
+    setRemoveError(null);
+    const result = await window.electronAPI.removeProject(removeTarget.projectId);
+    if (result.success) {
+      setRemoveTarget(null);
+      refresh();
+    } else {
+      setRemoveError(result.error || '移除失败');
     }
-  };
+  }, [removeTarget, refresh]);
+
+  // 更新项目描述
+  const handleSummaryChange = useCallback(async (projectId: string, summary: string) => {
+    await window.electronAPI.updateProjectSummary(projectId, summary);
+    refresh();
+  }, [refresh]);
 
   return (
-    <div className="min-h-screen bg-stone-50 p-8">
-      <header className="mb-8">
-        <h1 className="text-2xl font-light text-stone-800">Agent FS</h1>
-        <p className="text-stone-500">文档智能索引</p>
-      </header>
-
-      <main>
-        <section className="mb-8">
-          <button
-            onClick={handleSelectDirectory}
-            disabled={indexing}
-            className="px-4 py-2 bg-stone-800 text-white rounded hover:bg-stone-700 disabled:opacity-50"
+    <TooltipProvider>
+      <div className="flex flex-col h-screen overflow-hidden">
+        {/* Header */}
+        <header className="flex items-center justify-between px-6 h-12 border-b bg-background shrink-0"
+          style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+          <div className="flex items-center gap-2 pl-16">
+            <h1 className="text-sm font-semibold text-foreground tracking-tight">Agent FS</h1>
+            <span className="text-xs text-muted-foreground">文档智能索引</span>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="cursor-pointer"
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+            onClick={() => setSettingsOpen(true)}
           >
-            {indexing ? '索引中...' : '选择文件夹'}
-          </button>
+            <Settings className="h-4 w-4" />
+          </Button>
+        </header>
 
-          {progress && (
-            <div className="mt-4 p-4 bg-white rounded shadow-sm">
-              <p className="text-sm text-stone-600">
-                {PHASE_NAMES[progress.phase]}: {progress.currentFile}
-              </p>
-              <div className="mt-2 h-2 bg-stone-200 rounded">
-                <div
-                  className="h-full bg-stone-600 rounded transition-all"
-                  style={{ width: `${progress.total > 0 ? (progress.processed / progress.total) * 100 : 0}%` }}
-                />
-              </div>
-              <p className="mt-1 text-xs text-stone-500">
-                {progress.processed} / {progress.total}
-              </p>
-            </div>
-          )}
-        </section>
+        {/* Main Content */}
+        <div className="flex flex-1 min-w-0 overflow-hidden">
+          {/* Sidebar */}
+          <Sidebar
+            projects={projects}
+            indexingPath={indexingPath}
+            progress={progress}
+            onAddDirectory={selectAndIndex}
+            onUpdateProject={(path) => startIndexing(path)}
+            onRemoveProject={(projectId) => {
+              const project = projects.find((p) => p.projectId === projectId);
+              if (project) {
+                setRemoveTarget({ projectId, alias: project.alias || project.path, path: project.path });
+              }
+            }}
+            onSummaryChange={handleSummaryChange}
+          />
 
-        <section>
-          <h2 className="text-lg font-medium text-stone-700 mb-4">已索引目录</h2>
-          {directories.length === 0 ? (
-            <p className="text-stone-400">暂无索引</p>
-          ) : (
-            <ul className="space-y-2">
-              {directories.map((dir) => (
-                <li key={dir.projectId} className="p-4 bg-white rounded shadow-sm">
-                  <p className="font-medium text-stone-800">{dir.alias || dir.path}</p>
-                  <p className="text-sm text-stone-500 truncate">{dir.path}</p>
-                  <p className="text-sm text-stone-400 mt-1">
-                    {dir.totalFileCount} 文件 · {dir.totalChunkCount} chunks
-                  </p>
-                  {dir.summary && (
-                    <p className="text-sm text-stone-600 mt-2 line-clamp-2">{dir.summary}</p>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      </main>
-    </div>
+          <Separator orientation="vertical" className="relative z-20 shrink-0" />
+
+          {/* Search Panel */}
+          <main className="relative z-0 flex-1 min-w-0 flex flex-col overflow-hidden">
+            <SearchPanel projects={projects} onSearchComplete={setSearchMeta} />
+          </main>
+        </div>
+
+        {/* Status Bar */}
+        <StatusBar
+          projects={projects}
+          indexingPath={indexingPath}
+          progress={progress}
+          searchMeta={searchMeta}
+        />
+
+        {/* Settings Dialog */}
+        <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+
+        {/* Remove Confirmation Dialog */}
+        <AlertDialog open={removeTarget !== null} onOpenChange={(open) => !open && setRemoveTarget(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>确定移除项目？</AlertDialogTitle>
+              <AlertDialogDescription>
+                将移除项目「{removeTarget?.alias}」并删除 {removeTarget?.path}/.fs_index 下的所有索引数据。此操作不可恢复。
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            {removeError && (
+              <p className="text-sm text-destructive">{removeError}</p>
+            )}
+            <AlertDialogFooter>
+              <AlertDialogCancel className="cursor-pointer">取消</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90 cursor-pointer"
+                onClick={handleRemoveConfirm}
+              >
+                确定移除
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Index Error Toast */}
+        {indexError && (
+          <div className="fixed bottom-12 right-4 max-w-sm p-3 rounded-lg bg-destructive text-destructive-foreground text-sm shadow-lg animate-in slide-in-from-bottom-2">
+            索引失败：{indexError}
+          </div>
+        )}
+      </div>
+    </TooltipProvider>
   );
 }

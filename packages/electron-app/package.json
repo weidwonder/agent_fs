@@ -3,16 +3,33 @@
   "version": "0.1.0",
   "main": "./out/main/index.js",
   "scripts": {
-    "predev": "pnpm --dir ../.. native:sync && pnpm --filter @agent-fs/indexer... build && node ../../scripts/fix-esm-specifiers.mjs ../core/dist ../llm/dist ../search/dist ../storage/dist ../plugins/plugin-markdown/dist ../plugins/plugin-pdf/dist ../plugins/plugin-docx/dist ../plugins/plugin-excel/dist ../indexer/dist",
+    "native:electron": "pnpm exec electron-rebuild -f -w better-sqlite3,nodejieba",
+    "predev": "pnpm --dir ../.. native:sync && pnpm --filter @agent-fs/indexer... build && node ../../scripts/fix-esm-specifiers.mjs ../core/dist ../llm/dist ../search/dist ../storage/dist ../plugins/plugin-markdown/dist ../plugins/plugin-pdf/dist ../plugins/plugin-docx/dist ../plugins/plugin-excel/dist ../indexer/dist && pnpm run native:electron",
     "dev": "electron-vite dev",
-    "prebuild": "pnpm --dir ../.. native:sync && pnpm --filter @agent-fs/indexer... build && node ../../scripts/fix-esm-specifiers.mjs ../core/dist ../llm/dist ../search/dist ../storage/dist ../plugins/plugin-markdown/dist ../plugins/plugin-pdf/dist ../plugins/plugin-docx/dist ../plugins/plugin-excel/dist ../indexer/dist",
+    "prebuild": "pnpm --dir ../.. native:sync && pnpm --filter @agent-fs/indexer... build && node ../../scripts/fix-esm-specifiers.mjs ../core/dist ../llm/dist ../search/dist ../storage/dist ../plugins/plugin-markdown/dist ../plugins/plugin-pdf/dist ../plugins/plugin-docx/dist ../plugins/plugin-excel/dist ../indexer/dist && pnpm run native:electron",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "package": "electron-builder"
   },
   "dependencies": {
     "@agent-fs/core": "workspace:*",
-    "@agent-fs/indexer": "workspace:*"
+    "@agent-fs/indexer": "workspace:*",
+    "@agent-fs/llm": "workspace:*",
+    "@agent-fs/search": "workspace:*",
+    "@agent-fs/storage": "workspace:*",
+    "@radix-ui/react-alert-dialog": "^1.1.15",
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-scroll-area": "^1.2.10",
+    "@radix-ui/react-select": "^2.2.6",
+    "@radix-ui/react-separator": "^1.1.8",
+    "@radix-ui/react-slot": "^1.2.4",
+    "@radix-ui/react-tabs": "^1.1.13",
+    "@radix-ui/react-tooltip": "^1.2.8",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.563.0",
+    "tailwind-merge": "^3.4.0",
+    "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.3",

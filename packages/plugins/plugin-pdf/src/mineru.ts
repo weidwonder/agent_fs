@@ -34,6 +34,18 @@ export type MinerUContentList = MinerUContentItem[];
  */
 export type MinerUOptions = MinerUClientConfig;
 
+async function ensureGlobalFileAvailable(): Promise<void> {
+  const globalRecord = globalThis as Record<string, unknown>;
+  if (typeof globalRecord.File !== 'undefined') {
+    return;
+  }
+
+  const bufferModule = await import('node:buffer');
+  if (typeof bufferModule.File !== 'undefined') {
+    globalRecord.File = bufferModule.File;
+  }
+}
+
 /**
  * 调用 MinerU TypeScript 客户端转换 PDF
  */
@@ -41,6 +53,7 @@ export async function convertPDFWithMinerU(
   pdfPath: string,
   options: MinerUOptions,
 ): Promise<MinerUResult> {
+  await ensureGlobalFileAvailable();
   const { MinerUClient } = await import('mineru-ts');
   const client = new MinerUClient(options);
   await client.initialize();
