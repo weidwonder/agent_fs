@@ -4,6 +4,8 @@ import { homedir } from 'node:os';
 import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
 import type { IndexProgress, Indexer } from '@agent-fs/indexer';
 import { collectScopeContext, resolveProjectPath } from './search-scope';
+import { getProjectMemoryFromRegistry, saveProjectMemoryFile } from './project-memory';
+import { resolveRendererDevUrl } from './renderer-url';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -24,8 +26,9 @@ function createWindow() {
     backgroundColor: '#ffffff',
   });
 
-  if (process.env.NODE_ENV === 'development') {
-    mainWindow.loadURL('http://localhost:5173');
+  const rendererDevUrl = resolveRendererDevUrl(process.env);
+  if (rendererDevUrl) {
+    mainWindow.loadURL(rendererDevUrl);
     mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
@@ -199,6 +202,32 @@ ipcMain.handle('remove-project', async (_event, projectId: string) => {
     writeRegistry(registry);
 
     return { success: true };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
+});
+
+// --- IPC: Memory ---
+
+ipcMain.handle('get-project-memory', async (_event, projectId: string) => {
+  try {
+    const registry = readRegistry();
+    return getProjectMemoryFromRegistry(registry.projects, projectId);
+  } catch (error) {
+    return {
+      memoryPath: '',
+      exists: false,
+      projectMd: '',
+      files: [],
+      error: (error as Error).message,
+    };
+  }
+});
+
+ipcMain.handle('save-memory-file', async (_event, projectId: string, filePath: string, content: string) => {
+  try {
+    const registry = readRegistry();
+    return saveProjectMemoryFile(registry.projects, projectId, filePath, content);
   } catch (error) {
     return { success: false, error: (error as Error).message };
   }

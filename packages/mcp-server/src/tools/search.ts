@@ -36,6 +36,7 @@ interface RuntimeSearchItem {
 interface FileLookup {
   dirPath: string;
   filePath: string;
+  afdName: string;
 }
 
 interface RuntimeProject {
@@ -151,19 +152,9 @@ export async function search(input: SearchInput) {
 
   const queryVector = await embeddingService.embed(input.query);
 
-  const contentVectorResults = await searchVector(
+  const hybridVectorResults = await searchVector(
     vectorStore,
     queryVector,
-    'content',
-    topK,
-    scopes,
-    scopedContext.dirIds
-  );
-
-  const summaryVectorResults = await searchVector(
-    vectorStore,
-    queryVector,
-    'summary',
     topK,
     scopes,
     scopedContext.dirIds
@@ -176,12 +167,8 @@ export async function search(input: SearchInput) {
 
   const lists = [
     {
-      name: 'content_vector',
-      items: contentVectorResults.map((item) => mapVectorItem(item, scopedContext.fileLookup)),
-    },
-    {
-      name: 'summary_vector',
-      items: summaryVectorResults.map((item) => mapVectorItem(item, scopedContext.fileLookup)),
+      name: 'hybrid_vector',
+      items: hybridVectorResults.map((item) => mapVectorItem(item, scopedContext.fileLookup)),
     },
     {
       name: 'inverted_index',
@@ -318,6 +305,7 @@ function resolveScopedContext(scopes: string[]): {
       fileLookup.set(file.fileId, {
         dirPath: candidatePath,
         filePath: join(candidatePath, file.name),
+        afdName: file.afdName ?? file.name ?? file.fileId,
       });
     }
   }
@@ -408,7 +396,6 @@ function readIndexMetadata(dirPath: string): IndexMetadata | null {
 async function searchVector(
   store: VectorStore,
   queryVector: number[],
-  type: 'content' | 'summary',
   topK: number,
   scopes: string[],
   dirIds: string[]
@@ -423,10 +410,7 @@ async function searchVector(
         : [{}];
 
   for (const request of requests) {
-    const results =
-      type === 'content'
-        ? await store.searchByContent(queryVector, { ...request, topK: topK * 3 })
-        : await store.searchBySummary(queryVector, { ...request, topK: topK * 3 });
+    const results = await store.searchByHybrid(queryVector, { ...request, topK: topK * 3 });
 
     for (const result of results) {
       const existing = merged.get(result.chunk_id);
@@ -495,8 +479,9 @@ async function hydrateResult(
   }
 
   const storage = getAfdStorage(fileInfo.dirPath);
-  const markdown = await readMarkdown(storage, item.fileId, markdownCache);
-  const summaries = await readSummaries(storage, item.fileId, summariesCache);
+  const archiveCacheKey = `${normalizePath(fileInfo.dirPath)}/${fileInfo.afdName}`;
+  const markdown = await readMarkdown(storage, fileInfo.afdName, archiveCacheKey, markdownCache);
+  const summaries = await readSummaries(storage, fileInfo.afdName, archiveCacheKey, summariesCache);
 
   const parsedByLineRange = extractByLineRange(markdown, item.chunkLineStart, item.chunkLineEnd);
   const parsedByLocator = parsedByLineRange ? '' : extractByLocator(markdown, item.source.locator);
@@ -593,42 +578,44 @@ function getAfdStorage(dirPath: string): AFDStorage {
 
 async function readMarkdown(
   storage: AFDStorage,
-  fileId: string,
+  archiveName: string,
+  cacheKey: string,
   cache: Map<string, string>
 ): Promise<string> {
-  const cached = cache.get(fileId);
+  const cached = cache.get(cacheKey);
   if (cached !== undefined) {
     return cached;
   }
 
   try {
-    const value = await storage.readText(fileId, 'content.md');
-    cache.set(fileId, value);
+    const value = await storage.readText(archiveName, 'content.md');
+    cache.set(cacheKey, value);
     return value;
   } catch {
-    cache.set(fileId, '');
+    cache.set(cacheKey, '');
     return '';
   }
 }
 
 async function readSummaries(
   storage: AFDStorage,
-  fileId: string,
+  archiveName: string,
+  cacheKey: string,
   cache: Map<string, Record<string, string>>
 ): Promise<Record<string, string>> {
-  const cached = cache.get(fileId);
+  const cached = cache.get(cacheKey);
   if (cached) {
     return cached;
   }
 
   try {
-    const buffer = await storage.read(fileId, 'summaries.json');
+    const buffer = await storage.read(archiveName, 'summaries.json');
     const parsed = JSON.parse(buffer.toString('utf-8')) as Record<string, string>;
-    cache.set(fileId, parsed);
+    cache.set(cacheKey, parsed);
     return parsed;
   } catch {
     const empty: Record<string, string> = {};
-    cache.set(fileId, empty);
+    cache.set(cacheKey, empty);
     return empty;
   }
 }

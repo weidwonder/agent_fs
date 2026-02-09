@@ -46,3 +46,12 @@ packages/storage/storage.node
 packages/storage/index.d.ts
 packages/storage/native/target/
 packages/storage/native/Cargo.lock
+
+# OpenCode
+.opencode/
+
+# Claude 
+.claude/
+
+# ClaudeKit
+release-manifest.json

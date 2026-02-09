@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { homedir } from 'node:os';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import type { Registry, IndexMetadata, Config } from '@agent-fs/core';
@@ -65,6 +65,19 @@ export class Indexer {
     const afdStorage = createAFDStorage({
       documentsDir: join(dirPath, '.fs_index', 'documents'),
     });
+    const afdStorageByDir = new Map<string, ReturnType<typeof createAFDStorage>>();
+    const afdStorageResolver = (targetDirPath: string) => {
+      const cached = afdStorageByDir.get(targetDirPath);
+      if (cached) {
+        return cached;
+      }
+
+      const storage = createAFDStorage({
+        documentsDir: join(targetDirPath, '.fs_index', 'documents'),
+      });
+      afdStorageByDir.set(targetDirPath, storage);
+      return storage;
+    };
 
     // 运行流水线
     const chunkSize = this.config.indexing.chunk_size;
@@ -77,13 +90,16 @@ export class Indexer {
       vectorStore,
       invertedIndex,
       afdStorage,
+      afdStorageResolver,
       chunkOptions: {
         minTokens: chunkSize.min_tokens,
         maxTokens: chunkSize.max_tokens,
       },
+      fileParallelism: this.config.indexing.file_parallelism ?? 2,
       summaryOptions: {
         mode: summaryConfig?.mode ?? 'batch',
         tokenBudget: summaryConfig?.chunk_batch_token_budget ?? 10000,
+        parallelRequests: summaryConfig?.parallel_requests ?? 2,
         maxRetries: summaryConfig?.max_retries,
         timeoutMs: summaryConfig?.timeout_ms,
       },
@@ -91,6 +107,9 @@ export class Indexer {
     });
 
     const metadata = await pipeline.run();
+
+    // 索引完成后初始化项目 memory（首次）
+    this.initMemoryIfNeeded(dirPath, metadata);
 
     // 更新 registry
     this.updateRegistry(metadata);
@@ -101,6 +120,27 @@ export class Indexer {
     await embeddingService.dispose();
 
     return metadata;
+  }
+
+  private initMemoryIfNeeded(dirPath: string, metadata: IndexMetadata): void {
+    const memoryDir = join(dirPath, '.fs_index', 'memory');
+    const projectMdPath = join(memoryDir, 'project.md');
+
+    if (existsSync(projectMdPath)) {
+      return;
+    }
+
+    const directorySummary = metadata.directorySummary?.trim();
+    if (!directorySummary) {
+      return;
+    }
+
+    mkdirSync(memoryDir, { recursive: true });
+    mkdirSync(join(memoryDir, 'extend'), { recursive: true });
+
+    const projectName = basename(metadata.directoryPath) || 'Project';
+    const initialProjectMd = `# ${projectName}\n\n${directorySummary}\n`;
+    writeFileSync(projectMdPath, initialProjectMd);
   }
 
   private updateRegistry(metadata: IndexMetadata): void {

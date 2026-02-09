@@ -254,6 +254,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                   'summary.chunk_batch_token_budget',
                   { type: 'number' },
                 )}
+                {renderField('并发请求数', 'summary.parallel_requests', {
+                  type: 'number',
+                })}
                 {renderField('超时(ms)', 'summary.timeout_ms', {
                   type: 'number',
                 })}
@@ -270,6 +273,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                   type: 'number',
                 })}
                 {renderField('最大 Token', 'chunk_size.max_tokens', {
+                  type: 'number',
+                })}
+                {renderField('索引并发文件数', 'indexing.file_parallelism', {
                   type: 'number',
                 })}
                 {renderField('默认返回数', 'default_top_k', {

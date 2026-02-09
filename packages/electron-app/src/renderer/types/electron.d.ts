@@ -16,6 +16,18 @@ interface RegisteredProject {
   valid: boolean;
 }
 
+interface MemoryFileInfo {
+  path: string;
+  size: number;
+}
+
+interface ProjectMemoryResponse {
+  memoryPath: string;
+  exists: boolean;
+  projectMd: string;
+  files: MemoryFileInfo[];
+}
+
 interface SearchResultItem {
   chunk_id: string;
   score: number;
@@ -55,6 +67,12 @@ interface ElectronAPI {
   getRegistry: () => Promise<{ projects: RegisteredProject[] }>;
   removeProject: (projectId: string) => Promise<{ success: boolean; error?: string }>;
   updateProjectSummary: (projectId: string, summary: string) => Promise<{ success: boolean; error?: string }>;
+  getProjectMemory: (projectId: string) => Promise<ProjectMemoryResponse>;
+  saveMemoryFile: (
+    projectId: string,
+    filePath: string,
+    content: string
+  ) => Promise<{ success: boolean; error?: string }>;
   getConfig: () => Promise<RawConfigResult>;
   saveConfig: (updates: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
   search: (input: SearchInput) => Promise<SearchResponse>;

@@ -149,7 +149,7 @@ describe('search', () => {
     );
 
     const documentsDir = join(projectDir, '.fs_index', 'documents');
-    state.afdFiles.set(`${documentsDir}:f1`, {
+    state.afdFiles.set(`${documentsDir}:a.md`, {
       content: '第一行\n第二行\n第三行',
       summaries: {
         'f1:0000': '摘要一',
@@ -165,33 +165,33 @@ describe('search', () => {
 
   it('融合结果会从 AFD 补全文本和摘要', async () => {
     const invertedCalls: Array<{ query: string; options: { dirIds?: string[]; topK?: number } }> = [];
+    const searchByHybrid = vi.fn().mockResolvedValue([
+      {
+        chunk_id: 'f1:0000',
+        score: 0.9,
+        document: {
+          chunk_id: 'f1:0000',
+          file_id: 'f1',
+          dir_id: 'd1',
+          rel_path: 'a.md',
+          file_path: join(projectDir, 'a.md'),
+          chunk_line_start: 1,
+          chunk_line_end: 1,
+          content_vector: [],
+          summary_vector: [],
+          locator: 'line:1-1',
+          indexed_at: '',
+          deleted_at: '',
+        },
+      },
+    ]);
 
     __setSearchServicesForTest({
       embeddingService: {
         embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
       } as any,
       vectorStore: {
-        searchByContent: vi.fn().mockResolvedValue([
-          {
-            chunk_id: 'f1:0000',
-            score: 0.9,
-            document: {
-              chunk_id: 'f1:0000',
-              file_id: 'f1',
-              dir_id: 'd1',
-              rel_path: 'a.md',
-              file_path: join(projectDir, 'a.md'),
-              chunk_line_start: 1,
-              chunk_line_end: 1,
-              content_vector: [],
-              summary_vector: [],
-              locator: 'line:1-1',
-              indexed_at: '',
-              deleted_at: '',
-            },
-          },
-        ]),
-        searchBySummary: vi.fn().mockResolvedValue([]),
+        searchByHybrid,
         getByChunkIds: vi.fn().mockResolvedValue([]),
       } as any,
       invertedIndex: {
@@ -223,6 +223,7 @@ describe('search', () => {
 
     expect(invertedCalls).toHaveLength(1);
     expect(invertedCalls[0].options.dirIds).toEqual(['d1']);
+    expect(searchByHybrid).toHaveBeenCalledTimes(1);
   });
 
   it('非 line 定位符应回退使用 chunk 行范围提取正文（向量结果）', async () => {
@@ -231,7 +232,7 @@ describe('search', () => {
         embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
       } as any,
       vectorStore: {
-        searchByContent: vi.fn().mockResolvedValue([
+        searchByHybrid: vi.fn().mockResolvedValue([
           {
             chunk_id: 'f1:0001',
             score: 0.9,
@@ -251,7 +252,6 @@ describe('search', () => {
             },
           },
         ]),
-        searchBySummary: vi.fn().mockResolvedValue([]),
         getByChunkIds: vi.fn().mockResolvedValue([]),
       } as any,
       invertedIndex: {
@@ -289,8 +289,7 @@ describe('search', () => {
         embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
       } as any,
       vectorStore: {
-        searchByContent: vi.fn().mockResolvedValue([]),
-        searchBySummary: vi.fn().mockResolvedValue([]),
+        searchByHybrid: vi.fn().mockResolvedValue([]),
         getByChunkIds,
       } as any,
       invertedIndex: {

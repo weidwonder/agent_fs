@@ -63,6 +63,9 @@ export interface FileMetadata {
   /** 文件名 */
   name: string;
 
+  /** AFD 归档名（不含 .afd 后缀） */
+  afdName?: string;
+
   /** 文件类型 */
   type: string;
 
@@ -109,6 +112,12 @@ export interface SubdirectoryInfo {
 
   /** 子目录递归 fileId 列表（用于增量删除清理） */
   fileIds: string[];
+
+  /** 子目录递归 AFD 归档映射（用于目录缺失时清理归档） */
+  fileArchives?: Array<{
+    fileId: string;
+    afdName: string;
+  }>;
 }
 
 /**

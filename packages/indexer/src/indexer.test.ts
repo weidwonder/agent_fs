@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 const mocks = vi.hoisted(() => ({
   loadConfig: vi.fn(),
@@ -223,5 +226,31 @@ describe('Indexer 插件配置注入', () => {
     expect(normalized.version).toBe('2.0');
     expect(Array.isArray(normalized.projects)).toBe(true);
     expect(normalized.projects).toHaveLength(0);
+  });
+
+  it('应在首次索引后生成 memory/project.md 和 extend 目录', async () => {
+    const { Indexer } = await import('./indexer');
+    const indexer = new Indexer() as any;
+    const projectDir = mkdtempSync(join(tmpdir(), 'agent-fs-indexer-memory-'));
+
+    try {
+      const projectMdPath = join(projectDir, '.fs_index', 'memory', 'project.md');
+      const extendPath = join(projectDir, '.fs_index', 'memory', 'extend');
+      expect(existsSync(projectMdPath)).toBe(false);
+
+      indexer.initMemoryIfNeeded(projectDir, {
+        directoryPath: projectDir,
+        directorySummary: '这是目录摘要',
+      });
+
+      expect(existsSync(projectMdPath)).toBe(true);
+      expect(existsSync(extendPath)).toBe(true);
+
+      const projectMd = readFileSync(projectMdPath, 'utf-8');
+      expect(projectMd).toContain('这是目录摘要');
+      expect(projectMd).toContain('#');
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
   });
 });

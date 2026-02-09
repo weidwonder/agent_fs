@@ -14,7 +14,7 @@ export class MarkdownPlugin implements DocumentPlugin {
   readonly name = 'markdown';
 
   /** 支持的文件扩展名（不含点） */
-  readonly supportedExtensions = ['md', 'markdown'];
+  readonly supportedExtensions = ['md', 'markdown', 'txt'];
 
   /**
    * 将 Markdown 文件转换为 Markdown（直接返回原内容）

@@ -51,7 +51,10 @@ while ((line = Console.ReadLine()) != null)
     }
     catch (Exception ex)
     {
-        WriteError(request.Id, ErrorCodes.ConversionFailed, ex.Message, jsonOptions);
+        var message = string.IsNullOrWhiteSpace(ex.Message)
+            ? ex.GetType().Name
+            : ex.Message;
+        WriteError(request.Id, ErrorCodes.ConversionFailed, message, jsonOptions);
     }
 }
 

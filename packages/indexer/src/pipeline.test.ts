@@ -181,6 +181,143 @@ describe('IndexPipeline summary mode', () => {
     rmSync(dirPath, { recursive: true, force: true });
   });
 
+  it('文件转换失败时应包含文件路径与插件信息', async () => {
+    const dirPath = mkdtempSync(join(tmpdir(), 'agent-fs-convert-error-'));
+    const filePath = join(dirPath, 'broken.docx');
+    writeFileSync(filePath, 'broken');
+
+    const plugin = {
+      name: 'docx',
+      toMarkdown: vi.fn(async () => {
+        throw new Error('CONVERSION_FAILED:');
+      }),
+    };
+    const pluginManager = {
+      getSupportedExtensions: () => ['docx'],
+      getPlugin: () => plugin,
+    };
+
+    const summaryService = {
+      generateChunkSummariesBatch: vi.fn(),
+      generateChunkSummary: vi.fn(),
+      generateDocumentSummary: vi.fn(),
+      generateDirectorySummary: vi.fn(),
+    };
+
+    const embeddingService = {
+      embed: vi.fn().mockResolvedValue([0, 0, 0]),
+    };
+
+    const vectorStore = {
+      addDocuments: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const afdStorage = {
+      write: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const invertedIndex = {
+      addFile: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const pipeline = new IndexPipeline({
+      dirPath,
+      pluginManager: pluginManager as any,
+      embeddingService: embeddingService as any,
+      summaryService: summaryService as any,
+      vectorStore: vectorStore as any,
+      afdStorage: afdStorage as any,
+      invertedIndex: invertedIndex as any,
+      chunkOptions: { minTokens: 1, maxTokens: 200 },
+      summaryOptions: {
+        mode: 'skip',
+        tokenBudget: 10000,
+      },
+    });
+
+    let thrownMessage = '';
+    try {
+      await pipeline.run();
+    } catch (error) {
+      thrownMessage = (error as Error).message;
+    }
+
+    expect(thrownMessage).toMatch(/broken\.docx/u);
+    expect(thrownMessage).toMatch(/docx/u);
+
+    rmSync(dirPath, { recursive: true, force: true });
+  });
+
+  it('应支持文件级并发处理', async () => {
+    const dirPath = mkdtempSync(join(tmpdir(), 'agent-fs-file-parallelism-'));
+    writeFileSync(join(dirPath, 'a.md'), '# A\n\ncontent');
+    writeFileSync(join(dirPath, 'b.md'), '# B\n\ncontent');
+    writeFileSync(join(dirPath, 'c.md'), '# C\n\ncontent');
+
+    let running = 0;
+    let maxRunning = 0;
+    const plugin = {
+      name: 'markdown',
+      toMarkdown: vi.fn(async (filePath: string) => {
+        running += 1;
+        maxRunning = Math.max(maxRunning, running);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        running -= 1;
+        return { markdown: `# ${filePath}\n\ncontent`, mapping: [] };
+      }),
+    };
+    const pluginManager = {
+      getSupportedExtensions: () => ['md'],
+      getPlugin: () => plugin,
+    };
+
+    const summaryService = {
+      generateChunkSummariesBatch: vi.fn(),
+      generateChunkSummary: vi.fn(),
+      generateDocumentSummary: vi.fn(),
+      generateDirectorySummary: vi.fn(),
+    };
+
+    const embeddingService = {
+      embed: vi.fn().mockResolvedValue([0, 0, 0]),
+    };
+
+    const vectorStore = {
+      addDocuments: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const afdStorage = {
+      write: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const invertedIndex = {
+      addFile: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const pipeline = new IndexPipeline({
+      dirPath,
+      pluginManager: pluginManager as any,
+      embeddingService: embeddingService as any,
+      summaryService: summaryService as any,
+      vectorStore: vectorStore as any,
+      afdStorage: afdStorage as any,
+      invertedIndex: invertedIndex as any,
+      chunkOptions: { minTokens: 1, maxTokens: 200 },
+      summaryOptions: {
+        mode: 'skip',
+        tokenBudget: 10000,
+      },
+      fileParallelism: 2,
+    } as any);
+
+    await pipeline.run();
+
+    expect(plugin.toMarkdown).toHaveBeenCalledTimes(3);
+    expect(maxRunning).toBeGreaterThan(1);
+
+    rmSync(dirPath, { recursive: true, force: true });
+  });
+
   it('应递归索引子目录并写入层级 metadata', async () => {
     const dirPath = mkdtempSync(join(tmpdir(), 'agent-fs-tree-'));
     mkdirSync(join(dirPath, 'docs', 'nested'), { recursive: true });
@@ -454,7 +591,7 @@ describe('IndexPipeline summary mode', () => {
     expect(vectorStore.addDocuments).toHaveBeenCalledTimes(1);
     expect(afdStorage.write).toHaveBeenCalledTimes(1);
     expect(vectorStore.deleteByFileId).toHaveBeenCalledWith(oldFileId);
-    expect(afdStorage.delete).toHaveBeenCalledWith(oldFileId);
+    expect(afdStorage.delete).toHaveBeenCalledWith('update.md');
     expect(invertedIndex.removeFile).toHaveBeenCalledWith(oldFileId);
     expect(invertedIndex.addFile).toHaveBeenCalledTimes(1);
 
@@ -519,13 +656,8 @@ describe('IndexPipeline summary mode', () => {
     });
     await firstPipeline.run();
 
-    const childMetadata = JSON.parse(
-      readFileSync(join(dirPath, 'docs', '.fs_index', 'index.json'), 'utf-8')
-    ) as {
-      files: Array<{ fileId: string }>;
-    };
-    const staleFileId = childMetadata.files[0].fileId;
-    const staleAfdPath = join(dirPath, '.fs_index', 'documents', `${staleFileId}.afd`);
+    const staleAfdPath = join(dirPath, 'docs', '.fs_index', 'documents', 'a.md.afd');
+    mkdirSync(join(dirPath, 'docs', '.fs_index', 'documents'), { recursive: true });
     writeFileSync(staleAfdPath, 'stale');
 
     rmSync(docsPath, { recursive: true, force: true });
@@ -547,7 +679,7 @@ describe('IndexPipeline summary mode', () => {
     });
     await secondPipeline.run();
 
-    expect(afdStorage.delete).toHaveBeenCalledWith(staleFileId);
+    expect(afdStorage.delete).toHaveBeenCalledWith('a.md');
 
     if (existsSync(staleAfdPath)) {
       unlinkSync(staleAfdPath);

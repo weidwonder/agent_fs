@@ -1,0 +1,116 @@
+{
+  "description": "Agent FS test-data 召回评测集（人工标注）",
+  "version": "1.0",
+  "projectPath": "/Users/weidwonder/projects/agent_fs/test-data",
+  "queries": [
+    {
+      "id": "q01",
+      "query": "文本替换工具的核心特点是什么",
+      "keyword": "",
+      "type": "semantic",
+      "expectedChunks": ["2a25b2d6fb4d270e:0000"],
+      "expectedFiles": ["sub_folder/sub_folder/文本替换工具方案.md"]
+    },
+    {
+      "id": "q02",
+      "query": "WordTextReplacer",
+      "keyword": "WordTextReplacer",
+      "type": "keyword",
+      "expectedChunks": ["2a25b2d6fb4d270e:0001"],
+      "expectedFiles": ["sub_folder/sub_folder/文本替换工具方案.md"]
+    },
+    {
+      "id": "q03",
+      "query": "LocateCharInRuns 定位算法",
+      "keyword": "LocateCharInRuns",
+      "type": "hybrid",
+      "expectedChunks": ["2a25b2d6fb4d270e:0004"],
+      "expectedFiles": ["sub_folder/sub_folder/文本替换工具方案.md"]
+    },
+    {
+      "id": "q04",
+      "query": "ReplaceResult 里有哪些字段",
+      "keyword": "ReplaceResult ErrorMessage MatchCount",
+      "type": "hybrid",
+      "expectedChunks": ["2a25b2d6fb4d270e:0002"],
+      "expectedFiles": ["sub_folder/sub_folder/文本替换工具方案.md"]
+    },
+    {
+      "id": "q05",
+      "query": "ParagraphId P5 OldText 空格 NewText 三个 的替换流程",
+      "keyword": "ParagraphId=\"P5\" OldText=\"空格\" NewText=\"三个\"",
+      "type": "hybrid",
+      "expectedChunks": ["2a25b2d6fb4d270e:0003"],
+      "expectedFiles": ["sub_folder/sub_folder/文本替换工具方案.md"]
+    },
+    {
+      "id": "q06",
+      "query": "中国人身保险业重大疾病经验发生率表（2020）",
+      "keyword": "中国人身保险业重大疾病经验发生率表（2020）",
+      "type": "keyword",
+      "expectedChunks": ["f3ae263dc6060ed8:0000"],
+      "expectedFiles": ["sub_folder/sub_folder/test_doc.doc"]
+    },
+    {
+      "id": "q07",
+      "query": "文件名 区域 行数 列数 Sheet名称",
+      "keyword": "文件名 区域 行数 列数 Sheet名称",
+      "type": "keyword",
+      "expectedChunks": ["46cc5871febbc5d6:0000"],
+      "expectedFiles": ["sub_folder/sub_folder/fill_test.docx"]
+    },
+    {
+      "id": "q08",
+      "query": "哪个工作表是科目余额表-1",
+      "keyword": "科目余额表-1",
+      "type": "semantic",
+      "expectedChunks": ["e6a792e220b067fe:0000"],
+      "expectedFiles": ["sub_folder2/演示公司(2025).xlsx"]
+    },
+    {
+      "id": "q09",
+      "query": "Range[A1:BP263]",
+      "keyword": "Range[A1:BP263]",
+      "type": "keyword",
+      "expectedChunks": ["e6a792e220b067fe:0001"],
+      "expectedFiles": ["sub_folder2/演示公司(2025).xlsx"]
+    },
+    {
+      "id": "q10",
+      "query": "保证系数表及影响样本规模的因素",
+      "keyword": "保证系数表及影响样本规模的因素",
+      "type": "keyword",
+      "expectedChunks": ["034b045cf174f661:0000"],
+      "expectedFiles": ["sub_folder2/货币资金.xlsx"]
+    },
+    {
+      "id": "q11",
+      "query": "货币资金可供参考实质性程序表",
+      "keyword": "货币资金可供参考实质性程序表",
+      "type": "keyword",
+      "expectedChunks": [
+        "034b045cf174f661:0001",
+        "034b045cf174f661:0002",
+        "034b045cf174f661:0003",
+        "034b045cf174f661:0004"
+      ],
+      "expectedFiles": ["sub_folder2/货币资金.xlsx"]
+    },
+    {
+      "id": "q12",
+      "query": "检查报告中的 Sampling Job Result CONFORMED 在哪里",
+      "keyword": "Sampling Job Result CONFORMED",
+      "type": "hybrid",
+      "expectedChunks": [
+        "19931d8f4083acf5:0002",
+        "2953fbe3920819c6:0001",
+        "31abc1ac4dd14d3d:0002"
+      ],
+      "expectedFiles": [
+        "INDIR2511IN02996_D13&D15_origin.pdf",
+        "INDIR2511IN03148_D16&D17.md",
+        "INDIR2512IN01019_D22,D23,F2,F3_origin.pdf"
+      ]
+    }
+  ]
+}

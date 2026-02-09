@@ -13,7 +13,7 @@
 
 | 需求 | 说明 |
 |------|------|
-| 支持格式 | PDF / DOCX / DOC / XLSX / XLS / Markdown |
+| 支持格式 | PDF / DOCX / DOC / XLSX / XLS / Markdown / TXT |
 | 索引范围 | **Project 文件夹及其所有子文件夹（递归索引）** |
 | 层级结构 | Project 文件夹（顶级）包含多个子文件夹，每个文件夹独立的 `.fs_index` |
 | 索引存储 | 每个文件夹下创建 `.fs_index` 目录，存储该文件夹的索引 |
@@ -60,7 +60,7 @@
 
 | 需求 | 说明 |
 |------|------|
-| 多路召回 | 向量搜索(chunk) + 向量搜索(summary) + 倒排索引关键词搜索 |
+| 多路召回 | 向量搜索(hybrid: content+summary 1:1) + 倒排索引关键词搜索 |
 | 融合排序 | RRF（倒数排名融合） |
 | 可选 Rerank | 支持 LLM Rerank |
 | 查询类型 | 语义查询 + 精准关键词查询（可同时使用） |
@@ -132,7 +132,9 @@
 | 文件/目录 | 用途 |
 |----------|------|
 | `index.json` | 目录元数据（文件列表、子目录列表、层级信息） |
-| `documents/*.afd` | 压缩文档文件（ZIP 格式，包含 content.md、metadata.json） |
+| `memory/project.md` | 项目级记忆入口（项目介绍与索引摘要） |
+| `memory/extend/*.md` | 项目经验扩展记忆（约定在 project.md 引用） |
+| `documents/<原文件名>.afd` | 当前目录文件对应的压缩归档（ZIP，含 content.md、metadata.json） |
 
 ## 4. 索引存储优化
 
@@ -151,6 +153,7 @@
 | 特性 | 说明 |
 |------|------|
 | 格式 | `.afd` 文件（ZIP 压缩） |
+| 文件命名 | 保持原文件名并追加 `.afd`（示例：`demo.docx.afd`） |
 | 内部结构 | `content.md`（markdown）、`metadata.json`（可选） |
 | 实现 | Rust native 模块（@agent-fs/storage） |
 | 压缩算法 | DEFLATE (level 6) |
@@ -162,7 +165,7 @@
 
 | 优化项 | 说明 |
 |--------|------|
-| 存储内容 | 仅存向量（content_vector, summary_vector） |
+| 存储内容 | 仅存向量（content_vector, summary_vector, hybrid_vector） |
 | 移除字段 | content、summary 文本字段（从 AFD 读取） |
 | 新增字段 | file_id、chunk_line_start、chunk_line_end（用于定位 AFD） |
 | 空间节省 | 向量库体积减少 70-80% |
@@ -175,6 +178,7 @@
 | `dir_tree` | 展示目录结构（文件/子目录的 summary） |
 | `search` | 多路召回搜索（语义 + 精准关键词），支持多文件夹过滤 |
 | `get_chunk` | 获取指定 chunk 详情及相邻 chunk（从 AFD 读取） |
+| `get_project_memory` | 获取项目 memory 路径、project.md 内容和 markdown 文件列表 |
 
 ## 6. 用户界面
 
@@ -191,9 +195,10 @@
 | 配置项 | 说明 |
 |--------|------|
 | LLM | OpenAI 兼容 API（base_url / key / model） |
+| Summary | mode / chunk_batch_token_budget / parallel_requests / timeout_ms / max_retries |
 | Embedding | 本地模型（默认）或 API |
 | Rerank | 可选，支持 LLM Rerank |
-| Chunk 大小 | min_tokens / max_tokens |
+| 索引参数 | chunk_size.min_tokens / chunk_size.max_tokens / indexing.file_parallelism |
 | 搜索参数 | top_k、融合方法 |
 | 插件参数 | 各插件自定义参数 |
 
@@ -232,6 +237,7 @@
 - 向量搜索为主，倒排索引为辅
 - 文件变更检测基于哈希/时间戳，无法检测内容细微变化
 - Electron 客户端依赖 `better-sqlite3` / `nodejieba` 原生模块，需与 Electron ABI 匹配
+- `.doc/.docx` 转换依赖 `plugin-docx`（含 LibreOffice 降级链路），极端文档仍可能出现兼容性差异
 - Apple Silicon 环境默认使用 Node.js 20（arm64）进行开发与启动
 
 ## 12. 性能指标

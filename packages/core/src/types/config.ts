@@ -109,6 +109,9 @@ export interface SummaryConfig {
   /** chunk 批量生成的 token 预算 */
   chunk_batch_token_budget?: number;
 
+  /** chunk 摘要批次并发请求数 */
+  parallel_requests?: number;
+
   /** 单次请求超时 */
   timeout_ms?: number;
 
@@ -125,6 +128,9 @@ export interface IndexingConfig {
     min_tokens: number;
     max_tokens: number;
   };
+
+  /** 文件级并发处理数 */
+  file_parallelism?: number;
 }
 
 /**

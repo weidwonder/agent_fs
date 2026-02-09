@@ -76,10 +76,13 @@ Agent FS 让 AI Agent 在本地完成“索引 → 检索 → 定位原文”的
    - `mapping`
    - 可选 `searchableText`
 2. `MarkdownChunker` 按结构切分 chunk
-3. 生成 chunk 摘要（可按配置跳过）
+3. 生成 chunk 摘要（可按配置跳过；batch 模式支持按 `summary.parallel_requests` 并行请求）
 4. 生成向量并写入 LanceDB（仅存向量与定位信息，不存大文本）
 5. 写入 SQLite 倒排索引
 6. 写入 AFD 文件（`content.md` + `metadata.json` + `summaries.json`）
+
+说明：同一目录下文件处理支持按 `indexing.file_parallelism` 进行文件级并发（默认 2）。
+说明：`docx` 插件在常规解析失败时会自动降级到 LibreOffice 文本提取链路，尽量保证 `.doc/.docx` 可索引。
 
 ## 4.3 增量更新机制
 
@@ -108,7 +111,7 @@ Agent FS 让 AI Agent 在本地完成“索引 → 检索 → 定位原文”的
    - 同时构建 `fileId -> {dirPath, filePath}` 映射，用于结果回填
    - 若目录缺少索引元数据，回退使用 registry 的 `projectId/subdirectories[].dirId`
 3. 执行多路召回：
-   - 向量召回（VectorStore）
+   - 向量召回（VectorStore，使用 `hybrid_vector = 0.5*content + 0.5*summary`）
    - 倒排召回（InvertedIndex）
 4. 用 RRF 融合排序
 5. 从 AFD 按需读取 chunk 文本并返回
@@ -117,24 +120,36 @@ Agent FS 让 AI Agent 在本地完成“索引 → 检索 → 定位原文”的
 
 - 通过 `chunk_id` 解析 `fileId`
 - 递归遍历各级 `.fs_index/index.json` 定位文件
-- 从 **Project 根** `.fs_index/documents` 读取对应 AFD
+- 从 **文件所在目录** `.fs_index/documents` 读取对应 AFD
 - 按行号范围（优先）或 locator（回退）截取正文
 - 可附带邻近 chunk（前后文）
 
-## 5.3 目录工具
+## 5.3 `get_project_memory`
+
+- 输入 `project`（支持 `projectId` 或项目路径）
+- 读取 `<project>/.fs_index/memory/`
+- 返回：
+  - `memoryPath`（绝对路径，供 AI Agent 文件工具读写）
+  - `projectMd`（`project.md` 内容）
+  - `files`（memory 下 markdown 文件列表与大小）
+- memory 数据不参与向量索引与倒排索引，仅作为项目记忆存储
+
+## 5.4 目录工具
 
 - `list_indexes`：返回 registry 中有效 Project 与扁平化子目录引用
 - `dir_tree`：返回递归目录树，支持 `depth` 限制，子索引缺失时返回回退节点
 
-## 5.4 Electron 客户端查询链路
+## 5.5 Electron 客户端查询链路
 
 - 通过 `ipcMain.handle('search')` 复用同一套向量/倒排/RRF 能力
 - `get-registry` 会将相对路径解析为绝对路径，并过滤被父目录包含的重复条目
+- `get-project-memory` / `save-memory-file` 用于读写项目 memory（`project.md` 与 `extend/*.md`）
 - 相对路径解析策略按优先级：
   1. workspace 根目录（包含 `pnpm-workspace.yaml`）
   2. `INIT_CWD`
   3. `process.cwd()`
 - 启动前执行 `electron-rebuild`，保证 `better-sqlite3` / `nodejieba` 与 Electron ABI 一致
+- `native:electron` 在重建后会执行 `scripts/ensure-electron-native.mjs`，通过 `ELECTRON_RUN_AS_NODE=1` 探测 native 模块加载；若检测到 macOS 签名损坏（`code signature does not cover entire file...`）会自动重签名后复检
 
 ---
 
@@ -181,7 +196,7 @@ interface DocumentConversionResult {
 - `rel_path`
 - `file_path`
 - `chunk_line_start` / `chunk_line_end`
-- `content_vector` / `summary_vector`
+- `content_vector` / `summary_vector` / `hybrid_vector`
 - `locator`
 - `indexed_at` / `deleted_at`
 
@@ -209,11 +224,18 @@ interface DocumentConversionResult {
 <project>/
 ├── .fs_index/
 │   ├── index.json                  # 根目录元数据
-│   └── documents/
-│       ├── <fileId>.afd            # AFD 归档
+│   ├── memory/                     # 项目结构记忆（不参与索引）
+│   │   ├── project.md              # 项目介绍
+│   │   └── extend/                 # 项目经验扩展
+│   └── documents/                  # 根目录文件的 AFD
+│       ├── root.md.afd
 │       └── ...
 ├── <subdir>/
-│   └── .fs_index/index.json        # 子目录元数据
+│   └── .fs_index/
+│       ├── index.json              # 子目录元数据
+│       └── documents/              # 子目录文件的 AFD
+│           ├── doc.docx.afd
+│           └── ...
 └── ...
 ```
 
@@ -262,5 +284,5 @@ interface DocumentConversionResult {
 
 ---
 
-*文档版本：2.1*  
-*更新日期：2026-02-08*
+*文档版本：2.2*  
+*更新日期：2026-02-09*

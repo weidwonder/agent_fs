@@ -60,6 +60,14 @@ public class Converter
 
             return builder.Build();
         }
+        catch (DocxException)
+        {
+            throw;
+        }
+        catch
+        {
+            return ConvertWithLibreOfficeText(filePath);
+        }
         finally
         {
             if (normalizedPath != null && File.Exists(normalizedPath))
@@ -194,10 +202,39 @@ public class Converter
 
     private string ConvertWithLibreOffice(string docPath, string outDir)
     {
+        return ConvertWithLibreOffice(docPath, outDir, "docx", ".docx");
+    }
+
+    private ConvertData ConvertWithLibreOfficeText(string filePath)
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"agent-fs-docx-text-{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var txtPath = ConvertWithLibreOffice(filePath, tempDir, "txt:Text", ".txt");
+            var content = File.ReadAllText(txtPath);
+            return BuildTextFallback(content);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, true);
+            }
+        }
+    }
+
+    private string ConvertWithLibreOffice(
+        string inputPath,
+        string outDir,
+        string convertTo,
+        string outputExt)
+    {
         var startInfo = new System.Diagnostics.ProcessStartInfo
         {
             FileName = "soffice",
-            Arguments = $"--headless --convert-to docx --outdir \"{outDir}\" \"{docPath}\"",
+            Arguments = $"--headless --convert-to {convertTo} --outdir \"{outDir}\" \"{inputPath}\"",
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -212,12 +249,20 @@ public class Converter
                 throw new DocxException(ErrorCodes.FallbackUnavailable, "LibreOffice 启动失败");
             }
 
+            var stderr = process.StandardError.ReadToEnd();
             process.WaitForExit();
-            var outputPath = Path.Combine(outDir, Path.GetFileNameWithoutExtension(docPath) + ".docx");
+
+            var outputPath = Path.Combine(
+                outDir,
+                Path.GetFileNameWithoutExtension(inputPath) + outputExt);
 
             if (process.ExitCode != 0 || !File.Exists(outputPath))
             {
-                throw new DocxException(ErrorCodes.FallbackFailed, "LibreOffice 转换失败");
+                var detail = Regex.Replace(stderr, @"\s+", " ").Trim();
+                var message = string.IsNullOrWhiteSpace(detail)
+                    ? "LibreOffice 转换失败"
+                    : $"LibreOffice 转换失败: {detail}";
+                throw new DocxException(ErrorCodes.FallbackFailed, message);
             }
 
             return outputPath;
@@ -226,6 +271,35 @@ public class Converter
         {
             throw new DocxException(ErrorCodes.FallbackUnavailable, "未找到 LibreOffice (soffice)");
         }
+    }
+
+    private ConvertData BuildTextFallback(string content)
+    {
+        var normalized = content.Replace("\r\n", "\n").Replace('\r', '\n');
+        var rawLines = normalized.Split('\n');
+        var lines = new List<string>();
+        var mappings = new List<Mapping>();
+        var paraIndex = 0;
+
+        foreach (var rawLine in rawLines)
+        {
+            var line = rawLine.TrimEnd();
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                if (lines.Count > 0 && lines[^1] != string.Empty)
+                {
+                    lines.Add(string.Empty);
+                }
+                continue;
+            }
+
+            var lineNo = lines.Count + 1;
+            lines.Add(line);
+            mappings.Add(new Mapping(lineNo, lineNo, $"para:{paraIndex}"));
+            paraIndex += 1;
+        }
+
+        return new ConvertData(string.Join("\n", lines), mappings);
     }
 
     [SupportedOSPlatform("windows")]

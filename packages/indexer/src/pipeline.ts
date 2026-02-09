@@ -34,6 +34,8 @@ export interface IndexerOptions {
   vectorStore: VectorStore;
   invertedIndex: InvertedIndex;
   afdStorage: AFDStorage;
+  afdStorageResolver?: (dirPath: string) => AFDStorage;
+  fileParallelism?: number;
   chunkOptions: { minTokens: number; maxTokens: number };
   summaryOptions: SummaryPipelineOptions;
   onProgress?: (progress: IndexProgress) => void;
@@ -42,6 +44,7 @@ export interface IndexerOptions {
 export interface SummaryPipelineOptions {
   mode: SummaryMode;
   tokenBudget: number;
+  parallelRequests?: number;
   maxRetries?: number;
   timeoutMs?: number;
 }
@@ -63,9 +66,11 @@ interface DirectoryRunResult {
 }
 
 interface ProcessFileInput {
+  dirPath: string;
   filePath: string;
   relativeFilePath: string;
   displayName: string;
+  afdName: string;
   dirId: string;
   fileId: string;
   fileHash: string;
@@ -77,6 +82,7 @@ export class IndexPipeline {
   private readonly options: IndexerOptions;
   private projectId: string;
   private existingMetadataByRelativePath = new Map<string, IndexMetadata>();
+  private existingFileArchiveById = new Map<string, { dirPath: string; archiveName: string }>();
   private processedFiles = 0;
   private totalFiles = 0;
   private readonly fileChecker = new FileChecker();
@@ -89,12 +95,13 @@ export class IndexPipeline {
   async run(): Promise<IndexMetadata> {
     const { dirPath } = this.options;
 
-    // 根目录统一存放 AFD 文档
-    const rootFsIndexPath = join(dirPath, '.fs_index');
-    mkdirSync(rootFsIndexPath, { recursive: true });
-    mkdirSync(join(rootFsIndexPath, 'documents'), { recursive: true });
+    // 确保根目录索引目录存在
+    mkdirSync(join(dirPath, '.fs_index'), { recursive: true });
 
     this.existingMetadataByRelativePath = this.loadExistingMetadataMap(dirPath);
+    this.existingFileArchiveById = this.buildExistingFileArchiveMap(
+      this.existingMetadataByRelativePath
+    );
     const existingRoot = this.existingMetadataByRelativePath.get('.');
     this.projectId = existingRoot?.projectId ?? uuidv4();
     const rootDirId = existingRoot?.dirId ?? this.projectId;
@@ -191,47 +198,68 @@ export class IndexPipeline {
       (previousMetadata?.files ?? []).map((file) => [file.name, file])
     );
 
-    const ownFiles: FileMetadata[] = [];
+    const ownFilesByIndex: FileMetadata[] = [];
     let ownChunks = 0;
     let ownTokens = 0;
-    const currentFileNames = new Set<string>();
+    const filenames = context.scanResult.supportedFiles;
+    const currentFileNames = new Set(filenames);
+    const fileWorkerCount = Math.min(this.getFileParallelism(), filenames.length);
+    let nextFileIndex = 0;
 
-    for (const filename of context.scanResult.supportedFiles) {
-      currentFileNames.add(filename);
-      const filePath = join(context.dirPath, filename);
-      const relativeFilePath =
-        context.relativePath === '.' ? filename : `${context.relativePath}/${filename}`;
+    const workers = Array.from({ length: fileWorkerCount }).map(async () => {
+      while (nextFileIndex < filenames.length) {
+        const fileIndex = nextFileIndex;
+        nextFileIndex += 1;
 
-      const previousFile = previousFilesByName.get(filename);
-      const hashResult = await this.fileChecker.checkFileChanged(filePath, {
-        hash: previousFile?.hash ?? '',
-      });
+        const filename = filenames[fileIndex];
+        if (!filename) {
+          continue;
+        }
 
-      let fileMetadata: FileMetadata;
-      if (previousFile && !hashResult.changed) {
-        fileMetadata = previousFile;
-      } else {
+        const filePath = join(context.dirPath, filename);
+        const relativeFilePath =
+          context.relativePath === '.' ? filename : `${context.relativePath}/${filename}`;
+        const previousFile = previousFilesByName.get(filename);
+        const fileProgress = this.reserveProcessedFile();
+        const hashResult = await this.fileChecker.checkFileChanged(filePath, {
+          hash: previousFile?.hash ?? '',
+        });
+
+        if (previousFile && !hashResult.changed) {
+          ownFilesByIndex[fileIndex] = previousFile;
+          continue;
+        }
+
         if (previousFile) {
-          await this.cleanupFileArtifacts(previousFile.fileId);
+          await this.cleanupFileArtifacts(
+            previousFile.fileId,
+            context.dirPath,
+            previousFile.afdName ?? previousFile.name ?? previousFile.fileId
+          );
         }
 
         const fileId = previousFile?.fileId ?? this.createFileId(relativeFilePath);
-        fileMetadata = await this.processFile({
+        ownFilesByIndex[fileIndex] = await this.processFile({
+          dirPath: context.dirPath,
           filePath,
           relativeFilePath,
           displayName: filename,
+          afdName: previousFile?.afdName ?? filename,
           dirId: context.dirId,
           fileId,
           fileHash: hashResult.hash,
-          processed: this.processedFiles,
+          processed: fileProgress,
           total: this.totalFiles,
         });
       }
-      this.processedFiles += 1;
+    });
 
-      ownFiles.push(fileMetadata);
-      ownChunks += fileMetadata.chunkCount;
-      ownTokens += fileMetadata.chunkCount * 800; // 粗略估算
+    await Promise.all(workers);
+
+    const ownFiles = ownFilesByIndex.filter((file): file is FileMetadata => Boolean(file));
+    for (const file of ownFiles) {
+      ownChunks += file.chunkCount;
+      ownTokens += file.chunkCount * 800; // 粗略估算
     }
 
     const removedFileCandidates = previousMetadata?.files ?? [];
@@ -239,7 +267,11 @@ export class IndexPipeline {
       if (currentFileNames.has(removedFile.name)) {
         continue;
       }
-      await this.cleanupFileArtifacts(removedFile.fileId);
+      await this.cleanupFileArtifacts(
+        removedFile.fileId,
+        context.dirPath,
+        removedFile.afdName ?? removedFile.name ?? removedFile.fileId
+      );
     }
 
     const childResults: DirectoryRunResult[] = [];
@@ -303,6 +335,7 @@ export class IndexPipeline {
         fileCount: child.totalFileCount,
         lastUpdated: child.metadata.updatedAt,
         fileIds: this.collectDirectoryFileIds(child.metadata),
+        fileArchives: this.collectDirectoryFileArchives(child.metadata),
       })),
       unsupportedFiles: context.scanResult.unsupportedFiles,
     };
@@ -336,10 +369,36 @@ export class IndexPipeline {
     return Array.from(new Set([...ownFileIds, ...childFileIds]));
   }
 
-  private async cleanupFileArtifacts(fileId: string): Promise<void> {
+  private collectDirectoryFileArchives(
+    metadata: IndexMetadata
+  ): Array<{ fileId: string; afdName: string }> {
+    const ownArchives = metadata.files.map((file) => ({
+      fileId: file.fileId,
+      afdName: file.afdName ?? file.name ?? file.fileId,
+    }));
+
+    const childArchives = metadata.subdirectories.flatMap(
+      (subdirectory) => subdirectory.fileArchives ?? []
+    );
+
+    const merged = new Map<string, string>();
+    for (const item of [...ownArchives, ...childArchives]) {
+      if (!merged.has(item.fileId)) {
+        merged.set(item.fileId, item.afdName);
+      }
+    }
+
+    return [...merged.entries()].map(([fileId, afdName]) => ({ fileId, afdName }));
+  }
+
+  private async cleanupFileArtifacts(
+    fileId: string,
+    dirPath: string,
+    archiveName: string
+  ): Promise<void> {
     await this.options.vectorStore.deleteByFileId(fileId);
     await this.options.invertedIndex.removeFile(fileId);
-    await this.deleteAfdFile(fileId);
+    await this.deleteAfdFile(dirPath, archiveName);
   }
 
   private async cleanupRemovedDirectory(
@@ -349,7 +408,10 @@ export class IndexPipeline {
     const metadata = this.readIndexMetadata(dirPath);
     if (metadata) {
       for (const file of metadata.files) {
-        await this.deleteAfdFile(file.fileId);
+        await this.deleteAfdFile(
+          metadata.directoryPath,
+          file.afdName ?? file.name ?? file.fileId
+        );
       }
 
       for (const childSubdirectory of metadata.subdirectories) {
@@ -357,8 +419,24 @@ export class IndexPipeline {
         await this.cleanupRemovedDirectory(childSubdirectory, childPath);
       }
     } else {
+      const fallbackArchives = new Map(
+        (subdirectory.fileArchives ?? []).map((item) => [item.fileId, item.afdName])
+      );
+
       for (const fileId of subdirectory.fileIds ?? []) {
-        await this.deleteAfdFile(fileId);
+        const archivedName = fallbackArchives.get(fileId);
+        if (archivedName) {
+          await this.deleteAfdFile(dirPath, archivedName);
+          continue;
+        }
+
+        const archived = this.existingFileArchiveById.get(fileId);
+        if (archived) {
+          await this.deleteAfdFile(archived.dirPath, archived.archiveName);
+          continue;
+        }
+
+        await this.deleteAfdFile(dirPath, fileId);
       }
     }
 
@@ -366,26 +444,37 @@ export class IndexPipeline {
     await this.options.invertedIndex.removeDirectory(subdirectory.dirId);
   }
 
-  private async deleteAfdFile(fileId: string): Promise<void> {
+  private async deleteAfdFile(dirPath: string, archiveName: string): Promise<void> {
     try {
-      await this.options.afdStorage.delete(fileId);
+      const storage = this.getAfdStorage(dirPath);
+      await storage.delete(archiveName);
     } catch {
       // 文件可能已不存在，忽略
     }
   }
 
   private async processFile(input: ProcessFileInput): Promise<FileMetadata> {
-    const { filePath, relativeFilePath, displayName, dirId, fileId, fileHash, processed, total } =
-      input;
+    const {
+      dirPath,
+      filePath,
+      relativeFilePath,
+      displayName,
+      afdName,
+      dirId,
+      fileId,
+      fileHash,
+      processed,
+      total,
+    } = input;
     const {
       pluginManager,
       embeddingService,
       summaryService,
       vectorStore,
       invertedIndex,
-      afdStorage,
       onProgress,
     } = this.options;
+    const afdStorage = this.getAfdStorage(dirPath);
 
     const ext = displayName.split('.').pop() || '';
     const plugin = pluginManager.getPlugin(ext);
@@ -399,7 +488,15 @@ export class IndexPipeline {
       processed,
       total,
     });
-    const conversionResult = await plugin.toMarkdown(filePath);
+    let conversionResult: DocumentConversionResult;
+    try {
+      conversionResult = await plugin.toMarkdown(filePath);
+    } catch (error) {
+      const rawMessage = (error as Error).message?.trim() ?? '';
+      const detail = rawMessage.length > 0 ? rawMessage : '未提供错误详情';
+      const pluginName = plugin.name || ext;
+      throw new Error(`文件转换失败: ${relativeFilePath} (插件: ${pluginName}) - ${detail}`);
+    }
 
     onProgress?.({
       phase: 'chunk',
@@ -439,6 +536,7 @@ export class IndexPipeline {
           maxRetries: summaryOptions.maxRetries,
           timeoutMs: summaryOptions.timeoutMs,
           tokenBudget: summaryOptions.tokenBudget,
+          parallelRequests: summaryOptions.parallelRequests,
         }
       );
       chunkSummaries = batchResults.map((result) => result.summary);
@@ -460,6 +558,7 @@ export class IndexPipeline {
         embeddingService.embed(chunk.content),
         embeddingService.embed(chunkSummary),
       ]);
+      const hybridEmbed = contentEmbed.map((value, index) => (value + (summaryEmbed[index] ?? 0)) / 2);
 
       const now = new Date().toISOString();
       vectorDocs.push({
@@ -472,6 +571,7 @@ export class IndexPipeline {
         chunk_line_end: chunk.lineEnd,
         content_vector: contentEmbed,
         summary_vector: summaryEmbed,
+        hybrid_vector: hybridEmbed,
         locator: chunk.locator,
         indexed_at: now,
         deleted_at: '',
@@ -511,7 +611,7 @@ export class IndexPipeline {
     const summaries = Object.fromEntries(
       chunkIds.map((chunkId, index) => [chunkId, chunkSummaries[index] ?? ''])
     );
-    await afdStorage.write(fileId, {
+    await afdStorage.write(afdName, {
       'content.md': conversionResult.markdown,
       'metadata.json': JSON.stringify(
         {
@@ -529,6 +629,7 @@ export class IndexPipeline {
 
     return {
       name: displayName,
+      afdName,
       type: ext,
       size: content.length,
       hash: fileHash,
@@ -537,6 +638,45 @@ export class IndexPipeline {
       chunkCount: chunkIds.length,
       summary: documentSummary,
     };
+  }
+
+  private getAfdStorage(dirPath: string): AFDStorage {
+    if (this.options.afdStorageResolver) {
+      return this.options.afdStorageResolver(dirPath);
+    }
+
+    return this.options.afdStorage;
+  }
+
+  private getFileParallelism(): number {
+    const parallelism = this.options.fileParallelism ?? 1;
+    if (!Number.isFinite(parallelism)) {
+      return 1;
+    }
+    return Math.max(1, Math.floor(parallelism));
+  }
+
+  private reserveProcessedFile(): number {
+    const current = this.processedFiles;
+    this.processedFiles += 1;
+    return current;
+  }
+
+  private buildExistingFileArchiveMap(
+    metadataByRelativePath: Map<string, IndexMetadata>
+  ): Map<string, { dirPath: string; archiveName: string }> {
+    const map = new Map<string, { dirPath: string; archiveName: string }>();
+
+    for (const metadata of metadataByRelativePath.values()) {
+      for (const file of metadata.files) {
+        map.set(file.fileId, {
+          dirPath: metadata.directoryPath,
+          archiveName: file.afdName ?? file.name ?? file.fileId,
+        });
+      }
+    }
+
+    return map;
   }
 
   private buildIndexEntries(

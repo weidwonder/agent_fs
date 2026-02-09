@@ -25,6 +25,10 @@ describe('MarkdownPlugin', () => {
       expect(plugin.supportedExtensions).toContain('md');
       expect(plugin.supportedExtensions).toContain('markdown');
     });
+
+    it('should support txt extension', () => {
+      expect(plugin.supportedExtensions).toContain('txt');
+    });
   });
 
   describe('toMarkdown', () => {
@@ -74,6 +78,16 @@ describe('MarkdownPlugin', () => {
       const result = await plugin.toMarkdown(filePath);
       expect(result.markdown).toBe(content);
       expect(result.mapping.length).toBeGreaterThan(0);
+    });
+
+    it('should handle .txt file like markdown', async () => {
+      const content = 'Plain text content\n\nSecond paragraph.';
+      const filePath = join(testDir, 'readme.txt');
+      writeFileSync(filePath, content);
+
+      const result = await plugin.toMarkdown(filePath);
+      expect(result.markdown).toBe(content);
+      expect(result.mapping.length).toBe(2);
     });
   });
 

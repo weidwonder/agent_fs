@@ -10,6 +10,7 @@ import {
 } from './ui/tooltip';
 import { IndexProgress as IndexProgressBar } from './IndexProgress';
 import { ProjectSummaryEditor } from './ProjectSummaryEditor';
+import { MemoryEditor } from './MemoryEditor';
 import { formatRelativeTime } from '../lib/utils';
 
 interface ProjectCardProps {
@@ -85,6 +86,8 @@ export function ProjectCard({
         summary={project.summary}
         onSave={onSummaryChange}
       />
+
+      <MemoryEditor projectId={project.projectId} />
 
       {/* Index progress */}
       {isUpdating && progress && (

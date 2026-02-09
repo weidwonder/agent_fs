@@ -92,4 +92,75 @@ describe('DocxService', () => {
 
     await expect(promise).rejects.toThrow('FILE_NOT_FOUND');
   });
+
+  it('错误响应 message 为空时应提供兜底信息', async () => {
+    const { process, stdout, stdin } = createFakeProcess();
+    const spawnFn = vi.fn().mockReturnValue(process as any);
+    const service = new DocxService({ spawnFn, converterPath });
+
+    let written = '';
+    stdin.on('data', (chunk) => {
+      written += chunk.toString();
+    });
+
+    await service.start();
+    const promise = service.convert('/tmp/demo.docx');
+
+    await new Promise((r) => setImmediate(r));
+    const request = JSON.parse(written.trim());
+
+    stdout.write(
+      JSON.stringify({
+        id: request.id,
+        success: false,
+        error: { code: 'CONVERSION_FAILED', message: '' },
+      }) + '\n',
+    );
+
+    let thrownMessage = '';
+    try {
+      await promise;
+    } catch (error) {
+      thrownMessage = (error as Error).message;
+    }
+
+    expect(thrownMessage).toMatch(/CONVERSION_FAILED/u);
+    expect(thrownMessage).toMatch(/未提供错误详情/u);
+  });
+
+  it('错误响应 message 为空且 stderr 有内容时应回填 stderr', async () => {
+    const { process, stdout, stdin } = createFakeProcess();
+    const spawnFn = vi.fn().mockReturnValue(process as any);
+    const service = new DocxService({ spawnFn, converterPath });
+
+    let written = '';
+    stdin.on('data', (chunk) => {
+      written += chunk.toString();
+    });
+
+    await service.start();
+    const promise = service.convert('/tmp/demo.docx');
+
+    await new Promise((r) => setImmediate(r));
+    const request = JSON.parse(written.trim());
+    process.stderr.write('NPOI failed to parse');
+
+    stdout.write(
+      JSON.stringify({
+        id: request.id,
+        success: false,
+        error: { code: 'CONVERSION_FAILED', message: '' },
+      }) + '\n',
+    );
+
+    let thrownMessage = '';
+    try {
+      await promise;
+    } catch (error) {
+      thrownMessage = (error as Error).message;
+    }
+
+    expect(thrownMessage).toMatch(/CONVERSION_FAILED/u);
+    expect(thrownMessage).toMatch(/NPOI failed to parse/u);
+  });
 });

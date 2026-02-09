@@ -116,6 +116,19 @@ describe('VectorStore', () => {
     expect(results[0].chunk_id).toBe('s1');
   });
 
+  it('应按 content+summary 的 1:1 合并向量检索', async () => {
+    const docs = [
+      createDoc('h1', 'dir1', '/project/docs/h1.md', [1, 0, 0], [0, 1, 0]),
+      createDoc('h2', 'dir1', '/project/docs/h2.md', [1, 0, 0], [0, 0, 1]),
+    ];
+
+    await store.addDocuments(docs);
+
+    const results = await store.searchByHybrid([1, 1, 0], { topK: 1 });
+    expect(results.length).toBe(1);
+    expect(results[0].chunk_id).toBe('h1');
+  });
+
   it('should filter by dirId', async () => {
     const docs = [
       createDoc('d1', 'dir1', '/project/docs/d1.md', [1, 0, 0], [0, 1, 0]),

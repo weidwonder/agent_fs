@@ -40,6 +40,7 @@ const REQUIRED_SCHEMA_FIELDS = new Set([
   'chunk_line_end',
   'content_vector',
   'summary_vector',
+  'hybrid_vector',
   'locator',
   'indexed_at',
   'deleted_at',
@@ -94,6 +95,7 @@ export class VectorStore {
       chunk_line_end: 0,
       content_vector: new Array(this.options.dimension).fill(0),
       summary_vector: new Array(this.options.dimension).fill(0),
+      hybrid_vector: new Array(this.options.dimension).fill(0),
       locator: '',
       indexed_at: '',
       deleted_at: '',
@@ -123,7 +125,7 @@ export class VectorStore {
   async addDocuments(docs: VectorDocument[]): Promise<void> {
     if (docs.length === 0) return;
     const table = await this.ensureTable();
-    await table.add(docs.map((doc) => toRecord(doc)));
+    await table.add(docs.map((doc) => toRecord(this.withHybridVector(doc))));
   }
 
   async searchByContent(
@@ -215,6 +217,50 @@ export class VectorStore {
     }));
   }
 
+  async searchByHybrid(
+    vector: number[],
+    options: VectorSearchOptions = {}
+  ): Promise<VectorSearchResult[]> {
+    const {
+      topK = 10,
+      dirId,
+      filePathPrefix,
+      includeDeleted = false,
+      distanceType = 'cosine',
+    } = options;
+
+    const table = await this.ensureTable();
+
+    let query = table
+      .vectorSearch(vector)
+      .column('hybrid_vector')
+      .distanceType(distanceType)
+      .limit(topK * 2);
+
+    const filters: string[] = [];
+    if (!includeDeleted) {
+      filters.push(`deleted_at = ''`);
+    }
+    if (dirId) {
+      filters.push(`dir_id = '${dirId}'`);
+    }
+    if (filePathPrefix) {
+      filters.push(`file_path LIKE '${filePathPrefix}%'`);
+    }
+
+    if (filters.length > 0) {
+      query = query.where(filters.join(' AND '));
+    }
+
+    const results = await query.toArray();
+
+    return results.slice(0, topK).map((row) => ({
+      chunk_id: row.chunk_id,
+      score: this.distanceToScore(row._distance ?? 0, distanceType),
+      document: row as VectorDocument,
+    }));
+  }
+
   async getByChunkIds(chunkIds: string[]): Promise<VectorDocument[]> {
     if (chunkIds.length === 0) return [];
 
@@ -248,6 +294,35 @@ export class VectorStore {
       default:
         return 1 - distance;
     }
+  }
+
+  private withHybridVector(doc: VectorDocument): VectorDocument {
+    const hybridVector =
+      doc.hybrid_vector && doc.hybrid_vector.length > 0
+        ? doc.hybrid_vector
+        : this.composeHybridVector(doc.content_vector, doc.summary_vector);
+
+    return {
+      ...doc,
+      hybrid_vector: hybridVector,
+    };
+  }
+
+  private composeHybridVector(contentVector: number[], summaryVector: number[]): number[] {
+    const dimension = Math.max(
+      this.options.dimension,
+      contentVector.length,
+      summaryVector.length
+    );
+    const vector = new Array<number>(dimension).fill(0);
+
+    for (let index = 0; index < dimension; index += 1) {
+      const contentValue = contentVector[index] ?? 0;
+      const summaryValue = summaryVector[index] ?? 0;
+      vector[index] = (contentValue + summaryValue) / 2;
+    }
+
+    return vector;
   }
 
   async softDelete(chunkIds: string[]): Promise<void> {

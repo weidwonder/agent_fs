@@ -23,9 +23,9 @@ interface ChunkInfo {
 }
 
 interface FileInfo {
-  projectPath: string;
   dirPath: string;
   fileName: string;
+  afdName: string;
 }
 
 interface VectorChunkDoc {
@@ -77,7 +77,7 @@ function findFileDirectory(fileId: string): FileInfo | null {
   for (const project of projects) {
     if (!project.valid) continue;
 
-    const found = findFileDirectoryRecursive(project.path, project.path, fileId);
+    const found = findFileDirectoryRecursive(project.path, fileId);
     if (found) {
       return found;
     }
@@ -87,7 +87,6 @@ function findFileDirectory(fileId: string): FileInfo | null {
 }
 
 function findFileDirectoryRecursive(
-  projectPath: string,
   dirPath: string,
   fileId: string
 ): FileInfo | null {
@@ -100,15 +99,15 @@ function findFileDirectoryRecursive(
   const file = metadata.files.find((item) => item.fileId === fileId);
   if (file) {
     return {
-      projectPath,
       dirPath,
       fileName: file.name,
+      afdName: file.afdName ?? file.name ?? file.fileId,
     };
   }
 
   for (const subdirectory of metadata.subdirectories) {
     const childPath = join(dirPath, subdirectory.name);
-    const found = findFileDirectoryRecursive(projectPath, childPath, fileId);
+    const found = findFileDirectoryRecursive(childPath, fileId);
     if (found) {
       return found;
     }
@@ -211,13 +210,13 @@ export async function getChunk(input: GetChunkInput) {
 
   const filePath = join(fileInfo.dirPath, fileInfo.fileName);
   const storage = createAFDStorage({
-    documentsDir: join(fileInfo.projectPath, '.fs_index', 'documents'),
+    documentsDir: join(fileInfo.dirPath, '.fs_index', 'documents'),
   });
 
-  const markdown = await storage.readText(fileId, 'content.md');
+  const markdown = await storage.readText(fileInfo.afdName, 'content.md');
   let summaries: Record<string, string> = {};
   try {
-    const summaryBuffer = await storage.read(fileId, 'summaries.json');
+    const summaryBuffer = await storage.read(fileInfo.afdName, 'summaries.json');
     summaries = JSON.parse(summaryBuffer.toString('utf-8')) as Record<string, string>;
   } catch {
     summaries = {};

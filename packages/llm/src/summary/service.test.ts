@@ -133,7 +133,7 @@ describe('SummaryService', () => {
 
   it('batch 摘要 JSON 解析失败时应重试并降级为空', async () => {
     const service = new SummaryService(baseConfig);
-    const call = vi.spyOn(service as unknown as { callLLM: () => Promise<string> }, 'callLLM');
+    const call = vi.spyOn(service as any, 'callLLM');
     call.mockResolvedValueOnce('not json');
     call.mockResolvedValueOnce('still wrong');
     call.mockResolvedValueOnce('also wrong');
@@ -152,5 +152,40 @@ describe('SummaryService', () => {
       const options = callArgs[1] as { maxRetries: number; timeoutMs?: number };
       expect(options).toMatchObject({ maxRetries: 1, timeoutMs: 10 });
     }
+  });
+
+  it('batch 摘要应按 parallelRequests 并行处理多个批次', async () => {
+    const service = new SummaryService(baseConfig);
+    let running = 0;
+    let maxRunning = 0;
+
+    const call = vi.spyOn(service as any, 'callLLM');
+    call.mockImplementation(async (...args: unknown[]) => {
+      const messages = (args[0] as Array<{ content: string }>) ?? [];
+      const firstMessage = messages[0]?.content ?? '';
+      const ids = Array.from(firstMessage.matchAll(/"id":"([^"]+)"/gu)).map(
+        (match) => match[1]
+      );
+
+      running += 1;
+      maxRunning = Math.max(maxRunning, running);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      running -= 1;
+
+      return JSON.stringify(ids.map((id) => ({ id, summary: `摘要-${id}` })));
+    });
+
+    const result = await service.generateChunkSummariesBatch(
+      [
+        { id: 'c1', content: '第一段内容' },
+        { id: 'c2', content: '第二段内容' },
+        { id: 'c3', content: '第三段内容' },
+      ],
+      { tokenBudget: 1, maxRetries: 0, parallelRequests: 2 }
+    );
+
+    expect(call).toHaveBeenCalledTimes(3);
+    expect(maxRunning).toBeGreaterThan(1);
+    expect(result.map((item) => item.summary)).toEqual(['摘要-c1', '摘要-c2', '摘要-c3']);
   });
 });

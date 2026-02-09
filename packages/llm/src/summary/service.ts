@@ -16,6 +16,7 @@ export interface SummaryOptions {
   maxRetries?: number;
   timeoutMs?: number;
   tokenBudget?: number;
+  parallelRequests?: number;
 }
 
 export interface SummaryResult {
@@ -79,6 +80,7 @@ export class SummaryService {
     const { useCache = true, timeoutMs } = options;
     const maxRetries = options.maxRetries ?? 2;
     const tokenBudget = options.tokenBudget ?? 10000;
+    const parallelRequests = Math.max(1, Math.floor(options.parallelRequests ?? 1));
 
     const results: BatchSummaryResult[] = chunks.map((chunk) => ({
       id: chunk.id,
@@ -110,60 +112,88 @@ export class SummaryService {
     }
 
     const batches = groupByTokenBudget(pending, tokenBudget);
-
-    for (const batch of batches) {
-      const expectedIds = batch.map((item) => item.id);
-      const payloadItems = batch.map((item) => ({ id: item.id, text: item.payload.content }));
-      const messages: ChatMessage[] = [
-        {
-          role: 'user',
-          content: BATCH_CHUNK_SUMMARY_PROMPT.replace('{items}', JSON.stringify(payloadItems)),
-        },
-      ];
-
-      let parsed: Map<string, string> | null = null;
-      let lastError: Error | null = null;
-
-      for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        try {
-          const raw = await this.callLLM(messages, { maxRetries: 1, timeoutMs });
-          parsed = this.parseBatchResponse(raw, expectedIds);
-          if (parsed) {
-            break;
-          }
-          throw new Error('invalid_json');
-        } catch (error) {
-          lastError = error as Error;
-          if (attempt < maxRetries) {
-            messages.push({
-              role: 'user',
-              content: `上次输出无法解析为 JSON，错误信息：${lastError.message}。请仅输出 JSON 数组，格式为 [{"id":"...","summary":"..."}]，不要添加任何额外文字。`,
-            });
-          }
+    let nextBatchIndex = 0;
+    const workerCount = Math.min(parallelRequests, batches.length);
+    const workers = Array.from({ length: workerCount }).map(async () => {
+      while (nextBatchIndex < batches.length) {
+        const batchIndex = nextBatchIndex;
+        nextBatchIndex += 1;
+        const batch = batches[batchIndex];
+        if (!batch) {
+          continue;
         }
+        await this.processChunkSummaryBatch(batch, {
+          useCache,
+          maxRetries,
+          timeoutMs,
+          results,
+        });
       }
+    });
 
-      if (!parsed) {
-        for (const item of batch) {
-          const index = item.payload.index;
-          results[index] = { id: item.id, summary: '', fromCache: false, fallback: true };
+    await Promise.all(workers);
+
+    return results;
+  }
+
+  private async processChunkSummaryBatch(
+    batch: TokenItem<{ index: number; content: string }>[],
+    context: {
+      useCache: boolean;
+      maxRetries: number;
+      timeoutMs?: number;
+      results: BatchSummaryResult[];
+    }
+  ): Promise<void> {
+    const expectedIds = batch.map((item) => item.id);
+    const payloadItems = batch.map((item) => ({ id: item.id, text: item.payload.content }));
+    const messages: ChatMessage[] = [
+      {
+        role: 'user',
+        content: BATCH_CHUNK_SUMMARY_PROMPT.replace('{items}', JSON.stringify(payloadItems)),
+      },
+    ];
+
+    let parsed: Map<string, string> | null = null;
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= context.maxRetries; attempt++) {
+      try {
+        const raw = await this.callLLM(messages, { maxRetries: 1, timeoutMs: context.timeoutMs });
+        parsed = this.parseBatchResponse(raw, expectedIds);
+        if (parsed) {
+          break;
         }
-        continue;
-      }
-
-      for (const item of batch) {
-        const index = item.payload.index;
-        const summary = parsed.get(item.id) ?? '';
-
-        if (useCache) {
-          this.cache.set(item.payload.content, 'chunk', summary);
+        throw new Error('invalid_json');
+      } catch (error) {
+        lastError = error as Error;
+        if (attempt < context.maxRetries) {
+          messages.push({
+            role: 'user',
+            content: `上次输出无法解析为 JSON，错误信息：${lastError.message}。请仅输出 JSON 数组，格式为 [{"id":"...","summary":"..."}]，不要添加任何额外文字。`,
+          });
         }
-
-        results[index] = { id: item.id, summary, fromCache: false, fallback: false };
       }
     }
 
-    return results;
+    if (!parsed) {
+      for (const item of batch) {
+        const index = item.payload.index;
+        context.results[index] = { id: item.id, summary: '', fromCache: false, fallback: true };
+      }
+      return;
+    }
+
+    for (const item of batch) {
+      const index = item.payload.index;
+      const summary = parsed.get(item.id) ?? '';
+
+      if (context.useCache) {
+        this.cache.set(item.payload.content, 'chunk', summary);
+      }
+
+      context.results[index] = { id: item.id, summary, fromCache: false, fallback: false };
+    }
   }
 
   async generateDocumentSummary(

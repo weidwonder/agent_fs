@@ -68,6 +68,7 @@ describe('configSchema', () => {
     const result = validateConfig(minConfig);
     expect(result.indexing.chunk_size.min_tokens).toBe(600);
     expect(result.indexing.chunk_size.max_tokens).toBe(1200);
+    expect(result.indexing.file_parallelism).toBe(2);
     expect(result.search.default_top_k).toBe(10);
   });
 
@@ -81,12 +82,32 @@ describe('configSchema', () => {
     const result = validateConfig(minConfig);
     expect(result.summary?.mode).toBe('batch');
     expect(result.summary?.chunk_batch_token_budget).toBe(10000);
+    expect(result.summary?.parallel_requests).toBe(2);
   });
 
   it('should reject invalid summary mode', () => {
     const invalidConfig = {
       ...validConfig,
       summary: { mode: 'invalid' },
+    };
+    expect(() => validateConfig(invalidConfig)).toThrow(ZodError);
+  });
+
+  it('should reject invalid summary parallel_requests', () => {
+    const invalidConfig = {
+      ...validConfig,
+      summary: { parallel_requests: 0 },
+    };
+    expect(() => validateConfig(invalidConfig)).toThrow(ZodError);
+  });
+
+  it('should reject invalid indexing file_parallelism', () => {
+    const invalidConfig = {
+      ...validConfig,
+      indexing: {
+        chunk_size: validConfig.indexing.chunk_size,
+        file_parallelism: 0,
+      },
     };
     expect(() => validateConfig(invalidConfig)).toThrow(ZodError);
   });

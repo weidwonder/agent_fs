@@ -15,6 +15,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeProject: (projectId: string) => ipcRenderer.invoke('remove-project', projectId),
   updateProjectSummary: (projectId: string, summary: string) =>
     ipcRenderer.invoke('update-project-summary', projectId, summary),
+  getProjectMemory: (projectId: string) => ipcRenderer.invoke('get-project-memory', projectId),
+  saveMemoryFile: (projectId: string, filePath: string, content: string) =>
+    ipcRenderer.invoke('save-memory-file', projectId, filePath, content),
 
   // 配置
   getConfig: () => ipcRenderer.invoke('get-config'),

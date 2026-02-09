@@ -32,14 +32,23 @@ function readIndexMetadata(dirPath: string): IndexMetadata {
   return JSON.parse(readFileSync(indexPath, 'utf-8')) as IndexMetadata;
 }
 
-function collectAllFileIds(metadata: IndexMetadata, currentDirPath: string): string[] {
-  const ids = [...metadata.files.map((file) => file.fileId)];
+function collectAllArchiveRefs(
+  metadata: IndexMetadata,
+  currentDirPath: string
+): Array<{ dirPath: string; archiveName: string; fileId: string }> {
+  const refs = metadata.files.map((file) => ({
+    dirPath: currentDirPath,
+    archiveName: file.afdName ?? file.name ?? file.fileId,
+    fileId: file.fileId,
+  }));
+
   for (const subdirectory of metadata.subdirectories) {
     const childPath = join(currentDirPath, subdirectory.name);
     const childMetadata = readIndexMetadata(childPath);
-    ids.push(...collectAllFileIds(childMetadata, childPath));
+    refs.push(...collectAllArchiveRefs(childMetadata, childPath));
   }
-  return ids;
+
+  return refs;
 }
 
 async function createContext(): Promise<IntegrationContext> {
@@ -95,6 +104,20 @@ async function createContext(): Promise<IntegrationContext> {
 }
 
 function createPipeline(context: IntegrationContext): IndexPipeline {
+  const storageCache = new Map<string, ReturnType<typeof createAFDStorage>>();
+  const getStorage = (dirPath: string) => {
+    const cached = storageCache.get(dirPath);
+    if (cached) {
+      return cached;
+    }
+
+    const storage = createAFDStorage({
+      documentsDir: join(dirPath, '.fs_index', 'documents'),
+    });
+    storageCache.set(dirPath, storage);
+    return storage;
+  };
+
   return new IndexPipeline({
     dirPath: context.projectDir,
     pluginManager: context.pluginManager,
@@ -103,6 +126,7 @@ function createPipeline(context: IntegrationContext): IndexPipeline {
     vectorStore: context.vectorStore,
     invertedIndex: context.invertedIndex,
     afdStorage: context.afdStorage,
+    afdStorageResolver: getStorage,
     chunkOptions: { minTokens: 1, maxTokens: 200 },
     summaryOptions: {
       mode: 'skip',
@@ -140,11 +164,14 @@ describe('IndexPipeline Integration', () => {
     expect(nestedMetadata.parentDirId).toBe(docsMetadata.dirId);
     expect(rootMetadata.stats.fileCount).toBe(3);
 
-    const allFileIds = collectAllFileIds(rootMetadata, context.projectDir);
-    expect(allFileIds.length).toBe(3);
+    const archiveRefs = collectAllArchiveRefs(rootMetadata, context.projectDir);
+    expect(archiveRefs.length).toBe(3);
 
-    for (const fileId of allFileIds) {
-      expect(await context.afdStorage.exists(fileId)).toBe(true);
+    for (const ref of archiveRefs) {
+      const storage = createAFDStorage({
+        documentsDir: join(ref.dirPath, '.fs_index', 'documents'),
+      });
+      expect(await storage.exists(ref.archiveName)).toBe(true);
     }
 
     const nestedResults = await context.invertedIndex.search('火星海象', { topK: 10 });
@@ -179,7 +206,10 @@ describe('IndexPipeline Integration', () => {
     expect(newAdded).toBeDefined();
     expect(secondDocsMetadata.files.some((file) => file.name === 'a.md')).toBe(false);
 
-    expect(await context.afdStorage.exists(oldDeleted!.fileId)).toBe(false);
+    const docsStorage = createAFDStorage({
+      documentsDir: join(context.projectDir, 'docs', '.fs_index', 'documents'),
+    });
+    expect(await docsStorage.exists(oldDeleted!.afdName ?? oldDeleted!.name ?? oldDeleted!.fileId)).toBe(false);
 
     const removedResults = await context.invertedIndex.search('海豚', { topK: 10 });
     expect(removedResults.some((item) => item.fileId === oldDeleted!.fileId)).toBe(false);

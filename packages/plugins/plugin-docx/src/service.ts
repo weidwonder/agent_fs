@@ -30,6 +30,7 @@ export class DocxService {
   private process: DocxProcess | null = null;
   private pending = new Map<string, PendingRequest>();
   private buffer = '';
+  private stderrTail = '';
   private spawnFn: (command: string, args: string[]) => DocxProcess;
   private converterPath: string;
   private timeoutMs: number;
@@ -51,8 +52,12 @@ export class DocxService {
 
     this.process = this.spawnFn('dotnet', [this.converterPath]);
     this.process.stdout.on('data', (chunk: Buffer) => this.handleStdout(chunk));
-    this.process.stderr.on('data', () => {
-      // stderr 留给调用方自行观察
+    this.process.stderr.on('data', (chunk: Buffer) => {
+      const chunkText = chunk.toString('utf8');
+      this.stderrTail = `${this.stderrTail}${chunkText}`.trim();
+      if (this.stderrTail.length > 1200) {
+        this.stderrTail = this.stderrTail.slice(this.stderrTail.length - 1200);
+      }
     });
     this.process.on('exit', () => this.rejectAll(new Error('DocxConverter 已退出')));
   }
@@ -69,6 +74,7 @@ export class DocxService {
       params: { filePath },
     };
 
+    this.stderrTail = '';
     const payload = JSON.stringify(request) + '\n';
     this.process?.stdin.write(payload);
 
@@ -129,7 +135,9 @@ export class DocxService {
     if (response.success) {
       pending.resolve(response.data);
     } else {
-      pending.reject(new Error(`${response.error.code}: ${response.error.message}`));
+      const responseMessage = response.error.message.trim();
+      const message = responseMessage || this.stderrTail || '未提供错误详情';
+      pending.reject(new Error(`${response.error.code}: ${message}`));
     }
   }
 

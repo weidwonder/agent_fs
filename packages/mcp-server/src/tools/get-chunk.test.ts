@@ -133,7 +133,7 @@ describe('getChunk', () => {
     );
 
     const documentsDir = join(projectDir, '.fs_index', 'documents');
-    state.afdFiles.set(`${documentsDir}:f1`, {
+    state.afdFiles.set(`${documentsDir}:a.md`, {
       content: '第一行\n第二行\n第三行',
       summaries: {
         'f1:0000': '摘要一',
@@ -285,8 +285,8 @@ describe('getChunk', () => {
       )
     );
 
-    const projectDocumentsDir = join(projectDir, '.fs_index', 'documents');
-    state.afdFiles.set(`${projectDocumentsDir}:f-sub`, {
+    const subDirDocumentsDir = join(subDir, '.fs_index', 'documents');
+    state.afdFiles.set(`${subDirDocumentsDir}:b.md`, {
       content: '子目录第一行\n子目录第二行',
       summaries: {
         'f-sub:0000': '子目录摘要',

@@ -8,6 +8,7 @@ import { listIndexes } from './tools/list-indexes.js';
 import { dirTree } from './tools/dir-tree.js';
 import { search, initSearchService, disposeSearchService } from './tools/search.js';
 import { getChunk } from './tools/get-chunk.js';
+import { getProjectMemory } from './tools/get-project-memory.js';
 
 export async function createServer() {
   const server = new Server(
@@ -78,6 +79,17 @@ export async function createServer() {
           required: ['chunk_id'],
         },
       },
+      {
+        name: 'get_project_memory',
+        description: '获取项目 memory 路径、project.md 内容和 memory 文件列表',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            project: { type: 'string', description: 'projectId 或项目路径' },
+          },
+          required: ['project'],
+        },
+      },
     ],
   }));
 
@@ -98,6 +110,11 @@ export async function createServer() {
 
         case 'get_chunk':
           return { content: [{ type: 'text', text: JSON.stringify(await getChunk(args as any)) }] };
+
+        case 'get_project_memory':
+          return {
+            content: [{ type: 'text', text: JSON.stringify(await getProjectMemory(args as any)) }],
+          };
 
         default:
           throw new Error(`Unknown tool: ${name}`);

@@ -1,0 +1,446 @@
+{
+  "description": "Agent FS test-data 召回评测集（扩展版，人工标注）（基于当前索引自动重标 chunk）",
+  "version": "1.2-hybrid-relabel",
+  "projectPath": "/Users/weidwonder/projects/agent_fs/test-data",
+  "queries": [
+    {
+      "id": "q001",
+      "query": "文本替换工具的核心特点是什么",
+      "keyword": "核心特点 LLM 只需引用原文 精确偏移量",
+      "type": "hybrid",
+      "expectedChunks": [
+        "9164607e7a9a1d89:0000"
+      ],
+      "expectedFiles": [
+        "sub_folder/sub_folder/文本替换工具方案.md"
+      ]
+    },
+    {
+      "id": "q002",
+      "query": "场景2里两个空格替换成三个的示例在哪",
+      "keyword": "这是一个 空格示例 两个空格 替换为三个",
+      "type": "hybrid",
+      "expectedChunks": [
+        "9164607e7a9a1d89:0000"
+      ],
+      "expectedFiles": [
+        "sub_folder/sub_folder/文本替换工具方案.md"
+      ]
+    },
+    {
+      "id": "q003",
+      "query": "WordTextReplacer 类定义",
+      "keyword": "WordTextReplacer Replace BatchReplace",
+      "type": "keyword",
+      "expectedChunks": [
+        "9164607e7a9a1d89:0001"
+      ],
+      "expectedFiles": [
+        "sub_folder/sub_folder/文本替换工具方案.md"
+      ]
+    },
+    {
+      "id": "q004",
+      "query": "ReplaceOperation 里的 OccurrenceIndex 默认值",
+      "keyword": "OccurrenceIndex = 1",
+      "type": "keyword",
+      "expectedChunks": [
+        "9164607e7a9a1d89:0001"
+      ],
+      "expectedFiles": [
+        "sub_folder/sub_folder/文本替换工具方案.md"
+      ]
+    },
+    {
+      "id": "q005",
+      "query": "ReplaceResult 和 BatchReplaceResult 字段",
+      "keyword": "ReplaceResult ErrorMessage MatchCount BatchReplaceResult",
+      "type": "hybrid",
+      "expectedChunks": [
+        "9164607e7a9a1d89:0002"
+      ],
+      "expectedFiles": [
+        "sub_folder/sub_folder/文本替换工具方案.md"
+      ]
+    },
+    {
+      "id": "q006",
+      "query": "P5 段落 OldText 空格 NewText 三个 的替换流程",
+      "keyword": "ParagraphId=\"P5\" OldText=\"空格\" NewText=\"三个\"",
+      "type": "hybrid",
+      "expectedChunks": [
+        "9164607e7a9a1d89:0003"
+      ],
+      "expectedFiles": [
+        "sub_folder/sub_folder/文本替换工具方案.md"
+      ]
+    },
+    {
+      "id": "q007",
+      "query": "LocateCharInRuns 精确定位算法",
+      "keyword": "LocateCharInRuns runIndex offsetInRun",
+      "type": "keyword",
+      "expectedChunks": [
+        "9164607e7a9a1d89:0004"
+      ],
+      "expectedFiles": [
+        "sub_folder/sub_folder/文本替换工具方案.md"
+      ]
+    },
+    {
+      "id": "q008",
+      "query": "跨 Run 替换方法",
+      "keyword": "ReplaceAcrossRuns preserveFormat",
+      "type": "keyword",
+      "expectedChunks": [
+        "9164607e7a9a1d89:0005"
+      ],
+      "expectedFiles": [
+        "sub_folder/sub_folder/文本替换工具方案.md"
+      ]
+    },
+    {
+      "id": "q009",
+      "query": "歧义处理里如何替换第2个匹配项",
+      "keyword": "OccurrenceIndex = 2",
+      "type": "hybrid",
+      "expectedChunks": [
+        "9164607e7a9a1d89:0006"
+      ],
+      "expectedFiles": [
+        "sub_folder/sub_folder/文本替换工具方案.md"
+      ]
+    },
+    {
+      "id": "q010",
+      "query": "批量替换为什么从后向前",
+      "keyword": "从后向前替换 SortOperations OrderByDescending",
+      "type": "hybrid",
+      "expectedChunks": [
+        "9164607e7a9a1d89:0007"
+      ],
+      "expectedFiles": [
+        "sub_folder/sub_folder/文本替换工具方案.md"
+      ]
+    },
+    {
+      "id": "q011",
+      "query": "单个替换示例代码",
+      "keyword": "var replacer = new WordTextReplacer",
+      "type": "keyword",
+      "expectedChunks": [
+        "9164607e7a9a1d89:0008"
+      ],
+      "expectedFiles": [
+        "sub_folder/sub_folder/文本替换工具方案.md"
+      ]
+    },
+    {
+      "id": "q012",
+      "query": "从 LLM 输出 JSON 解析替换",
+      "keyword": "JsonConvert.DeserializeObject replacements",
+      "type": "keyword",
+      "expectedChunks": [
+        "9164607e7a9a1d89:0009"
+      ],
+      "expectedFiles": [
+        "sub_folder/sub_folder/文本替换工具方案.md"
+      ]
+    },
+    {
+      "id": "q013",
+      "query": "详细日志 DebugLog 怎么记录",
+      "keyword": "DebugLog Add 在段落P5中搜索",
+      "type": "keyword",
+      "expectedChunks": [
+        "9164607e7a9a1d89:0010"
+      ],
+      "expectedFiles": [
+        "sub_folder/sub_folder/文本替换工具方案.md"
+      ]
+    },
+    {
+      "id": "q014",
+      "query": "位置映射表缓存机制",
+      "keyword": "_cachedMap LoadPositionMap",
+      "type": "keyword",
+      "expectedChunks": [
+        "9164607e7a9a1d89:0011"
+      ],
+      "expectedFiles": [
+        "sub_folder/sub_folder/文本替换工具方案.md"
+      ]
+    },
+    {
+      "id": "q015",
+      "query": "中国人身保险业重大疾病经验发生率表（2020）",
+      "keyword": "中国人身保险业重大疾病经验发生率表（2020） CI1",
+      "type": "keyword",
+      "expectedChunks": [
+        "07bdc54109c00225:0000"
+      ],
+      "expectedFiles": [
+        "sub_folder/sub_folder/test_doc.doc"
+      ]
+    },
+    {
+      "id": "q016",
+      "query": "文件名 区域 行数 列数 Sheet名称 的表格",
+      "keyword": "文件名 区域 行数 列数 Sheet名称",
+      "type": "keyword",
+      "expectedChunks": [
+        "c4828d2a2c6360a2:0000"
+      ],
+      "expectedFiles": [
+        "sub_folder/sub_folder/fill_test.docx"
+      ]
+    },
+    {
+      "id": "q017",
+      "query": "哪个工作表是科目余额表-1",
+      "keyword": "科目余额表-1",
+      "type": "semantic",
+      "expectedChunks": [
+        "f22e9728b39aa7b3:0000"
+      ],
+      "expectedFiles": [
+        "sub_folder2/演示公司(2025).xlsx"
+      ]
+    },
+    {
+      "id": "q018",
+      "query": "A1:BP263 的表格区域信息",
+      "keyword": "Range[A1:BP263]",
+      "type": "keyword",
+      "expectedChunks": [
+        "f22e9728b39aa7b3:0001"
+      ],
+      "expectedFiles": [
+        "sub_folder2/演示公司(2025).xlsx"
+      ]
+    },
+    {
+      "id": "q019",
+      "query": "保证系数表及影响样本规模的因素在哪个 sheet",
+      "keyword": "保证系数表及影响样本规模的因素 表1314-12",
+      "type": "hybrid",
+      "expectedChunks": [
+        "bd32084f327d6e6f:0000"
+      ],
+      "expectedFiles": [
+        "sub_folder2/货币资金.xlsx"
+      ]
+    },
+    {
+      "id": "q020",
+      "query": "货币资金可供参考实质性程序表（此页不打印）",
+      "keyword": "货币资金可供参考实质性程序表（此页不打印）",
+      "type": "keyword",
+      "expectedChunks": [
+        "bd32084f327d6e6f:0001"
+      ],
+      "expectedFiles": [
+        "sub_folder2/货币资金.xlsx"
+      ]
+    },
+    {
+      "id": "q021",
+      "query": "Intertek 报告里 PHONEPE PVT. LTD. 在哪里出现",
+      "keyword": "PHONEPE PVT. LTD. Buyer",
+      "type": "keyword",
+      "expectedChunks": [
+        "8334c1b24796f8fc:0000"
+      ],
+      "expectedFiles": [
+        "INDIR2511IN02996_D13&D15_origin.pdf"
+      ]
+    },
+    {
+      "id": "q022",
+      "query": "GGN QE 124 的授权签字信息",
+      "keyword": "AUTHORIZED BY ShanthaKumar GGN QE 124",
+      "type": "hybrid",
+      "expectedChunks": [
+        "8334c1b24796f8fc:0001"
+      ],
+      "expectedFiles": [
+        "INDIR2511IN02996_D13&D15_origin.pdf"
+      ]
+    },
+    {
+      "id": "q023",
+      "query": "NIL DEFECT DETAILS 的记录",
+      "keyword": "NIL DEFECT DETAILS CARTON ID Device ID",
+      "type": "keyword",
+      "expectedChunks": [
+        "8334c1b24796f8fc:0006"
+      ],
+      "expectedFiles": [
+        "INDIR2511IN02996_D13&D15_origin.pdf"
+      ]
+    },
+    {
+      "id": "q024",
+      "query": "INSPECTION REPORT REPORT NUMBER REPORT DATE 的页眉",
+      "keyword": "INSPECTION REPORT REPORT NUMBER REPORT DATE",
+      "type": "keyword",
+      "expectedChunks": [
+        "4961c1e7b975bec3:0000"
+      ],
+      "expectedFiles": [
+        "INDIR2511IN03148_D16&D17.md"
+      ]
+    },
+    {
+      "id": "q025",
+      "query": "31abc 报告里 AUTHORIZED BY 信息",
+      "keyword": "AUTHORIZED BY ShanthaKumar Intertek India Private Limited",
+      "type": "hybrid",
+      "expectedChunks": [
+        "144ff84e282bc2de:0001"
+      ],
+      "expectedFiles": [
+        "INDIR2512IN01019_D22,D23,F2,F3_origin.pdf"
+      ]
+    },
+    {
+      "id": "q026",
+      "query": "31abc 报告的 BASIC INFORMATION 产品描述",
+      "keyword": "Sampling Job Result A) BASIC INFORMATION PHONE SMART SPEAKER",
+      "type": "keyword",
+      "expectedChunks": [
+        "144ff84e282bc2de:0001"
+      ],
+      "expectedFiles": [
+        "INDIR2512IN01019_D22,D23,F2,F3_origin.pdf"
+      ]
+    },
+    {
+      "id": "q027",
+      "query": "31abc 的 NOTE POINTS 和 DEFECT DETAILS",
+      "keyword": "NOTE POINTS DEFECT DETAILS CARTON ID Device id",
+      "type": "keyword",
+      "expectedChunks": [
+        "144ff84e282bc2de:0006"
+      ],
+      "expectedFiles": [
+        "INDIR2512IN01019_D22,D23,F2,F3_origin.pdf"
+      ]
+    },
+    {
+      "id": "q028",
+      "query": "31abc 的 DEFECT PICTURES 列表",
+      "keyword": "DEFECT PICTURES Scratch Master carton damage Stain on product",
+      "type": "keyword",
+      "expectedChunks": [
+        "144ff84e282bc2de:0008"
+      ],
+      "expectedFiles": [
+        "INDIR2512IN01019_D22,D23,F2,F3_origin.pdf"
+      ]
+    },
+    {
+      "id": "q029",
+      "query": "INDIR2506IN00653 报告号在哪",
+      "keyword": "REPORT NUMBER:INDIR2506IN00653",
+      "type": "keyword",
+      "expectedChunks": [
+        "dcd8bc82318c1626:0000"
+      ],
+      "expectedFiles": [
+        "sub_folder/INDIR2506IN00651_SHPT3&5 ADDENDUM#23_origin.pdf"
+      ]
+    },
+    {
+      "id": "q030",
+      "query": "B) WORKMANSHIP 的批次信息表",
+      "keyword": "B) WORKMANSHIP Batch code Arrival Date",
+      "type": "keyword",
+      "expectedChunks": [
+        "dcd8bc82318c1626:0002"
+      ],
+      "expectedFiles": [
+        "sub_folder/INDIR2506IN00651_SHPT3&5 ADDENDUM#23_origin.pdf"
+      ]
+    },
+    {
+      "id": "q031",
+      "query": "RESULT PER WORKING STAGE 的结果",
+      "keyword": "C) RESULT PER WORKING STAGE Special Attention Point",
+      "type": "hybrid",
+      "expectedChunks": [
+        "dcd8bc82318c1626:0003"
+      ],
+      "expectedFiles": [
+        "sub_folder/INDIR2506IN00651_SHPT3&5 ADDENDUM#23_origin.pdf"
+      ]
+    },
+    {
+      "id": "q032",
+      "query": "PACKING LIST IS NOT AVAILABLE IN THE TIME OF INSPECTION",
+      "keyword": "PACKING LIST IS NOT AVAILABLE IN THE TIME OF INSPECTION",
+      "type": "keyword",
+      "expectedChunks": [
+        "dcd8bc82318c1626:0006"
+      ],
+      "expectedFiles": [
+        "sub_folder/INDIR2506IN00651_SHPT3&5 ADDENDUM#23_origin.pdf"
+      ]
+    },
+    {
+      "id": "q033",
+      "query": "11-04-2025 这份 Intertek 报告",
+      "keyword": "REPORT DATE: 11-04-2025",
+      "type": "keyword",
+      "expectedChunks": [
+        "828552ca498dd86a:0000"
+      ],
+      "expectedFiles": [
+        "sub_folder/sub_folder/INDIR2504IN01082 _Addendum#20 SHPT9& Addendum#21 SHPT1-1，1-2_origin.pdf"
+      ]
+    },
+    {
+      "id": "q034",
+      "query": "PHONE PAY SMART SPEAKER 的基本信息",
+      "keyword": "PHONE PAY SMART SPEAKER Sampling Job Result CONFORMED",
+      "type": "keyword",
+      "expectedChunks": [
+        "828552ca498dd86a:0001"
+      ],
+      "expectedFiles": [
+        "sub_folder/sub_folder/INDIR2504IN01082 _Addendum#20 SHPT9& Addendum#21 SHPT1-1，1-2_origin.pdf"
+      ]
+    },
+    {
+      "id": "q035",
+      "query": "PACKING LIST NOT AVAILABLE AT THE TIME OF INSPECTION",
+      "keyword": "PACKING LIST NOT AVAILABLE AT THE TIME OF INSPECTION",
+      "type": "keyword",
+      "expectedChunks": [
+        "828552ca498dd86a:0006"
+      ],
+      "expectedFiles": [
+        "sub_folder/sub_folder/INDIR2504IN01082 _Addendum#20 SHPT9& Addendum#21 SHPT1-1，1-2_origin.pdf"
+      ]
+    },
+    {
+      "id": "q036",
+      "query": "多个报告里 Report Overall Result CONFORMED 的位置",
+      "keyword": "Report Overall Result CONFORMED",
+      "type": "hybrid",
+      "expectedChunks": [
+        "4961c1e7b975bec3:0000",
+        "dcd8bc82318c1626:0000",
+        "8334c1b24796f8fc:0000",
+        "144ff84e282bc2de:0000",
+        "8334c1b24796f8fc:0001"
+      ],
+      "expectedFiles": [
+        "INDIR2511IN02996_D13&D15_origin.pdf",
+        "INDIR2511IN03148_D16&D17.md",
+        "INDIR2512IN01019_D22,D23,F2,F3_origin.pdf",
+        "sub_folder/INDIR2506IN00651_SHPT3&5 ADDENDUM#23_origin.pdf"
+      ]
+    }
+  ]
+}

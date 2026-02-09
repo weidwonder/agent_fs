@@ -51,6 +51,7 @@ const rerankConfigSchema = z.object({
 const summaryConfigSchema = z.object({
   mode: z.enum(['batch', 'skip']).default('batch'),
   chunk_batch_token_budget: z.number().int().positive().default(10000),
+  parallel_requests: z.number().int().positive().max(8).default(2),
   timeout_ms: z.number().int().positive().optional(),
   max_retries: z.number().int().min(0).max(2).optional(),
 });
@@ -63,6 +64,7 @@ const indexingConfigSchema = z.object({
     min_tokens: z.number().int().positive().default(600),
     max_tokens: z.number().int().positive().default(1200),
   }),
+  file_parallelism: z.number().int().positive().max(8).default(2),
 });
 
 /**
@@ -85,6 +87,7 @@ export const configSchema = z.object({
   summary: summaryConfigSchema.default({
     mode: 'batch',
     chunk_batch_token_budget: 10000,
+    parallel_requests: 2,
   }),
   indexing: indexingConfigSchema,
   search: searchConfigSchema,
