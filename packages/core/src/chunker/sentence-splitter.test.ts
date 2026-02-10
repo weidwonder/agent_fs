@@ -51,6 +51,17 @@ describe('splitLargeBlock', () => {
     expect(chunks.length).toBeGreaterThanOrEqual(1);
   });
 
+  it('should split oversized sentence into bounded chunks', () => {
+    const text = 'A'.repeat(20000);
+    const chunks = splitLargeBlock(text, { maxTokens: 200 });
+
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.map((chunk) => chunk.content).join('')).toBe(text);
+    for (const chunk of chunks) {
+      expect(chunk.tokenCount).toBeLessThanOrEqual(200);
+    }
+  });
+
   it('should include overlap when specified', () => {
     const text = 'One. Two. Three. Four. Five. Six. Seven. Eight. Nine. Ten.';
     const chunks = splitLargeBlock(text, { maxTokens: 10, overlapRatio: 0.2 });

@@ -228,6 +228,12 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                     {renderField('模型名称', 'embedding.api.model', {
                       placeholder: 'text-embedding-3-small',
                     })}
+                    {renderField('请求超时(ms)', 'embedding.api.timeout_ms', {
+                      type: 'number',
+                    })}
+                    {renderField('最大重试次数', 'embedding.api.max_retries', {
+                      type: 'number',
+                    })}
                   </>
                 )}
                 {embeddingDefault === 'local' && (

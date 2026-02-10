@@ -104,13 +104,71 @@ public class ExcelLoaderService : IExcelLoaderService
         var endRow = Math.Max(startRow, dimension.End.Row);
         var endCol = Math.Max(startCol, dimension.End.Column);
 
+        int? effectiveStartRow = null;
+        int? effectiveStartCol = null;
+        int? effectiveEndRow = null;
+        int? effectiveEndCol = null;
+
+        for (int row = endRow; row >= startRow; row--)
+        {
+            if (RowHasContent(worksheet, row, startCol, endCol))
+            {
+                effectiveEndRow = row;
+                break;
+            }
+        }
+
+        if (!effectiveEndRow.HasValue)
+        {
+            return new RegionInfo
+            {
+                StartRow = 1,
+                StartColumn = 1,
+                EndRow = 1,
+                EndColumn = 1,
+                RangeString = "A1"
+            };
+        }
+
+        for (int row = startRow; row <= effectiveEndRow.Value; row++)
+        {
+            if (RowHasContent(worksheet, row, startCol, endCol))
+            {
+                effectiveStartRow = row;
+                break;
+            }
+        }
+
+        for (int col = endCol; col >= startCol; col--)
+        {
+            if (ColumnHasContent(worksheet, col, effectiveStartRow!.Value, effectiveEndRow.Value))
+            {
+                effectiveEndCol = col;
+                break;
+            }
+        }
+
+        for (int col = startCol; col <= effectiveEndCol!.Value; col++)
+        {
+            if (ColumnHasContent(worksheet, col, effectiveStartRow!.Value, effectiveEndRow.Value))
+            {
+                effectiveStartCol = col;
+                break;
+            }
+        }
+
         return new RegionInfo
         {
-            StartRow = startRow,
-            StartColumn = startCol,
-            EndRow = endRow,
-            EndColumn = endCol,
-            RangeString = dimension.Address
+            StartRow = effectiveStartRow!.Value,
+            StartColumn = effectiveStartCol!.Value,
+            EndRow = effectiveEndRow.Value,
+            EndColumn = effectiveEndCol.Value,
+            RangeString = worksheet.Cells[
+                effectiveStartRow.Value,
+                effectiveStartCol.Value,
+                effectiveEndRow.Value,
+                effectiveEndCol.Value
+            ].Address
         };
     }
 
@@ -266,8 +324,9 @@ public class ExcelLoaderService : IExcelLoaderService
 
     public bool IsCellEmpty(int row, int column, string? sheetName = null)
     {
-        var value = GetCellValue(row, column, sheetName);
-        return value == null || (value is string str && string.IsNullOrWhiteSpace(str));
+        var worksheet = GetWorksheet(sheetName);
+        var cell = worksheet.Cells[row, column];
+        return !HasMeaningfulContent(cell);
     }
 
     public CellDataType GetCellDataType(int row, int column, string? sheetName = null)
@@ -292,6 +351,47 @@ public class ExcelLoaderService : IExcelLoaderService
     public void Dispose()
     {
         Close();
+    }
+
+    private static bool RowHasContent(ExcelWorksheet worksheet, int row, int startCol, int endCol)
+    {
+        for (int col = startCol; col <= endCol; col++)
+        {
+            if (HasMeaningfulContent(worksheet.Cells[row, col]))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool ColumnHasContent(ExcelWorksheet worksheet, int col, int startRow, int endRow)
+    {
+        for (int row = startRow; row <= endRow; row++)
+        {
+            if (HasMeaningfulContent(worksheet.Cells[row, col]))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasMeaningfulContent(ExcelRange cell)
+    {
+        if (!string.IsNullOrWhiteSpace(cell.Formula))
+        {
+            return true;
+        }
+
+        return cell.Value switch
+        {
+            null => false,
+            string str => !string.IsNullOrWhiteSpace(str),
+            _ => true,
+        };
     }
 
 

@@ -26,6 +26,8 @@ const apiEmbeddingSchema = z.object({
   base_url: z.string().url(),
   api_key: z.string().min(1),
   model: z.string().min(1),
+  timeout_ms: z.number().int().positive().default(60000),
+  max_retries: z.number().int().min(1).max(8).default(3),
 });
 
 /**

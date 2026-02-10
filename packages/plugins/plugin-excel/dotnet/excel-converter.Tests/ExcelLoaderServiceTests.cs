@@ -1,6 +1,7 @@
 using ExcelConverter.Models;
 using ExcelConverter.Services;
 using OfficeOpenXml;
+using OfficeOpenXml.Style;
 using Xunit;
 
 namespace ExcelConverter.Tests;
@@ -33,6 +34,45 @@ public class ExcelLoaderServiceTests
         finally
         {
             File.Delete(filePath);
+        }
+    }
+
+    [Fact]
+    public void 仅边框扩展区域时_SheetBounds应按有值单元格计算()
+    {
+        ExcelPackage.License.SetNonCommercialPersonal("agent-fs");
+        var tempPath = Path.Combine(Path.GetTempPath(), $"excel-style-only-{Guid.NewGuid():N}.xlsx");
+
+        try
+        {
+            using (var package = new ExcelPackage())
+            {
+                var sheet = package.Workbook.Worksheets.Add("Sheet1");
+                sheet.Cells[1, 1].Value = "标题";
+                sheet.Cells[2, 2].Value = 100;
+
+                var styleOnlyRange = sheet.Cells[1, 14, 2000, 14];
+                styleOnlyRange.Style.Border.Left.Style = ExcelBorderStyle.Thin;
+                styleOnlyRange.Style.Border.Right.Style = ExcelBorderStyle.Thin;
+                styleOnlyRange.Style.Border.Top.Style = ExcelBorderStyle.Thin;
+                styleOnlyRange.Style.Border.Bottom.Style = ExcelBorderStyle.Thin;
+
+                package.SaveAs(new FileInfo(tempPath));
+            }
+
+            var loader = new ExcelLoaderService(new XlsConverterService());
+            loader.Open(tempPath);
+
+            var bounds = loader.GetSheetBounds("Sheet1");
+            Assert.Equal("A1:B2", bounds.RangeString);
+            Assert.Equal(2, bounds.EndRow);
+            Assert.Equal(2, bounds.EndColumn);
+
+            loader.Close();
+        }
+        finally
+        {
+            File.Delete(tempPath);
         }
     }
 

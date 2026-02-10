@@ -83,6 +83,10 @@ Agent FS 让 AI Agent 在本地完成“索引 → 检索 → 定位原文”的
 
 说明：同一目录下文件处理支持按 `indexing.file_parallelism` 进行文件级并发（默认 2）。
 说明：`docx` 插件在常规解析失败时会自动降级到 LibreOffice 文本提取链路，尽量保证 `.doc/.docx` 可索引。
+说明：`embedding.default=api` 时可通过 `embedding.api.timeout_ms` 与 `embedding.api.max_retries` 控制向量请求超时与重试（默认 60000ms / 3 次）。
+说明：每次索引会生成结构化运行日志：`<project>/.fs_index/logs/indexing.latest.jsonl`，包含 `file/stage/duration/detail`，用于定位卡点与超时阶段。
+说明：对超长且无句号分隔的文本块，chunker 会执行硬切分，保证单个 chunk 不超过 `maxTokens`，避免向量化阶段因超大输入超时。
+说明：Excel 转换时会按“有值/有公式”的实际单元格范围确定 sheet 边界，忽略仅有边框等样式但无内容的尾部区域。
 
 ## 4.3 增量更新机制
 

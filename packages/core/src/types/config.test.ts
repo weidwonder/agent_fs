@@ -18,6 +18,8 @@ describe('Config Types', () => {
     expectTypeOf<EmbeddingConfig>().toHaveProperty('default');
     expectTypeOf<APIEmbeddingConfig>().toHaveProperty('base_url');
     expectTypeOf<APIEmbeddingConfig>().toHaveProperty('api_key');
+    expectTypeOf<APIEmbeddingConfig>().toHaveProperty('timeout_ms');
+    expectTypeOf<APIEmbeddingConfig>().toHaveProperty('max_retries');
   });
 
   it('IndexingConfig 与 SearchConfig 使用 snake_case 字段', () => {

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import type {
@@ -78,6 +78,15 @@ interface ProcessFileInput {
   total: number;
 }
 
+type FileStage =
+  | 'convert'
+  | 'chunk'
+  | 'summary'
+  | 'embed'
+  | 'index-write'
+  | 'document-summary'
+  | 'afd-write';
+
 export class IndexPipeline {
   private readonly options: IndexerOptions;
   private projectId: string;
@@ -86,6 +95,8 @@ export class IndexPipeline {
   private processedFiles = 0;
   private totalFiles = 0;
   private readonly fileChecker = new FileChecker();
+  private logFilePath = '';
+  private runStartedAt = 0;
 
   constructor(options: IndexerOptions) {
     this.options = options;
@@ -94,9 +105,16 @@ export class IndexPipeline {
 
   async run(): Promise<IndexMetadata> {
     const { dirPath } = this.options;
+    this.runStartedAt = Date.now();
 
     // 确保根目录索引目录存在
     mkdirSync(join(dirPath, '.fs_index'), { recursive: true });
+    this.initLogFile(dirPath);
+    this.writeLog({
+      level: 'info',
+      event: 'run_start',
+      directory: dirPath,
+    });
 
     this.existingMetadataByRelativePath = this.loadExistingMetadataMap(dirPath);
     this.existingFileArchiveById = this.buildExistingFileArchiveMap(
@@ -114,9 +132,30 @@ export class IndexPipeline {
       this.existingMetadataByRelativePath
     );
     this.totalFiles = this.countSupportedFiles(tree);
+    this.writeLog({
+      level: 'info',
+      event: 'scan_done',
+      totalFiles: this.totalFiles,
+    });
 
-    const result = await this.indexDirectoryTree(tree);
-    return result.metadata;
+    try {
+      const result = await this.indexDirectoryTree(tree);
+      this.writeLog({
+        level: 'info',
+        event: 'run_success',
+        durationMs: Date.now() - this.runStartedAt,
+        totalFiles: this.totalFiles,
+      });
+      return result.metadata;
+    } catch (error) {
+      this.writeLog({
+        level: 'error',
+        event: 'run_error',
+        durationMs: Date.now() - this.runStartedAt,
+        detail: this.extractErrorMessage(error),
+      });
+      throw error;
+    }
   }
 
   private scanDirectoryTree(
@@ -453,6 +492,95 @@ export class IndexPipeline {
     }
   }
 
+  getLogFilePath(): string {
+    return this.logFilePath;
+  }
+
+  private initLogFile(dirPath: string): void {
+    const logsDir = join(dirPath, '.fs_index', 'logs');
+    mkdirSync(logsDir, { recursive: true });
+    this.logFilePath = join(logsDir, 'indexing.latest.jsonl');
+    writeFileSync(this.logFilePath, '');
+  }
+
+  private writeLog(entry: Record<string, unknown>): void {
+    if (!this.logFilePath) {
+      return;
+    }
+
+    try {
+      const payload = JSON.stringify({
+        timestamp: new Date().toISOString(),
+        ...entry,
+      });
+      appendFileSync(this.logFilePath, `${payload}\n`);
+    } catch {
+      // 日志失败不应中断索引主流程
+    }
+  }
+
+  private extractErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      const message = error.message?.trim();
+      if (message) {
+        return message;
+      }
+    }
+    return '未提供错误详情';
+  }
+
+  private async runFileStage<T>(params: {
+    file: string;
+    stage: FileStage;
+    processed: number;
+    total: number;
+    action: () => Promise<T>;
+    details?: Record<string, unknown>;
+    mapError?: (detail: string) => string;
+  }): Promise<T> {
+    const stageStartedAt = Date.now();
+    this.writeLog({
+      level: 'info',
+      event: 'stage_start',
+      file: params.file,
+      stage: params.stage,
+      processed: params.processed + 1,
+      total: params.total,
+      ...params.details,
+    });
+
+    try {
+      const result = await params.action();
+      this.writeLog({
+        level: 'info',
+        event: 'stage_done',
+        file: params.file,
+        stage: params.stage,
+        processed: params.processed + 1,
+        total: params.total,
+        durationMs: Date.now() - stageStartedAt,
+      });
+      return result;
+    } catch (error) {
+      const detail = this.extractErrorMessage(error);
+      this.writeLog({
+        level: 'error',
+        event: 'stage_error',
+        file: params.file,
+        stage: params.stage,
+        processed: params.processed + 1,
+        total: params.total,
+        durationMs: Date.now() - stageStartedAt,
+        detail,
+      });
+
+      const message = params.mapError
+        ? params.mapError(detail)
+        : `文件处理失败: ${params.file} [阶段: ${params.stage}] - ${detail}`;
+      throw new Error(message);
+    }
+  }
+
   private async processFile(input: ProcessFileInput): Promise<FileMetadata> {
     const {
       dirPath,
@@ -476,10 +604,29 @@ export class IndexPipeline {
     } = this.options;
     const afdStorage = this.getAfdStorage(dirPath);
 
+    this.writeLog({
+      level: 'info',
+      event: 'file_start',
+      file: relativeFilePath,
+      processed: processed + 1,
+      total,
+    });
+    const fileStartedAt = Date.now();
+
     const ext = displayName.split('.').pop() || '';
     const plugin = pluginManager.getPlugin(ext);
     if (!plugin) {
-      throw new Error(`No plugin for extension: ${ext}`);
+      const detail = `No plugin for extension: ${ext}`;
+      this.writeLog({
+        level: 'error',
+        event: 'stage_error',
+        file: relativeFilePath,
+        stage: 'convert',
+        processed: processed + 1,
+        total,
+        detail,
+      });
+      throw new Error(`文件处理失败: ${relativeFilePath} [阶段: convert] - ${detail}`);
     }
 
     onProgress?.({
@@ -488,15 +635,20 @@ export class IndexPipeline {
       processed,
       total,
     });
-    let conversionResult: DocumentConversionResult;
-    try {
-      conversionResult = await plugin.toMarkdown(filePath);
-    } catch (error) {
-      const rawMessage = (error as Error).message?.trim() ?? '';
-      const detail = rawMessage.length > 0 ? rawMessage : '未提供错误详情';
-      const pluginName = plugin.name || ext;
-      throw new Error(`文件转换失败: ${relativeFilePath} (插件: ${pluginName}) - ${detail}`);
-    }
+    const conversionResult = await this.runFileStage({
+      file: relativeFilePath,
+      stage: 'convert',
+      processed,
+      total,
+      details: {
+        plugin: plugin.name || ext,
+      },
+      action: async () => plugin.toMarkdown(filePath),
+      mapError: (detail) => {
+        const pluginName = plugin.name || ext;
+        return `文件转换失败: ${relativeFilePath} (插件: ${pluginName}) - ${detail}`;
+      },
+    });
 
     onProgress?.({
       phase: 'chunk',
@@ -504,8 +656,16 @@ export class IndexPipeline {
       processed,
       total,
     });
-    const chunker = new MarkdownChunker(this.options.chunkOptions);
-    const chunks = chunker.chunk(conversionResult.markdown);
+    const chunks = await this.runFileStage({
+      file: relativeFilePath,
+      stage: 'chunk',
+      processed,
+      total,
+      action: async () => {
+        const chunker = new MarkdownChunker(this.options.chunkOptions);
+        return chunker.chunk(conversionResult.markdown);
+      },
+    });
 
     const content = readFileSync(filePath);
     const sourceSha256 = createHash('sha256').update(content).digest('hex');
@@ -523,64 +683,169 @@ export class IndexPipeline {
     });
 
     const chunkIds = chunks.map((_, index) => `${fileId}:${String(index).padStart(4, '0')}`);
-    let chunkSummaries: string[] = [];
-    if (summaryOptions.mode === 'skip') {
-      chunkSummaries = chunks.map(() => '');
-    } else {
-      const batchResults = await summaryService.generateChunkSummariesBatch(
-        chunks.map((chunk, index) => ({
-          id: chunkIds[index],
-          content: chunk.content,
-        })),
-        {
-          maxRetries: summaryOptions.maxRetries,
-          timeoutMs: summaryOptions.timeoutMs,
-          tokenBudget: summaryOptions.tokenBudget,
-          parallelRequests: summaryOptions.parallelRequests,
+    const chunkSummaries = await this.runFileStage({
+      file: relativeFilePath,
+      stage: 'summary',
+      processed,
+      total,
+      details: {
+        mode: summaryOptions.mode,
+        chunkCount: chunks.length,
+      },
+      action: async () => {
+        if (summaryOptions.mode === 'skip') {
+          return chunks.map(() => '');
         }
-      );
-      chunkSummaries = batchResults.map((result) => result.summary);
-    }
 
-    const vectorDocs: VectorDocument[] = [];
-    for (let i = 0; i < chunks.length; i += 1) {
-      const chunk = chunks[i];
-      const chunkSummary = chunkSummaries[i] ?? '';
+        const batchResults = await summaryService.generateChunkSummariesBatch(
+          chunks.map((chunk, index) => ({
+            id: chunkIds[index],
+            content: chunk.content,
+          })),
+          {
+            maxRetries: summaryOptions.maxRetries,
+            timeoutMs: summaryOptions.timeoutMs,
+            tokenBudget: summaryOptions.tokenBudget,
+            parallelRequests: summaryOptions.parallelRequests,
+          }
+        );
+        return batchResults.map((result) => result.summary);
+      },
+    });
 
-      onProgress?.({
-        phase: 'embed',
-        currentFile: relativeFilePath,
-        processed,
-        total,
-      });
+    onProgress?.({
+      phase: 'embed',
+      currentFile: relativeFilePath,
+      processed,
+      total,
+    });
 
-      const [contentEmbed, summaryEmbed] = await Promise.all([
-        embeddingService.embed(chunk.content),
-        embeddingService.embed(chunkSummary),
-      ]);
-      const hybridEmbed = contentEmbed.map((value, index) => (value + (summaryEmbed[index] ?? 0)) / 2);
+    const vectorDocs = await this.runFileStage({
+      file: relativeFilePath,
+      stage: 'embed',
+      processed,
+      total,
+      details: {
+        chunkCount: chunks.length,
+      },
+      action: async () => {
+        const docs: VectorDocument[] = [];
+        const maybeEmbedBatch = (
+          embeddingService as unknown as {
+            embedBatch?: (
+              texts: string[],
+              options?: { useCache?: boolean; batchSize?: number }
+            ) => Promise<{ embeddings: number[][] }>;
+          }
+        ).embedBatch;
 
-      const now = new Date().toISOString();
-      vectorDocs.push({
-        chunk_id: chunkIds[i],
-        file_id: fileId,
-        dir_id: dirId,
-        rel_path: relativeFilePath,
-        file_path: filePath,
-        chunk_line_start: chunk.lineStart,
-        chunk_line_end: chunk.lineEnd,
-        content_vector: contentEmbed,
-        summary_vector: summaryEmbed,
-        hybrid_vector: hybridEmbed,
-        locator: chunk.locator,
-        indexed_at: now,
-        deleted_at: '',
-      });
-    }
+        if (typeof maybeEmbedBatch === 'function') {
+          const contentBatch = await maybeEmbedBatch.call(
+            embeddingService,
+            chunks.map((chunk) => chunk.content),
+            { batchSize: 8 }
+          );
 
-    await vectorStore.addDocuments(vectorDocs);
-    const indexEntries = this.buildIndexEntries(conversionResult, chunks, chunkIds);
-    await invertedIndex.addFile(fileId, dirId, indexEntries);
+          let summaryEmbeddings: number[][];
+          if (summaryOptions.mode === 'skip') {
+            const emptySummaryEmbedding = await embeddingService.embed('');
+            summaryEmbeddings = chunks.map(() => emptySummaryEmbedding);
+          } else {
+            const summaryBatch = await maybeEmbedBatch.call(embeddingService, chunkSummaries, {
+              batchSize: 8,
+            });
+            summaryEmbeddings = summaryBatch.embeddings;
+          }
+
+          for (let i = 0; i < chunks.length; i += 1) {
+            const chunk = chunks[i];
+            const contentEmbed = contentBatch.embeddings[i];
+            const summaryEmbed = summaryEmbeddings[i] ?? [];
+            const hybridEmbed = contentEmbed.map(
+              (value, index) => (value + (summaryEmbed[index] ?? 0)) / 2
+            );
+
+            const now = new Date().toISOString();
+            docs.push({
+              chunk_id: chunkIds[i],
+              file_id: fileId,
+              dir_id: dirId,
+              rel_path: relativeFilePath,
+              file_path: filePath,
+              chunk_line_start: chunk.lineStart,
+              chunk_line_end: chunk.lineEnd,
+              content_vector: contentEmbed,
+              summary_vector: summaryEmbed,
+              hybrid_vector: hybridEmbed,
+              locator: chunk.locator,
+              indexed_at: now,
+              deleted_at: '',
+            });
+          }
+
+          return docs;
+        }
+
+        for (let i = 0; i < chunks.length; i += 1) {
+          const chunk = chunks[i];
+          const chunkSummary = chunkSummaries[i] ?? '';
+
+          onProgress?.({
+            phase: 'embed',
+            currentFile: relativeFilePath,
+            processed,
+            total,
+          });
+
+          try {
+            const [contentEmbed, summaryEmbed] = await Promise.all([
+              embeddingService.embed(chunk.content),
+              embeddingService.embed(chunkSummary),
+            ]);
+            const hybridEmbed = contentEmbed.map(
+              (value, index) => (value + (summaryEmbed[index] ?? 0)) / 2
+            );
+
+            const now = new Date().toISOString();
+            docs.push({
+              chunk_id: chunkIds[i],
+              file_id: fileId,
+              dir_id: dirId,
+              rel_path: relativeFilePath,
+              file_path: filePath,
+              chunk_line_start: chunk.lineStart,
+              chunk_line_end: chunk.lineEnd,
+              content_vector: contentEmbed,
+              summary_vector: summaryEmbed,
+              hybrid_vector: hybridEmbed,
+              locator: chunk.locator,
+              indexed_at: now,
+              deleted_at: '',
+            });
+          } catch (error) {
+            const detail = this.extractErrorMessage(error);
+            throw new Error(`chunk ${i + 1}/${chunks.length} - ${detail}`);
+          }
+        }
+
+        return docs;
+      },
+    });
+
+    await this.runFileStage({
+      file: relativeFilePath,
+      stage: 'index-write',
+      processed,
+      total,
+      details: {
+        chunkCount: chunks.length,
+      },
+      action: async () => {
+        await vectorStore.addDocuments(vectorDocs);
+        const indexEntries = this.buildIndexEntries(conversionResult, chunks, chunkIds);
+        await invertedIndex.addFile(fileId, dirId, indexEntries);
+      },
+    });
 
     onProgress?.({
       phase: 'summary',
@@ -591,14 +856,20 @@ export class IndexPipeline {
 
     let documentSummary = '';
     if (summaryOptions.mode !== 'skip') {
-      const docSummaryResult = await summaryService.generateDocumentSummary(
-        relativeFilePath,
-        chunkSummaries,
-        {
-          maxRetries: summaryOptions.maxRetries,
-          timeoutMs: summaryOptions.timeoutMs,
-        }
-      );
+      const docSummaryResult = await this.runFileStage({
+        file: relativeFilePath,
+        stage: 'document-summary',
+        processed,
+        total,
+        details: {
+          chunkCount: chunks.length,
+        },
+        action: async () =>
+          summaryService.generateDocumentSummary(relativeFilePath, chunkSummaries, {
+            maxRetries: summaryOptions.maxRetries,
+            timeoutMs: summaryOptions.timeoutMs,
+          }),
+      });
       documentSummary = docSummaryResult.summary;
     }
 
@@ -611,20 +882,40 @@ export class IndexPipeline {
     const summaries = Object.fromEntries(
       chunkIds.map((chunkId, index) => [chunkId, chunkSummaries[index] ?? ''])
     );
-    await afdStorage.write(afdName, {
-      'content.md': conversionResult.markdown,
-      'metadata.json': JSON.stringify(
-        {
-          sourceFile: relativeFilePath,
-          sourceHash: `sha256:${sourceSha256}`,
-          plugin: ext,
-          createdAt: new Date().toISOString(),
-          mapping: conversionResult.mapping,
-        },
-        null,
-        2
-      ),
-      'summaries.json': JSON.stringify(summaries, null, 2),
+    await this.runFileStage({
+      file: relativeFilePath,
+      stage: 'afd-write',
+      processed,
+      total,
+      details: {
+        archive: afdName,
+      },
+      action: async () =>
+        afdStorage.write(afdName, {
+          'content.md': conversionResult.markdown,
+          'metadata.json': JSON.stringify(
+            {
+              sourceFile: relativeFilePath,
+              sourceHash: `sha256:${sourceSha256}`,
+              plugin: ext,
+              createdAt: new Date().toISOString(),
+              mapping: conversionResult.mapping,
+            },
+            null,
+            2
+          ),
+          'summaries.json': JSON.stringify(summaries, null, 2),
+        }),
+    });
+
+    this.writeLog({
+      level: 'info',
+      event: 'file_done',
+      file: relativeFilePath,
+      processed: processed + 1,
+      total,
+      chunkCount: chunks.length,
+      durationMs: Date.now() - fileStartedAt,
     });
 
     return {

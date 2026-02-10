@@ -66,6 +66,20 @@ ${largeParagraph}
     }
   });
 
+  it('should split very long content without punctuation', () => {
+    const markdown = `# Big\n\n${'A'.repeat(20000)}\n`;
+    const largeChunker = new MarkdownChunker({
+      minTokens: 10,
+      maxTokens: 200,
+    });
+
+    const chunks = largeChunker.chunk(markdown);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      expect(chunk.tokenCount).toBeLessThanOrEqual(200);
+    }
+  });
+
   it('should merge small chunks', () => {
     const markdown = `# A
 

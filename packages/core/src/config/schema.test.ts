@@ -72,6 +72,50 @@ describe('configSchema', () => {
     expect(result.search.default_top_k).toBe(10);
   });
 
+  it('should apply default embedding API timeout and retries', () => {
+    const apiConfig = {
+      llm: validConfig.llm,
+      embedding: {
+        default: 'api',
+        api: {
+          provider: 'openai-compatible',
+          base_url: 'https://api.openai.com/v1',
+          api_key: 'sk-test',
+          model: 'text-embedding-3-small',
+        },
+      },
+      indexing: { chunk_size: {} },
+      search: { fusion: { method: 'rrf' } },
+    };
+
+    const result = validateConfig(apiConfig);
+    expect(result.embedding.api?.timeout_ms).toBe(60000);
+    expect(result.embedding.api?.max_retries).toBe(3);
+  });
+
+  it('should keep custom embedding API timeout and retries', () => {
+    const apiConfig = {
+      llm: validConfig.llm,
+      embedding: {
+        default: 'api',
+        api: {
+          provider: 'openai-compatible',
+          base_url: 'https://api.openai.com/v1',
+          api_key: 'sk-test',
+          model: 'text-embedding-3-small',
+          timeout_ms: 120000,
+          max_retries: 5,
+        },
+      },
+      indexing: { chunk_size: {} },
+      search: { fusion: { method: 'rrf' } },
+    };
+
+    const result = validateConfig(apiConfig);
+    expect(result.embedding.api?.timeout_ms).toBe(120000);
+    expect(result.embedding.api?.max_retries).toBe(5);
+  });
+
   it('should apply default summary config', () => {
     const minConfig = {
       llm: validConfig.llm,
@@ -97,6 +141,25 @@ describe('configSchema', () => {
     const invalidConfig = {
       ...validConfig,
       summary: { parallel_requests: 0 },
+    };
+    expect(() => validateConfig(invalidConfig)).toThrow(ZodError);
+  });
+
+  it('should reject invalid embedding api timeout', () => {
+    const invalidConfig = {
+      llm: validConfig.llm,
+      embedding: {
+        default: 'api',
+        api: {
+          provider: 'openai-compatible',
+          base_url: 'https://api.openai.com/v1',
+          api_key: 'sk-test',
+          model: 'text-embedding-3-small',
+          timeout_ms: 0,
+        },
+      },
+      indexing: { chunk_size: {} },
+      search: { fusion: { method: 'rrf' } },
     };
     expect(() => validateConfig(invalidConfig)).toThrow(ZodError);
   });

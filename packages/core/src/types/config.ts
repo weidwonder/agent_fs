@@ -81,6 +81,12 @@ export interface APIEmbeddingConfig {
 
   /** 模型名称 */
   model: string;
+
+  /** 单次请求超时（毫秒） */
+  timeout_ms?: number;
+
+  /** 最大重试次数 */
+  max_retries?: number;
 }
 
 /**

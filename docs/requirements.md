@@ -196,7 +196,7 @@
 |--------|------|
 | LLM | OpenAI 兼容 API（base_url / key / model） |
 | Summary | mode / chunk_batch_token_budget / parallel_requests / timeout_ms / max_retries |
-| Embedding | 本地模型（默认）或 API |
+| Embedding | 本地模型（默认）或 API；API 支持 `timeout_ms / max_retries` |
 | Rerank | 可选，支持 LLM Rerank |
 | 索引参数 | chunk_size.min_tokens / chunk_size.max_tokens / indexing.file_parallelism |
 | 搜索参数 | top_k、融合方法 |

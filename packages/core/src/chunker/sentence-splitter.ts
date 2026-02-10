@@ -28,6 +28,42 @@ export interface SentenceChunk {
   endOffset: number;
 }
 
+function splitOversizedSentence(
+  sentence: string,
+  maxTokens: number
+): Array<{ content: string; tokenCount: number }> {
+  const fragments: Array<{ content: string; tokenCount: number }> = [];
+  let remaining = sentence;
+
+  while (remaining.length > 0) {
+    if (remaining.length <= maxTokens) {
+      const remainingTokens = countTokens(remaining);
+      if (remainingTokens <= maxTokens) {
+        fragments.push({ content: remaining, tokenCount: remainingTokens });
+        break;
+      }
+    }
+
+    let fragmentLength = Math.min(remaining.length, maxTokens);
+    let fragment = remaining.slice(0, fragmentLength);
+    let fragmentTokens = countTokens(fragment);
+
+    while (fragmentTokens > maxTokens && fragmentLength > 1) {
+      fragmentLength = Math.max(1, Math.floor(fragmentLength * 0.8));
+      fragment = remaining.slice(0, fragmentLength);
+      fragmentTokens = countTokens(fragment);
+    }
+
+    fragments.push({
+      content: fragment,
+      tokenCount: fragmentTokens,
+    });
+    remaining = remaining.slice(fragmentLength);
+  }
+
+  return fragments;
+}
+
 /**
  * 将文本按句子切分
  * 支持中英文句子
@@ -92,13 +128,17 @@ export function splitLargeBlock(
         startOffset += content.length + 1;
       }
 
-      chunks.push({
-        content: sentence,
-        tokenCount: sentenceTokens,
-        startOffset,
-        endOffset: startOffset + sentence.length,
-      });
-      startOffset += sentence.length + 1;
+      const oversizedFragments = splitOversizedSentence(sentence, maxTokens);
+      for (const fragment of oversizedFragments) {
+        chunks.push({
+          content: fragment.content,
+          tokenCount: fragment.tokenCount,
+          startOffset,
+          endOffset: startOffset + fragment.content.length,
+        });
+        startOffset += fragment.content.length;
+      }
+      startOffset += 1;
 
       currentChunk = [];
       currentTokens = 0;
@@ -140,5 +180,25 @@ export function splitLargeBlock(
     });
   }
 
-  return chunks;
+  const normalizedChunks: SentenceChunk[] = [];
+  for (const chunk of chunks) {
+    if (chunk.tokenCount <= maxTokens) {
+      normalizedChunks.push(chunk);
+      continue;
+    }
+
+    let offset = chunk.startOffset;
+    const fragments = splitOversizedSentence(chunk.content, maxTokens);
+    for (const fragment of fragments) {
+      normalizedChunks.push({
+        content: fragment.content,
+        tokenCount: fragment.tokenCount,
+        startOffset: offset,
+        endOffset: offset + fragment.content.length,
+      });
+      offset += fragment.content.length;
+    }
+  }
+
+  return normalizedChunks;
 }

@@ -248,6 +248,80 @@ describe('IndexPipeline summary mode', () => {
     rmSync(dirPath, { recursive: true, force: true });
   });
 
+  it('向量化超时时应记录阶段信息并写入日志', async () => {
+    const dirPath = mkdtempSync(join(tmpdir(), 'agent-fs-embed-timeout-'));
+    const filePath = join(dirPath, 'timeout.md');
+    writeFileSync(filePath, '# 标题\n\n内容');
+
+    const plugin = {
+      name: 'markdown',
+      toMarkdown: async () => ({ markdown: '# 标题\n\n内容', mapping: [] }),
+    };
+    const pluginManager = {
+      getSupportedExtensions: () => ['md'],
+      getPlugin: () => plugin,
+    };
+
+    const summaryService = {
+      generateChunkSummariesBatch: vi.fn(),
+      generateChunkSummary: vi.fn(),
+      generateDocumentSummary: vi.fn(),
+      generateDirectorySummary: vi.fn(),
+    };
+
+    const embeddingService = {
+      embed: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('The operation was aborted due to timeout')),
+    };
+
+    const vectorStore = {
+      addDocuments: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const afdStorage = {
+      write: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const invertedIndex = {
+      addFile: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const pipeline = new IndexPipeline({
+      dirPath,
+      pluginManager: pluginManager as any,
+      embeddingService: embeddingService as any,
+      summaryService: summaryService as any,
+      vectorStore: vectorStore as any,
+      afdStorage: afdStorage as any,
+      invertedIndex: invertedIndex as any,
+      chunkOptions: { minTokens: 1, maxTokens: 200 },
+      summaryOptions: {
+        mode: 'skip',
+        tokenBudget: 10000,
+      },
+    });
+
+    let thrownMessage = '';
+    try {
+      await pipeline.run();
+    } catch (error) {
+      thrownMessage = (error as Error).message;
+    }
+
+    expect(thrownMessage).toMatch(/timeout\.md/u);
+    expect(thrownMessage).toMatch(/\[阶段: embed\]/u);
+    expect(thrownMessage).toMatch(/aborted due to timeout/u);
+
+    const logPath = join(dirPath, '.fs_index', 'logs', 'indexing.latest.jsonl');
+    expect(existsSync(logPath)).toBe(true);
+    const logLines = readFileSync(logPath, 'utf-8');
+    expect(logLines).toMatch(/"stage":"embed"/u);
+    expect(logLines).toMatch(/"event":"stage_error"/u);
+
+    rmSync(dirPath, { recursive: true, force: true });
+  });
+
   it('应支持文件级并发处理', async () => {
     const dirPath = mkdtempSync(join(tmpdir(), 'agent-fs-file-parallelism-'));
     writeFileSync(join(dirPath, 'a.md'), '# A\n\ncontent');

@@ -106,7 +106,17 @@ export class Indexer {
       onProgress: this.options.onProgress,
     });
 
-    const metadata = await pipeline.run();
+    let metadata: IndexMetadata;
+    try {
+      metadata = await pipeline.run();
+    } catch (error) {
+      const detail = (error as Error).message;
+      const logPath = pipeline.getLogFilePath();
+      if (logPath) {
+        throw new Error(`${detail}\n日志: ${logPath}`);
+      }
+      throw error;
+    }
 
     // 索引完成后初始化项目 memory（首次）
     this.initMemoryIfNeeded(dirPath, metadata);

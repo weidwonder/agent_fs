@@ -62,6 +62,8 @@ export class EmbeddingService {
         base_url: config.api.base_url,
         api_key: config.api.api_key,
         model: config.api.model,
+        timeout: config.api.timeout_ms,
+        maxRetries: config.api.max_retries,
       });
     } else {
       throw new Error('No valid embedding configuration provided');

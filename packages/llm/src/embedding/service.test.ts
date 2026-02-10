@@ -2,8 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { EmbeddingConfig } from '@agent-fs/core';
 import type { EmbeddingService as EmbeddingServiceType } from './service';
 
+const apiProviderConstructorSpy = vi.hoisted(() => vi.fn());
+
 vi.mock('./api-provider', () => {
   class APIEmbeddingProvider {
+    constructor(options: unknown) {
+      apiProviderConstructorSpy(options);
+    }
+
     init = vi.fn().mockResolvedValue(undefined);
     embed = vi.fn().mockImplementation((text: string) =>
       Promise.resolve(new Array(512).fill(0).map((_, i) => i + text.length))
@@ -38,6 +44,8 @@ describe('EmbeddingService', () => {
       base_url: 'https://api.test.com/v1',
       api_key: 'test-key',
       model: 'text-embedding-3-small',
+      timeout_ms: 45000,
+      max_retries: 4,
     },
   };
 
@@ -45,6 +53,7 @@ describe('EmbeddingService', () => {
 
   beforeEach(async () => {
     vi.resetModules();
+    apiProviderConstructorSpy.mockClear();
     const module = await import('./service');
     service = new module.EmbeddingService(apiConfig);
     await service.init();
@@ -92,5 +101,14 @@ describe('EmbeddingService', () => {
     service.clearCache();
 
     expect(service.getCacheStats().size).toBe(0);
+  });
+
+  it('should pass timeout and retries to API provider', () => {
+    expect(apiProviderConstructorSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timeout: 45000,
+        maxRetries: 4,
+      })
+    );
   });
 });
