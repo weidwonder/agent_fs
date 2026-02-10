@@ -112,13 +112,37 @@ Agent FS 让 AI Agent 在本地完成“索引 → 检索 → 定位原文”的
 1. 解析 `scope`（Project / 子目录 / 多目录）
 2. 解析检索范围：
    - 优先读取各目录 `.fs_index/index.json`，递归收集真实 `dirId`
-   - 同时构建 `fileId -> {dirPath, filePath}` 映射，用于结果回填
+   - 同时构建 `fileId -> {dirPath, filePath, afdName}` 映射，用于结果回填
    - 若目录缺少索引元数据，回退使用 registry 的 `projectId/subdirectories[].dirId`
 3. 执行多路召回：
    - 向量召回（VectorStore，使用 `hybrid_vector = 0.5*content + 0.5*summary`）
+   - 当 scope 展开为多个 `dirId` 时，向量召回使用一次查询并通过 `dirIds` 过滤，避免按目录循环导致 CPU 飙高
+   - Electron 与 MCP 均使用单路 `hybrid_vector` 召回，不再重复查询 `content_vector/summary_vector` 两路
+   - 向量检索优先使用 `postfilter`；仅当结果低于阈值（默认 `topK`，可配置）时回退 `prefilter`
+   - VectorStore 初始化时会确保 `dir_id`、`chunk_id` 标量索引，用于加速 scope 过滤与按 `chunk_id` 回填
    - 倒排召回（InvertedIndex）
 4. 用 RRF 融合排序
 5. 从 AFD 按需读取 chunk 文本并返回
+   - 优先用 chunk 行号范围回填正文；缺失时回退解析 `line/lines` locator
+   - 行号补全通过 `chunk_id` 标量查询路径回填，避免走高开销向量回查
+   - AFD 归档名优先使用 `index.json.files[].afdName`，不存在时回退 `name/fileId`
+   - Excel 结果展示优先使用 `sheet:<sheet>/range:<A1:B2>` 定位符；仅在无法映射时回退 `line/lines`
+
+## 5.1.1 Electron `remove-project` 体验
+
+- 先从 registry 移除项目入口并立即返回，避免前端长时间无反馈
+- `.fs_index`、向量库、倒排索引删除在后台异步执行
+- 后台清理状态通过 IPC 事件推送到前端（开始/完成/失败）
+
+## 5.1.2 `prefilter` / `postfilter` 策略与召回影响
+
+- `prefilter`：先按 `dir_id/file_path` 等条件过滤，再做向量检索；召回更稳，但在多目录与复杂过滤下延迟更高
+- `postfilter`：先做向量检索再过滤范围；延迟更低，但在极窄范围场景可能损失部分长尾候选
+- 当前实现采用“`postfilter` 优先 + `prefilter` 回退”：
+  - 若 `postfilter` 结果数 >= `minResultsBeforeFallback`，直接使用
+  - 若不足，则自动回退 `prefilter` 兜底
+- Electron 与 MCP 当前都将 `minResultsBeforeFallback` 设为 `topK`，优先保障最终返回条数并控制延迟
+- 如后续业务需要更保守的召回，可提高该阈值（如 `topK*2` / `topK*3`），代价是更高查询耗时
 
 ## 5.2 `get_chunk`
 

@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Settings } from 'lucide-react';
 import { TooltipProvider } from './components/ui/tooltip';
 import { Button } from './components/ui/button';
@@ -18,20 +18,72 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<{ projectId: string; alias: string; path: string } | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
+  const [removePending, setRemovePending] = useState(false);
+  const [removeStatusMessage, setRemoveStatusMessage] = useState<{
+    type: 'info' | 'error';
+    text: string;
+  } | null>(null);
   const [searchMeta, setSearchMeta] = useState<SearchMeta | null>(null);
 
   // 移除项目
-  const handleRemoveConfirm = useCallback(async () => {
-    if (!removeTarget) return;
+  const handleRemoveConfirm = useCallback(async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    if (!removeTarget || removePending) return;
     setRemoveError(null);
-    const result = await window.electronAPI.removeProject(removeTarget.projectId);
-    if (result.success) {
-      setRemoveTarget(null);
-      refresh();
-    } else {
-      setRemoveError(result.error || '移除失败');
+    setRemovePending(true);
+    try {
+      const result = await window.electronAPI.removeProject(removeTarget.projectId);
+      if (result.success) {
+        setRemoveTarget(null);
+        await refresh();
+        if (result.cleanup_started) {
+          setRemoveStatusMessage({
+            type: 'info',
+            text: '项目入口已移除，正在后台清理索引数据…',
+          });
+        }
+      } else {
+        setRemoveError(result.error || '移除失败');
+      }
+    } finally {
+      setRemovePending(false);
     }
-  }, [removeTarget, refresh]);
+  }, [removeTarget, removePending, refresh]);
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.onProjectRemovalStatus((status) => {
+      if (status.phase === 'completed') {
+        setRemoveStatusMessage({
+          type: 'info',
+          text: '项目索引数据清理完成。',
+        });
+        return;
+      }
+
+      if (status.phase === 'failed') {
+        setRemoveStatusMessage({
+          type: 'error',
+          text: `后台清理失败：${status.error || '未知错误'}`,
+        });
+      }
+    });
+
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    if (!removeStatusMessage) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      setRemoveStatusMessage(null);
+    }, 5000);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [removeStatusMessage]);
 
   // 更新项目描述
   const handleSummaryChange = useCallback(async (projectId: string, summary: string) => {
@@ -98,7 +150,13 @@ export default function App() {
         <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
 
         {/* Remove Confirmation Dialog */}
-        <AlertDialog open={removeTarget !== null} onOpenChange={(open) => !open && setRemoveTarget(null)}>
+        <AlertDialog
+          open={removeTarget !== null}
+          onOpenChange={(open) => {
+            if (removePending) return;
+            if (!open) setRemoveTarget(null);
+          }}
+        >
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>确定移除项目？</AlertDialogTitle>
@@ -110,12 +168,15 @@ export default function App() {
               <p className="text-sm text-destructive">{removeError}</p>
             )}
             <AlertDialogFooter>
-              <AlertDialogCancel className="cursor-pointer">取消</AlertDialogCancel>
+              <AlertDialogCancel className="cursor-pointer" disabled={removePending}>
+                取消
+              </AlertDialogCancel>
               <AlertDialogAction
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90 cursor-pointer"
+                disabled={removePending}
                 onClick={handleRemoveConfirm}
               >
-                确定移除
+                {removePending ? '正在移除...' : '确定移除'}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
@@ -125,6 +186,16 @@ export default function App() {
         {indexError && (
           <div className="fixed bottom-12 right-4 max-w-sm p-3 rounded-lg bg-destructive text-destructive-foreground text-sm shadow-lg animate-in slide-in-from-bottom-2">
             索引失败：{indexError}
+          </div>
+        )}
+
+        {removeStatusMessage && (
+          <div className={`fixed bottom-12 left-4 max-w-sm p-3 rounded-lg text-sm shadow-lg animate-in slide-in-from-bottom-2 ${
+            removeStatusMessage.type === 'error'
+              ? 'bg-destructive text-destructive-foreground'
+              : 'bg-primary text-primary-foreground'
+          }`}>
+            {removeStatusMessage.text}
           </div>
         )}
       </div>

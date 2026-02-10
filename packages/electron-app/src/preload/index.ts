@@ -13,6 +13,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Registry
   getRegistry: () => ipcRenderer.invoke('get-registry'),
   removeProject: (projectId: string) => ipcRenderer.invoke('remove-project', projectId),
+  onProjectRemovalStatus: (callback: (status: any) => void) => {
+    const listener = (_event: unknown, status: any) => callback(status);
+    ipcRenderer.on('project-removal-status', listener);
+    return () => {
+      ipcRenderer.off('project-removal-status', listener);
+    };
+  },
   updateProjectSummary: (projectId: string, summary: string) =>
     ipcRenderer.invoke('update-project-summary', projectId, summary),
   getProjectMemory: (projectId: string) => ipcRenderer.invoke('get-project-memory', projectId),

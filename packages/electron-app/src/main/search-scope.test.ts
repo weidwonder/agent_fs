@@ -82,12 +82,14 @@ describe('collectScopeContext', () => {
     expect(rootFile).toEqual({
       dirPath: projectPath,
       filePath: join(projectPath, 'root.md'),
+      afdName: 'root.md',
     });
 
     const childFile = context.fileLookup.get('f2');
     expect(childFile).toEqual({
       dirPath: projectPath,
       filePath: join(subPath, 'child.md'),
+      afdName: 'child.md',
     });
   });
 
@@ -119,7 +121,7 @@ describe('collectScopeContext', () => {
 
     const workspacePkgDir = join(root, 'packages', 'electron-app');
     mkdirSync(workspacePkgDir, { recursive: true });
-    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\\n  - \"packages/*\"\\n');
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\\n  - "packages/*"\\n');
 
     const projectPath = join(root, 'test-data');
     mkdirSync(projectPath, { recursive: true });
@@ -163,7 +165,7 @@ describe('collectScopeContext', () => {
     mkdirSync(workspacePkgDir, { recursive: true });
     mkdirSync(cwdShadowPath, { recursive: true });
     mkdirSync(workspacePath, { recursive: true });
-    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\\n  - \"packages/*\"\\n');
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\\n  - "packages/*"\\n');
 
     writeIndexMetadata(cwdShadowPath, {
       version: '2.0',
@@ -202,5 +204,42 @@ describe('collectScopeContext', () => {
     } finally {
       process.chdir(originalCwd);
     }
+  });
+
+  it('应优先使用 index 元数据里的 afdName', () => {
+    const root = createTmpDir();
+    tempDirs.push(root);
+
+    const projectPath = join(root, 'project-d');
+    mkdirSync(projectPath, { recursive: true });
+
+    writeIndexMetadata(projectPath, {
+      version: '2.0',
+      projectId: 'meta-project-d',
+      dirId: 'dir-root-d',
+      directoryPath: projectPath,
+      files: [
+        { fileId: 'f-report', name: 'report.xlsx', afdName: 'afd-report-2026' },
+      ],
+      subdirectories: [],
+    });
+
+    const context = collectScopeContext(
+      [
+        {
+          path: projectPath,
+          projectId: 'registry-project-d',
+          valid: true,
+          subdirectories: [],
+        },
+      ],
+      ['registry-project-d'],
+    );
+
+    expect(context.fileLookup.get('f-report')).toEqual({
+      dirPath: projectPath,
+      filePath: join(projectPath, 'report.xlsx'),
+      afdName: 'afd-report-2026',
+    });
   });
 });

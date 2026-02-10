@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -146,6 +146,24 @@ describe('VectorStore', () => {
     expect(results[0].document.dir_id).toBe('dir1');
   });
 
+  it('should filter by multiple dirIds', async () => {
+    const docs = [
+      createDoc('m1', 'dir1', '/project/docs/m1.md', [1, 0, 0], [0, 1, 0]),
+      createDoc('m2', 'dir2', '/project/docs/m2.md', [1, 0, 0], [0, 1, 0]),
+      createDoc('m3', 'dir3', '/project/docs/m3.md', [1, 0, 0], [0, 1, 0]),
+    ];
+
+    await store.addDocuments(docs);
+
+    const results = await store.searchByContent([1, 0, 0], {
+      topK: 10,
+      dirIds: ['dir1', 'dir2'],
+    });
+
+    expect(results).toHaveLength(2);
+    expect(new Set(results.map((item) => item.document.dir_id))).toEqual(new Set(['dir1', 'dir2']));
+  });
+
   it('should filter by filePathPrefix', async () => {
     const docs = [
       createDoc('p1', 'dir1', '/project/docs/p1.md', [1, 0, 0], [0, 1, 0]),
@@ -214,6 +232,25 @@ describe('VectorStore', () => {
     expect(results.some((item) => item.document.dir_id === 'dir1')).toBe(false);
   });
 
+  it('should delete by multiple dirIds', async () => {
+    const docs = [
+      createDoc('m1', 'dir1', '/project/docs/m1.md', [1, 0, 0], [0, 1, 0]),
+      createDoc('m2', 'dir2', '/project/docs/m2.md', [0, 1, 0], [1, 0, 0]),
+      createDoc('m3', 'dir3', '/project/docs/m3.md', [0, 0, 1], [1, 0, 0]),
+    ];
+
+    await store.addDocuments(docs);
+    await store.deleteByDirIds(['dir1', 'dir3']);
+
+    const results = await store.searchByContent([1, 0, 0], {
+      topK: 10,
+      includeDeleted: true,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].document.dir_id).toBe('dir2');
+  });
+
   it('should compact deleted documents', async () => {
     const docs = [
       createDoc('cpt1', 'dir1', '/project/docs/cpt1.md', [1, 0, 0], [0, 1, 0]),
@@ -258,5 +295,137 @@ describe('VectorStore', () => {
     const ids = results.map((doc) => doc.chunk_id).sort();
 
     expect(ids).toEqual(['d1']);
+  });
+
+  it('应优先走 postfilter，不足时回退 prefilter', async () => {
+    const fakeRow = {
+      chunk_id: 'pf-1',
+      _distance: 0.1,
+      file_id: 'file_pf-1',
+      dir_id: 'dir1',
+      rel_path: 'pf.md',
+      file_path: '/project/docs/pf.md',
+      chunk_line_start: 2,
+      chunk_line_end: 4,
+      locator: 'line:2-4',
+      indexed_at: new Date().toISOString(),
+      deleted_at: '',
+    };
+
+    const postfilterToArray = vi.fn().mockResolvedValue([]);
+    const prefilterToArray = vi.fn().mockResolvedValue([fakeRow]);
+    const postfilter = vi.fn(() => ({ toArray: postfilterToArray }));
+    const where = vi.fn(() => ({
+      postfilter,
+      toArray: prefilterToArray,
+    }));
+    const limit = vi.fn(() => ({ where }));
+    const vectorSearch = vi.fn(() => ({
+      column: vi.fn().mockReturnThis(),
+      distanceType: vi.fn().mockReturnThis(),
+      limit,
+    }));
+
+    const testStore = new VectorStore({ storagePath: testDir, dimension });
+    (testStore as any).db = {};
+    (testStore as any).table = { vectorSearch };
+
+    const results = await testStore.searchByHybrid([1, 0, 0], {
+      topK: 1,
+      dirIds: ['dir1'],
+    });
+
+    expect(postfilter).toHaveBeenCalledTimes(1);
+    expect(postfilterToArray).toHaveBeenCalledTimes(1);
+    expect(prefilterToArray).toHaveBeenCalledTimes(1);
+    expect(results).toHaveLength(1);
+    expect(results[0].chunk_id).toBe('pf-1');
+    await testStore.close();
+  });
+
+  it('postfilter 达到最小阈值时不应回退 prefilter', async () => {
+    const postfilterRows = Array.from({ length: 18 }, (_, index) => ({
+      chunk_id: `pf-threshold-${index}`,
+      _distance: 0.1,
+      file_id: `file_pf-threshold-${index}`,
+      dir_id: 'dir1',
+      rel_path: `pf-${index}.md`,
+      file_path: `/project/docs/pf-${index}.md`,
+      chunk_line_start: 2,
+      chunk_line_end: 4,
+      locator: 'line:2-4',
+      indexed_at: new Date().toISOString(),
+      deleted_at: '',
+    }));
+
+    const postfilterToArray = vi.fn().mockResolvedValue(postfilterRows);
+    const prefilterToArray = vi.fn().mockResolvedValue([]);
+    const postfilter = vi.fn(() => ({ toArray: postfilterToArray }));
+    const where = vi.fn(() => ({
+      postfilter,
+      toArray: prefilterToArray,
+    }));
+    const limit = vi.fn(() => ({ where }));
+    const vectorSearch = vi.fn(() => ({
+      column: vi.fn().mockReturnThis(),
+      distanceType: vi.fn().mockReturnThis(),
+      limit,
+    }));
+
+    const testStore = new VectorStore({ storagePath: testDir, dimension });
+    (testStore as any).db = {};
+    (testStore as any).table = { vectorSearch };
+
+    const results = await testStore.searchByHybrid([1, 0, 0], {
+      topK: 30,
+      dirIds: ['dir1'],
+      minResultsBeforeFallback: 10,
+    });
+
+    expect(postfilter).toHaveBeenCalledTimes(1);
+    expect(postfilterToArray).toHaveBeenCalledTimes(1);
+    expect(prefilterToArray).not.toHaveBeenCalled();
+    expect(results).toHaveLength(18);
+    await testStore.close();
+  });
+
+  it('getByChunkIds 应使用标量查询路径而非向量检索', async () => {
+    const queryToArray = vi.fn().mockResolvedValue([
+      {
+        chunk_id: 'q1',
+        file_id: 'file_q1',
+        dir_id: 'dir1',
+        rel_path: 'q1.md',
+        file_path: '/project/docs/q1.md',
+        chunk_line_start: 1,
+        chunk_line_end: 2,
+        locator: 'line:1-2',
+        indexed_at: new Date().toISOString(),
+        deleted_at: '',
+      },
+    ]);
+    const queryBuilder = {
+      where: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      toArray: queryToArray,
+    };
+    const vectorSearch = vi.fn(() => {
+      throw new Error('不应调用向量检索');
+    });
+
+    const testStore = new VectorStore({ storagePath: testDir, dimension });
+    (testStore as any).db = {};
+    (testStore as any).table = {
+      query: vi.fn(() => queryBuilder),
+      vectorSearch,
+    };
+
+    const results = await testStore.getByChunkIds(['q1']);
+
+    expect(queryBuilder.where).toHaveBeenCalledTimes(1);
+    expect(vectorSearch).not.toHaveBeenCalled();
+    expect(results).toHaveLength(1);
+    expect(results[0].chunk_id).toBe('q1');
+    await testStore.close();
   });
 });

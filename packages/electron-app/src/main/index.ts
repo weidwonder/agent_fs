@@ -1,11 +1,14 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
 import type { IndexProgress, Indexer } from '@agent-fs/indexer';
 import { collectScopeContext, resolveProjectPath } from './search-scope';
 import { getProjectMemoryFromRegistry, saveProjectMemoryFile } from './project-memory';
+import { removeProjectWithBackgroundCleanup } from './project-removal';
 import { resolveRendererDevUrl } from './renderer-url';
+import { sanitizeForLog } from './log-sanitizer';
+import { resolveDisplayLocator } from './locator-display';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -75,6 +78,75 @@ function writeRegistry(registry: { version: string; projects: any[] }): void {
   const dir = join(homedir(), '.agent_fs');
   mkdirSync(dir, { recursive: true });
   writeFileSync(getRegistryPath(), JSON.stringify(registry, null, 2));
+}
+
+async function cleanupRemovedProjectData(input: {
+  projectPath: string;
+  dirIds: string[];
+}): Promise<void> {
+  const fsIndexPath = join(input.projectPath, '.fs_index');
+  if (existsSync(fsIndexPath)) {
+    rmSync(fsIndexPath, { recursive: true, force: true });
+  }
+
+  const storagePath = join(homedir(), '.agent_fs', 'storage');
+  const vectorsPath = join(storagePath, 'vectors');
+  const invertedDbPath = join(storagePath, 'inverted-index', 'inverted-index.db');
+
+  if (searchServices) {
+    await deleteDirIdsFromVectorStore(searchServices.vectorStore, input.dirIds);
+    await deleteDirIdsFromInvertedIndex(searchServices.invertedIndex, input.dirIds);
+    return;
+  }
+
+  const { createVectorStore, InvertedIndex } = await import('@agent-fs/search');
+
+  if (existsSync(vectorsPath)) {
+    const vectorStore = createVectorStore({
+      storagePath: vectorsPath,
+      dimension: 1,
+    });
+    await vectorStore.init();
+    await deleteDirIdsFromVectorStore(vectorStore as any, input.dirIds);
+    await vectorStore.close();
+  }
+
+  if (existsSync(invertedDbPath)) {
+    const invertedIndex = new InvertedIndex({
+      dbPath: invertedDbPath,
+    });
+    await invertedIndex.init();
+    await deleteDirIdsFromInvertedIndex(invertedIndex as any, input.dirIds);
+    await invertedIndex.close();
+  }
+}
+
+async function deleteDirIdsFromVectorStore(
+  vectorStore: any,
+  dirIds: string[]
+): Promise<void> {
+  if (typeof vectorStore?.deleteByDirIds === 'function') {
+    await vectorStore.deleteByDirIds(dirIds);
+    return;
+  }
+
+  for (const dirId of dirIds) {
+    await vectorStore.deleteByDirId(dirId);
+  }
+}
+
+async function deleteDirIdsFromInvertedIndex(
+  invertedIndex: any,
+  dirIds: string[]
+): Promise<void> {
+  if (typeof invertedIndex?.removeDirectories === 'function') {
+    await invertedIndex.removeDirectories(dirIds);
+    return;
+  }
+
+  for (const dirId of dirIds) {
+    await invertedIndex.removeDirectory(dirId);
+  }
 }
 
 // --- IPC: Directory Selection ---
@@ -149,62 +221,22 @@ ipcMain.handle('update-project-summary', async (_event, projectId: string, newSu
 });
 
 ipcMain.handle('remove-project', async (_event, projectId: string) => {
-  try {
-    const registry = readRegistry();
-    const project = registry.projects.find((p: any) => p.projectId === projectId);
-    if (!project) {
-      return { success: false, error: '项目不存在' };
-    }
-
-    // 1. 收集所有 dirId
-    const dirIds = [project.projectId];
-    for (const sub of project.subdirectories || []) {
-      dirIds.push(sub.dirId);
-    }
-
-    // 2. 删除 .fs_index 目录
-    const fsIndexPath = join(project.path, '.fs_index');
-    if (existsSync(fsIndexPath)) {
-      rmSync(fsIndexPath, { recursive: true, force: true });
-    }
-
-    // 3. 删除全局存储中的向量和倒排索引数据
-    const storagePath = join(homedir(), '.agent_fs', 'storage');
-    try {
-      const { createVectorStore, InvertedIndex } = await import('@agent-fs/search');
-
-      const vectorsPath = join(storagePath, 'vectors');
-      if (existsSync(vectorsPath)) {
-        const vectorStore = createVectorStore({ storagePath: vectorsPath, dimension: 512 });
-        await vectorStore.init();
-        for (const dirId of dirIds) {
-          await vectorStore.deleteByDirId(dirId);
-        }
-        await vectorStore.close();
+  return removeProjectWithBackgroundCleanup(projectId, {
+    readRegistry,
+    writeRegistry,
+    runCleanup: async (input) => {
+      await cleanupRemovedProjectData({
+        projectPath: input.projectPath,
+        dirIds: input.dirIds,
+      });
+    },
+    onStatus: (status) => {
+      if (status.phase === 'failed') {
+        console.error('Failed to clean project indexes:', status.projectId, status.error);
       }
-
-      const invertedDbPath = join(storagePath, 'inverted-index', 'inverted-index.db');
-      if (existsSync(invertedDbPath)) {
-        const invertedIndex = new InvertedIndex({ dbPath: invertedDbPath });
-        await invertedIndex.init();
-        for (const dirId of dirIds) {
-          await invertedIndex.removeDirectory(dirId);
-        }
-        await invertedIndex.close();
-      }
-    } catch (storageError) {
-      console.error('Failed to clean storage:', storageError);
-      // 继续执行，至少从 registry 中移除
-    }
-
-    // 4. 从 registry 移除
-    registry.projects = registry.projects.filter((p: any) => p.projectId !== projectId);
-    writeRegistry(registry);
-
-    return { success: true };
-  } catch (error) {
-    return { success: false, error: (error as Error).message };
-  }
+      mainWindow?.webContents.send('project-removal-status', status);
+    },
+  });
 });
 
 // --- IPC: Memory ---
@@ -276,7 +308,7 @@ async function initSearchServices() {
   const { createVectorStore, InvertedIndex } = await import('@agent-fs/search');
 
   const config = loadConfig();
-  console.log('[search-init] embedding config:', JSON.stringify(config.embedding));
+  console.log('[search-init] embedding config:', JSON.stringify(sanitizeForLog(config.embedding)));
   const storagePath = join(homedir(), '.agent_fs', 'storage');
 
   const vectorsPath = join(storagePath, 'vectors');
@@ -304,6 +336,96 @@ async function initSearchServices() {
   return searchServices;
 }
 
+function toPositiveInt(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
+    return value;
+  }
+
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isInteger(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  return undefined;
+}
+
+function hasLineRange(item: { chunkLineStart?: number; chunkLineEnd?: number }): boolean {
+  return (
+    typeof item.chunkLineStart === 'number' &&
+    typeof item.chunkLineEnd === 'number' &&
+    item.chunkLineStart > 0 &&
+    item.chunkLineEnd >= item.chunkLineStart
+  );
+}
+
+function extractByLineRange(markdown: string, lineStart?: number, lineEnd?: number): string {
+  if (!markdown || !lineStart || !lineEnd || lineStart <= 0 || lineEnd < lineStart) {
+    return '';
+  }
+
+  const lines = markdown.split('\n');
+  return lines
+    .slice(Math.max(0, lineStart - 1), Math.min(lines.length, lineEnd))
+    .join('\n');
+}
+
+function extractByLocator(markdown: string, locator: string): string {
+  if (!markdown || !locator) {
+    return '';
+  }
+
+  const rangeMatch = /^(?:line|lines):(\d+)-(\d+)$/u.exec(locator.trim());
+  if (rangeMatch) {
+    const start = Number(rangeMatch[1]);
+    const end = Number(rangeMatch[2]);
+    const lines = markdown.split('\n');
+    return lines.slice(Math.max(0, start - 1), Math.min(lines.length, end)).join('\n');
+  }
+
+  const singleLineMatch = /^(?:line|lines):(\d+)$/u.exec(locator.trim());
+  if (singleLineMatch) {
+    const line = Number(singleLineMatch[1]);
+    const lines = markdown.split('\n');
+    return lines[line - 1] ?? '';
+  }
+
+  return '';
+}
+
+interface LocatorMappingItem {
+  markdownRange: {
+    startLine: number;
+    endLine: number;
+  };
+  originalLocator: string;
+}
+
+async function readLocatorMappings(
+  storage: any,
+  archiveName: string,
+  cacheKey: string,
+  cache: Map<string, LocatorMappingItem[]>
+): Promise<LocatorMappingItem[]> {
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  try {
+    const buffer = await storage.read(archiveName, 'metadata.json');
+    const parsed = JSON.parse(buffer.toString('utf-8')) as { mapping?: LocatorMappingItem[] };
+    const mapping = Array.isArray(parsed.mapping) ? parsed.mapping : [];
+    cache.set(cacheKey, mapping);
+    return mapping;
+  } catch {
+    const empty: LocatorMappingItem[] = [];
+    cache.set(cacheKey, empty);
+    return empty;
+  }
+}
+
 ipcMain.handle('search', async (_event, input: {
   query: string;
   keyword?: string;
@@ -328,32 +450,21 @@ ipcMain.handle('search', async (_event, input: {
     console.log('[search] dirIds:', dirIds);
     console.log('[search] fileLookup size:', fileLookup.size);
 
-    const searchRequests = dirIds.length > 0
-      ? dirIds.map((dirId: string) => ({ dirId }))
-      : [{}];
-
-    const contentResults: any[] = [];
-    const summaryResults: any[] = [];
+    const hybridResults: any[] = [];
 
     // 语义搜索（需要 query）
     if (input.query.trim()) {
       const queryVector = await services.embeddingService.embed(input.query);
       console.log('[search] queryVector length:', queryVector.length);
 
-      for (const req of searchRequests) {
-        const cResults = await services.vectorStore.searchByContent(queryVector, {
-          ...req, topK: topK * 3,
-        });
-        contentResults.push(...cResults);
-
-        const sResults = await services.vectorStore.searchBySummary(queryVector, {
-          ...req, topK: topK * 3,
-        });
-        summaryResults.push(...sResults);
-      }
+      const searchOptions = dirIds.length > 0
+        ? { dirIds, topK: topK * 3, minResultsBeforeFallback: topK }
+        : { topK: topK * 3, minResultsBeforeFallback: topK };
+      const results = await services.vectorStore.searchByHybrid(queryVector, searchOptions);
+      hybridResults.push(...results);
     }
 
-    console.log('[search] contentResults:', contentResults.length, 'summaryResults:', summaryResults.length);
+    console.log('[search] hybridResults:', hybridResults.length);
 
     // 关键词搜索（query 或 keyword 任一存在即可）
     const keywordText = input.keyword?.trim() || input.query?.trim() || '';
@@ -380,8 +491,8 @@ ipcMain.handle('search', async (_event, input: {
       return {
         chunkId: item.chunk_id,
         fileId,
-        chunkLineStart: item.document?.chunk_line_start,
-        chunkLineEnd: item.document?.chunk_line_end,
+        chunkLineStart: toPositiveInt(item.document?.chunk_line_start),
+        chunkLineEnd: toPositiveInt(item.document?.chunk_line_end),
         source: {
           filePath: String(item.document?.file_path ?? '') || fileLookup.get(fileId)?.filePath || '',
           locator: String(item.document?.locator ?? ''),
@@ -399,8 +510,7 @@ ipcMain.handle('search', async (_event, input: {
     });
 
     const lists = [
-      { name: 'content_vector', items: contentResults.map(mapVectorItem) },
-      { name: 'summary_vector', items: summaryResults.map(mapVectorItem) },
+      { name: 'hybrid_vector', items: hybridResults.map(mapVectorItem) },
       { name: 'inverted_index', items: keywordResults.map(mapKeywordItem) },
     ].filter((list: any) => list.items.length > 0);
 
@@ -421,10 +531,49 @@ ipcMain.handle('search', async (_event, input: {
         )
       : [];
 
+    const topItems = fused.slice(0, topK).map((item: any) => item.item as FusionItem);
+    const getByChunkIds = (services.vectorStore as any).getByChunkIds;
+    if (typeof getByChunkIds === 'function') {
+      const missingChunkIds = Array.from(
+        new Set(
+          topItems
+            .filter((item) => !hasLineRange(item))
+            .map((item) => item.chunkId)
+            .filter((chunkId) => chunkId.length > 0)
+        )
+      );
+
+      if (missingChunkIds.length > 0) {
+        try {
+          const docs = await getByChunkIds.call(services.vectorStore, missingChunkIds);
+          const lineRangeByChunkId = new Map<string, { start: number; end: number }>();
+          for (const doc of docs || []) {
+            const chunkId = String(doc.chunk_id ?? '');
+            if (!chunkId) continue;
+            const start = toPositiveInt(doc.chunk_line_start);
+            const end = toPositiveInt(doc.chunk_line_end);
+            if (start === undefined || end === undefined) continue;
+            lineRangeByChunkId.set(chunkId, { start, end });
+          }
+
+          for (const item of topItems) {
+            if (hasLineRange(item)) continue;
+            const lineRange = lineRangeByChunkId.get(item.chunkId);
+            if (!lineRange) continue;
+            item.chunkLineStart = lineRange.start;
+            item.chunkLineEnd = lineRange.end;
+          }
+        } catch {
+          // 忽略行号补全失败，后续仍可返回路径与定位符
+        }
+      }
+    }
+
     // 内容回填
     const afdCache = new Map<string, any>();
     const markdownCache = new Map<string, string>();
     const summariesCache = new Map<string, Record<string, string>>();
+    const locatorMappingCache = new Map<string, LocatorMappingItem[]>();
 
     const getStorage = (dirPath: string) => {
       if (!afdCache.has(dirPath)) {
@@ -445,37 +594,48 @@ ipcMain.handle('search', async (_event, input: {
 
         if (fileInfo) {
           const storage = getStorage(fileInfo.dirPath);
+          const archiveName = fileInfo.afdName || item.fileId;
+          const archiveCacheKey = `${fileInfo.dirPath}/${archiveName}`;
 
           // 读取 markdown
-          if (!markdownCache.has(item.fileId)) {
+          if (!markdownCache.has(archiveCacheKey)) {
             try {
-              const md = await storage.readText(item.fileId, 'content.md');
-              markdownCache.set(item.fileId, md);
+              const md = await storage.readText(archiveName, 'content.md');
+              markdownCache.set(archiveCacheKey, md);
             } catch {
-              markdownCache.set(item.fileId, '');
+              markdownCache.set(archiveCacheKey, '');
             }
           }
-          const markdown = markdownCache.get(item.fileId) || '';
+          const markdown = markdownCache.get(archiveCacheKey) || '';
 
-          // 按行范围提取内容
-          if (markdown && item.chunkLineStart && item.chunkLineEnd) {
-            const lines = markdown.split('\n');
-            content = lines.slice(
-              Math.max(0, item.chunkLineStart - 1),
-              Math.min(lines.length, item.chunkLineEnd),
-            ).join('\n');
-          }
+          const parsedByLineRange = extractByLineRange(markdown, item.chunkLineStart, item.chunkLineEnd);
+          const parsedByLocator = parsedByLineRange ? '' : extractByLocator(markdown, item.source.locator);
+          content = parsedByLineRange || parsedByLocator;
 
           // 读取摘要
-          if (!summariesCache.has(item.fileId)) {
+          if (!summariesCache.has(archiveCacheKey)) {
             try {
-              const buf = await storage.read(item.fileId, 'summaries.json');
-              summariesCache.set(item.fileId, JSON.parse(buf.toString('utf-8')));
+              const buf = await storage.read(archiveName, 'summaries.json');
+              summariesCache.set(archiveCacheKey, JSON.parse(buf.toString('utf-8')));
             } catch {
-              summariesCache.set(item.fileId, {});
+              summariesCache.set(archiveCacheKey, {});
             }
           }
-          summary = (summariesCache.get(item.fileId) || {})[item.chunkId] || '';
+          summary = (summariesCache.get(archiveCacheKey) || {})[item.chunkId] || '';
+
+          const locatorMappings = await readLocatorMappings(
+            storage,
+            archiveName,
+            archiveCacheKey,
+            locatorMappingCache,
+          );
+          item.source.locator = resolveDisplayLocator({
+            filePath: fileInfo.filePath || item.source.filePath,
+            locator: item.source.locator,
+            chunkLineStart: item.chunkLineStart,
+            chunkLineEnd: item.chunkLineEnd,
+            mappings: locatorMappings,
+          });
         }
 
         return {

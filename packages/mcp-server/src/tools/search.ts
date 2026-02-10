@@ -14,6 +14,7 @@ import {
   type RegistryProject as ResolverProject,
 } from '@agent-fs/search';
 import { createAFDStorage, type AFDStorage } from '@agent-fs/storage';
+import { resolveDisplayLocator } from './locator-display';
 
 interface SearchInput {
   query: string;
@@ -199,6 +200,7 @@ export async function search(input: SearchInput) {
 
   const markdownCache = new Map<string, string>();
   const summariesCache = new Map<string, Record<string, string>>();
+  const locatorMappingCache = new Map<string, LocatorMappingItem[]>();
 
   const hydratedResults = await Promise.all(
     fused.slice(0, topK).map(async (fusedItem) => {
@@ -206,7 +208,8 @@ export async function search(input: SearchInput) {
         fusedItem.item,
         scopedContext.fileLookup,
         markdownCache,
-        summariesCache
+        summariesCache,
+        locatorMappingCache
       );
       return {
         chunk_id: hydrated.chunkId,
@@ -404,13 +407,17 @@ async function searchVector(
 
   const requests =
     dirIds.length > 0
-      ? dirIds.map((dirId) => ({ dirId }))
+      ? [{ dirIds }]
       : scopes.length > 0
         ? scopes.map((scope) => ({ filePathPrefix: scope }))
         : [{}];
 
   for (const request of requests) {
-    const results = await store.searchByHybrid(queryVector, { ...request, topK: topK * 3 });
+    const results = await store.searchByHybrid(queryVector, {
+      ...request,
+      topK: topK * 3,
+      minResultsBeforeFallback: topK,
+    });
 
     for (const result of results) {
       const existing = merged.get(result.chunk_id);
@@ -467,7 +474,8 @@ async function hydrateResult(
   item: RuntimeSearchItem,
   fileLookup: Map<string, FileLookup>,
   markdownCache: Map<string, string>,
-  summariesCache: Map<string, Record<string, string>>
+  summariesCache: Map<string, Record<string, string>>,
+  locatorMappingCache: Map<string, LocatorMappingItem[]>
 ): Promise<RuntimeSearchItem & { content: string; summary: string }> {
   const fileInfo = fileLookup.get(item.fileId);
   if (!fileInfo) {
@@ -482,16 +490,29 @@ async function hydrateResult(
   const archiveCacheKey = `${normalizePath(fileInfo.dirPath)}/${fileInfo.afdName}`;
   const markdown = await readMarkdown(storage, fileInfo.afdName, archiveCacheKey, markdownCache);
   const summaries = await readSummaries(storage, fileInfo.afdName, archiveCacheKey, summariesCache);
+  const locatorMappings = await readLocatorMappings(
+    storage,
+    fileInfo.afdName,
+    archiveCacheKey,
+    locatorMappingCache
+  );
 
   const parsedByLineRange = extractByLineRange(markdown, item.chunkLineStart, item.chunkLineEnd);
   const parsedByLocator = parsedByLineRange ? '' : extractByLocator(markdown, item.source.locator);
   const parsedContent = parsedByLineRange || parsedByLocator;
+  const displayLocator = resolveDisplayLocator({
+    filePath: fileInfo.filePath,
+    locator: item.source.locator,
+    chunkLineStart: item.chunkLineStart,
+    chunkLineEnd: item.chunkLineEnd,
+    mappings: locatorMappings,
+  });
 
   return {
     ...item,
     source: {
       filePath: fileInfo.filePath,
-      locator: item.source.locator,
+      locator: displayLocator,
     },
     content: parsedContent,
     summary: summaries[item.chunkId] ?? '',
@@ -615,6 +636,38 @@ async function readSummaries(
     return parsed;
   } catch {
     const empty: Record<string, string> = {};
+    cache.set(cacheKey, empty);
+    return empty;
+  }
+}
+
+interface LocatorMappingItem {
+  markdownRange: {
+    startLine: number;
+    endLine: number;
+  };
+  originalLocator: string;
+}
+
+async function readLocatorMappings(
+  storage: AFDStorage,
+  archiveName: string,
+  cacheKey: string,
+  cache: Map<string, LocatorMappingItem[]>
+): Promise<LocatorMappingItem[]> {
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  try {
+    const buffer = await storage.read(archiveName, 'metadata.json');
+    const parsed = JSON.parse(buffer.toString('utf-8')) as { mapping?: LocatorMappingItem[] };
+    const mapping = Array.isArray(parsed.mapping) ? parsed.mapping : [];
+    cache.set(cacheKey, mapping);
+    return mapping;
+  } catch {
+    const empty: LocatorMappingItem[] = [];
     cache.set(cacheKey, empty);
     return empty;
   }

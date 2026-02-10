@@ -141,11 +141,29 @@ export class InvertedIndex {
   }
 
   async removeDirectory(dirId: string): Promise<void> {
+    await this.removeDirectories([dirId]);
+  }
+
+  async removeDirectories(dirIds: string[]): Promise<void> {
     this.ensureOpen();
 
+    const normalizedDirIds = Array.from(
+      new Set(
+        dirIds.filter((dirId) => typeof dirId === 'string' && dirId.length > 0)
+      )
+    );
+    if (normalizedDirIds.length === 0) {
+      return;
+    }
+
+    const placeholders = normalizedDirIds.map(() => '?').join(', ');
     this.db.transaction(() => {
-      this.db.prepare('DELETE FROM file_terms WHERE dir_id = ?').run(dirId);
-      this.db.prepare('DELETE FROM index_stats WHERE dir_id = ?').run(dirId);
+      this.db
+        .prepare(`DELETE FROM file_terms WHERE dir_id IN (${placeholders})`)
+        .run(...normalizedDirIds);
+      this.db
+        .prepare(`DELETE FROM index_stats WHERE dir_id IN (${placeholders})`)
+        .run(...normalizedDirIds);
     })();
   }
 

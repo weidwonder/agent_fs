@@ -15,6 +15,7 @@ interface RegistryProject {
 interface IndexMetadataFile {
   fileId?: string;
   name?: string;
+  afdName?: string;
 }
 
 interface IndexMetadataSubdirectory {
@@ -31,6 +32,7 @@ interface IndexMetadataLike {
 interface FileLookupValue {
   dirPath: string;
   filePath: string;
+  afdName: string;
 }
 
 export interface SearchScopeContext {
@@ -115,6 +117,7 @@ const collectFromMetadata = (
     fileLookup.set(file.fileId, {
       dirPath: rootProjectPath,
       filePath: join(currentDirPath, file.name),
+      afdName: file.afdName ?? file.name ?? file.fileId,
     });
   }
 

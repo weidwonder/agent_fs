@@ -5,7 +5,11 @@ import { join } from 'node:path';
 
 const state = {
   homeDir: '',
-  afdFiles: new Map<string, { content: string; summaries: Record<string, string> }>(),
+  afdFiles: new Map<string, {
+    content: string;
+    summaries: Record<string, string>;
+    mapping?: Array<{ markdownRange: { startLine: number; endLine: number }; originalLocator: string }>;
+  }>(),
 };
 
 vi.mock('node:os', async () => {
@@ -27,10 +31,18 @@ vi.mock('@agent-fs/storage', () => ({
     },
     read: async (fileId: string, filePath: string) => {
       const data = state.afdFiles.get(`${documentsDir}:${fileId}`);
-      if (!data || filePath !== 'summaries.json') {
+      if (!data || (filePath !== 'summaries.json' && filePath !== 'metadata.json')) {
         throw new Error(`missing AFD buffer: ${fileId}/${filePath}`);
       }
-      return Buffer.from(JSON.stringify(data.summaries), 'utf-8');
+      if (filePath === 'summaries.json') {
+        return Buffer.from(JSON.stringify(data.summaries), 'utf-8');
+      }
+      return Buffer.from(
+        JSON.stringify({
+          mapping: data.mapping ?? [],
+        }),
+        'utf-8'
+      );
     },
   }),
 }));
@@ -226,6 +238,96 @@ describe('search', () => {
     expect(searchByHybrid).toHaveBeenCalledTimes(1);
   });
 
+  it('多目录 scope 应只触发一次向量检索并使用 dirIds 过滤', async () => {
+    writeFileSync(
+      join(baseDir, '.agent_fs', 'registry.json'),
+      JSON.stringify(
+        {
+          version: '2.0',
+          embeddingModel: 'mock',
+          embeddingDimension: 3,
+          projects: [
+            {
+              path: projectDir,
+              alias: 'project',
+              projectId: 'd1',
+              summary: 'test',
+              lastUpdated: '2026-02-06T00:00:00.000Z',
+              totalFileCount: 1,
+              totalChunkCount: 2,
+              subdirectories: [
+                {
+                  relativePath: 'sub-a',
+                  dirId: 'd1-sub-a',
+                  fileCount: 0,
+                  chunkCount: 0,
+                  lastUpdated: '2026-02-06T00:00:00.000Z',
+                },
+                {
+                  relativePath: 'sub-b',
+                  dirId: 'd1-sub-b',
+                  fileCount: 0,
+                  chunkCount: 0,
+                  lastUpdated: '2026-02-06T00:00:00.000Z',
+                },
+              ],
+              valid: true,
+            },
+          ],
+        },
+        null,
+        2
+      )
+    );
+
+    const searchByHybrid = vi.fn().mockResolvedValue([
+      {
+        chunk_id: 'f1:0000',
+        score: 0.8,
+        document: {
+          chunk_id: 'f1:0000',
+          file_id: 'f1',
+          dir_id: 'd1',
+          rel_path: 'a.md',
+          file_path: join(projectDir, 'a.md'),
+          chunk_line_start: 1,
+          chunk_line_end: 1,
+          content_vector: [],
+          summary_vector: [],
+          locator: 'line:1-1',
+          indexed_at: '',
+          deleted_at: '',
+        },
+      },
+    ]);
+
+    __setSearchServicesForTest({
+      embeddingService: {
+        embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
+      } as any,
+      vectorStore: {
+        searchByHybrid,
+        getByChunkIds: vi.fn().mockResolvedValue([]),
+      } as any,
+      invertedIndex: {
+        search: vi.fn().mockResolvedValue([]),
+      } as any,
+    });
+
+    await search({
+      query: '第一行',
+      scope: [join(projectDir, 'sub-a'), join(projectDir, 'sub-b')],
+      top_k: 5,
+    });
+
+    expect(searchByHybrid).toHaveBeenCalledTimes(1);
+    expect(searchByHybrid).toHaveBeenCalledWith([0.1, 0.2, 0.3], {
+      dirIds: ['d1-sub-a', 'd1-sub-b'],
+      topK: 15,
+      minResultsBeforeFallback: 5,
+    });
+  });
+
   it('非 line 定位符应回退使用 chunk 行范围提取正文（向量结果）', async () => {
     __setSearchServicesForTest({
       embeddingService: {
@@ -315,5 +417,97 @@ describe('search', () => {
     expect(getByChunkIds).toHaveBeenCalledWith(['f1:0001']);
     expect(result.results).toHaveLength(1);
     expect(result.results[0].content).toBe('第二行');
+  });
+
+  it('Excel 结果应优先展示 sheet/range 定位符（MCP）', async () => {
+    writeFileSync(
+      join(projectDir, '.fs_index', 'index.json'),
+      JSON.stringify(
+        {
+          version: '2.0',
+          createdAt: '2026-02-06T00:00:00.000Z',
+          updatedAt: '2026-02-06T00:00:00.000Z',
+          dirId: 'd1',
+          directoryPath: projectDir,
+          directorySummary: 'test',
+          projectId: 'd1',
+          relativePath: '.',
+          parentDirId: null,
+          stats: { fileCount: 1, chunkCount: 1, totalTokens: 10 },
+          files: [
+            {
+              name: 'report.xlsx',
+              type: 'xlsx',
+              size: 10,
+              hash: 'sha256:yy',
+              fileId: 'f1',
+              afdName: 'report.xlsx',
+              indexedAt: '2026-02-06T00:00:00.000Z',
+              chunkCount: 1,
+              summary: 'excel summary',
+            },
+          ],
+          subdirectories: [],
+          unsupportedFiles: [],
+        },
+        null,
+        2
+      )
+    );
+
+    const documentsDir = join(projectDir, '.fs_index', 'documents');
+    state.afdFiles.set(`${documentsDir}:report.xlsx`, {
+      content: '标题\n第一行\n第二行',
+      summaries: {
+        'f1:0000': '摘要一',
+      },
+      mapping: [
+        {
+          markdownRange: { startLine: 2, endLine: 3 },
+          originalLocator: 'sheet:销售数据/range:A1:B2',
+        },
+      ],
+    });
+
+    __setSearchServicesForTest({
+      embeddingService: {
+        embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
+      } as any,
+      vectorStore: {
+        searchByHybrid: vi.fn().mockResolvedValue([
+          {
+            chunk_id: 'f1:0000',
+            score: 0.9,
+            document: {
+              chunk_id: 'f1:0000',
+              file_id: 'f1',
+              dir_id: 'd1',
+              rel_path: 'report.xlsx',
+              file_path: join(projectDir, 'report.xlsx'),
+              chunk_line_start: 2,
+              chunk_line_end: 3,
+              content_vector: [],
+              summary_vector: [],
+              locator: 'line:2-3',
+              indexed_at: '',
+              deleted_at: '',
+            },
+          },
+        ]),
+        getByChunkIds: vi.fn().mockResolvedValue([]),
+      } as any,
+      invertedIndex: {
+        search: vi.fn().mockResolvedValue([]),
+      } as any,
+    });
+
+    const result = await search({
+      query: '销售数据',
+      scope: projectDir,
+      top_k: 5,
+    });
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0].source.locator).toBe('sheet:销售数据/range:A1:B2');
   });
 });

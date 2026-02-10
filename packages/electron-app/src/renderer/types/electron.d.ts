@@ -54,6 +54,12 @@ interface SearchResponse {
   meta: SearchMeta;
 }
 
+interface ProjectRemovalStatus {
+  projectId: string;
+  phase: 'started' | 'completed' | 'failed';
+  error?: string;
+}
+
 interface RawConfigResult {
   rawConfig: Record<string, unknown>;
   resolvedConfig: Record<string, unknown>;
@@ -65,7 +71,8 @@ interface ElectronAPI {
   startIndexing: (path: string) => Promise<{ success: boolean; metadata?: unknown; error?: string }>;
   onIndexingProgress: (callback: (progress: IndexProgress) => void) => void;
   getRegistry: () => Promise<{ projects: RegisteredProject[] }>;
-  removeProject: (projectId: string) => Promise<{ success: boolean; error?: string }>;
+  removeProject: (projectId: string) => Promise<{ success: boolean; cleanup_started?: boolean; error?: string }>;
+  onProjectRemovalStatus: (callback: (status: ProjectRemovalStatus) => void) => () => void;
   updateProjectSummary: (projectId: string, summary: string) => Promise<{ success: boolean; error?: string }>;
   getProjectMemory: (projectId: string) => Promise<ProjectMemoryResponse>;
   saveMemoryFile: (

@@ -19,6 +19,9 @@ export interface VectorSearchOptions {
   /** 目录 ID 过滤 */
   dirId?: string;
 
+  /** 多目录 ID 过滤（OR 关系） */
+  dirIds?: string[];
+
   /** 文件路径前缀过滤 */
   filePathPrefix?: string;
 
@@ -27,6 +30,9 @@ export interface VectorSearchOptions {
 
   /** 距离类型 */
   distanceType?: 'l2' | 'cosine' | 'dot';
+
+  /** postfilter 结果达到该阈值时不再回退 prefilter */
+  minResultsBeforeFallback?: number;
 }
 
 const toRecord = (doc: VectorDocument): Record<string, unknown> => ({ ...doc });
@@ -45,6 +51,7 @@ const REQUIRED_SCHEMA_FIELDS = new Set([
   'indexed_at',
   'deleted_at',
 ]);
+const ESSENTIAL_SCALAR_INDEX_COLUMNS = ['dir_id', 'chunk_id'] as const;
 
 export class VectorStore {
   private db: lancedb.Connection | null = null;
@@ -68,6 +75,8 @@ export class VectorStore {
       if (!isExpectedSchema) {
         await this.db.dropTable(this.options.tableName);
         this.table = null;
+      } else {
+        await this.ensureScalarIndexes(this.table);
       }
     }
   }
@@ -102,7 +111,38 @@ export class VectorStore {
     };
     const table = await this.db.createTable(this.options.tableName, [toRecord(emptyDoc)]);
     await table.delete(`chunk_id = ''`);
+    await this.ensureScalarIndexes(table);
     return table;
+  }
+
+  private async ensureScalarIndexes(table: lancedb.Table): Promise<void> {
+    const listIndices = (table as any).listIndices;
+    const createIndex = (table as any).createIndex;
+    if (typeof listIndices !== 'function' || typeof createIndex !== 'function') {
+      return;
+    }
+
+    let indexedColumns = new Set<string>();
+    try {
+      const existingIndices = await listIndices.call(table) as Array<{ columns?: string[] }>;
+      indexedColumns = new Set(
+        (existingIndices || []).flatMap((index) => index.columns || [])
+      );
+    } catch {
+      return;
+    }
+
+    for (const column of ESSENTIAL_SCALAR_INDEX_COLUMNS) {
+      if (indexedColumns.has(column)) {
+        continue;
+      }
+      try {
+        await createIndex.call(table, column);
+        indexedColumns.add(column);
+      } catch {
+        // 忽略索引创建失败，保持检索可用
+      }
+    }
   }
 
   private async hasExpectedSchema(table: lancedb.Table): Promise<boolean> {
@@ -132,127 +172,67 @@ export class VectorStore {
     vector: number[],
     options: VectorSearchOptions = {}
   ): Promise<VectorSearchResult[]> {
-    const {
-      topK = 10,
-      dirId,
-      filePathPrefix,
-      includeDeleted = false,
-      distanceType = 'cosine',
-    } = options;
-
-    const table = await this.ensureTable();
-
-    let query = table
-      .vectorSearch(vector)
-      .column('content_vector')
-      .distanceType(distanceType)
-      .limit(topK * 2); // 多取一些，后面过滤后可能不够
-
-    // 构建过滤条件
-    const filters: string[] = [];
-    if (!includeDeleted) {
-      filters.push(`deleted_at = ''`);
-    }
-    if (dirId) {
-      filters.push(`dir_id = '${dirId}'`);
-    }
-    if (filePathPrefix) {
-      filters.push(`file_path LIKE '${filePathPrefix}%'`);
-    }
-
-    if (filters.length > 0) {
-      query = query.where(filters.join(' AND '));
-    }
-
-    const results = await query.toArray();
-
-    return results.slice(0, topK).map((row) => ({
-      chunk_id: row.chunk_id,
-      score: this.distanceToScore(row._distance ?? 0, distanceType),
-      document: row as VectorDocument,
-    }));
+    return this.searchByVectorColumn(vector, 'content_vector', options);
   }
 
   async searchBySummary(
     vector: number[],
     options: VectorSearchOptions = {}
   ): Promise<VectorSearchResult[]> {
-    const {
-      topK = 10,
-      dirId,
-      filePathPrefix,
-      includeDeleted = false,
-      distanceType = 'cosine',
-    } = options;
-
-    const table = await this.ensureTable();
-
-    let query = table
-      .vectorSearch(vector)
-      .column('summary_vector')
-      .distanceType(distanceType)
-      .limit(topK * 2);
-
-    const filters: string[] = [];
-    if (!includeDeleted) {
-      filters.push(`deleted_at = ''`);
-    }
-    if (dirId) {
-      filters.push(`dir_id = '${dirId}'`);
-    }
-    if (filePathPrefix) {
-      filters.push(`file_path LIKE '${filePathPrefix}%'`);
-    }
-
-    if (filters.length > 0) {
-      query = query.where(filters.join(' AND '));
-    }
-
-    const results = await query.toArray();
-
-    return results.slice(0, topK).map((row) => ({
-      chunk_id: row.chunk_id,
-      score: this.distanceToScore(row._distance ?? 0, distanceType),
-      document: row as VectorDocument,
-    }));
+    return this.searchByVectorColumn(vector, 'summary_vector', options);
   }
 
   async searchByHybrid(
     vector: number[],
     options: VectorSearchOptions = {}
   ): Promise<VectorSearchResult[]> {
+    return this.searchByVectorColumn(vector, 'hybrid_vector', options);
+  }
+
+  private async searchByVectorColumn(
+    vector: number[],
+    vectorColumn: 'content_vector' | 'summary_vector' | 'hybrid_vector',
+    options: VectorSearchOptions = {}
+  ): Promise<VectorSearchResult[]> {
     const {
       topK = 10,
       dirId,
+      dirIds,
       filePathPrefix,
       includeDeleted = false,
       distanceType = 'cosine',
+      minResultsBeforeFallback,
     } = options;
+    const fallbackThreshold = Math.max(1, minResultsBeforeFallback ?? topK);
 
     const table = await this.ensureTable();
 
-    let query = table
-      .vectorSearch(vector)
-      .column('hybrid_vector')
-      .distanceType(distanceType)
-      .limit(topK * 2);
+    const filters = this.buildFilters({
+      includeDeleted,
+      dirId,
+      dirIds,
+      filePathPrefix,
+    });
+    const filterStatement = filters.join(' AND ');
 
-    const filters: string[] = [];
-    if (!includeDeleted) {
-      filters.push(`deleted_at = ''`);
-    }
-    if (dirId) {
-      filters.push(`dir_id = '${dirId}'`);
-    }
-    if (filePathPrefix) {
-      filters.push(`file_path LIKE '${filePathPrefix}%'`);
-    }
+    const createQuery = () =>
+      table
+        .vectorSearch(vector)
+        .column(vectorColumn)
+        .distanceType(distanceType)
+        .limit(topK * 2); // 多取一些，后面过滤后可能不够
 
-    if (filters.length > 0) {
-      query = query.where(filters.join(' AND '));
+    let results: any[] = [];
+    if (filterStatement) {
+      const postfilterResults = await this.tryPostfilterSearch(createQuery, filterStatement);
+      if (postfilterResults.length >= fallbackThreshold) {
+        results = postfilterResults;
+      } else {
+        results = await createQuery().where(filterStatement).toArray();
+      }
+    } else {
+      results = await createQuery().toArray();
     }
-
-    const results = await query.toArray();
 
     return results.slice(0, topK).map((row) => ({
       chunk_id: row.chunk_id,
@@ -261,19 +241,59 @@ export class VectorStore {
     }));
   }
 
+  private async tryPostfilterSearch(
+    createQuery: () => any,
+    filterStatement: string
+  ): Promise<any[]> {
+    try {
+      const query = createQuery().where(filterStatement);
+      if (typeof query.postfilter !== 'function') {
+        return [];
+      }
+      const postfilterQuery = query.postfilter();
+      if (!postfilterQuery || typeof postfilterQuery.toArray !== 'function') {
+        return [];
+      }
+      return await postfilterQuery.toArray();
+    } catch {
+      return [];
+    }
+  }
+
   async getByChunkIds(chunkIds: string[]): Promise<VectorDocument[]> {
     if (chunkIds.length === 0) return [];
 
     const table = await this.ensureTable();
-    const filters = chunkIds.map((id) => `chunk_id = '${id}'`).join(' OR ');
+    const normalizedChunkIds = Array.from(
+      new Set(
+        chunkIds.filter((chunkId) => typeof chunkId === 'string' && chunkId.length > 0)
+      )
+    );
+    if (normalizedChunkIds.length === 0) {
+      return [];
+    }
 
-    const query = table
+    const chunkFilter =
+      normalizedChunkIds.length === 1
+        ? `chunk_id = '${this.escapeLiteral(normalizedChunkIds[0])}'`
+        : `chunk_id IN (${normalizedChunkIds
+            .map((chunkId) => `'${this.escapeLiteral(chunkId)}'`)
+            .join(', ')})`;
+    const whereClause = `deleted_at = '' AND ${chunkFilter}`;
+
+    const queryFactory = (table as any).query;
+    if (typeof queryFactory === 'function') {
+      const query = queryFactory.call(table).where(whereClause).limit(normalizedChunkIds.length);
+      const rows = await query.toArray();
+      return rows as VectorDocument[];
+    }
+
+    const fallback = table
       .vectorSearch(new Array(this.options.dimension).fill(0))
       .column('content_vector')
-      .where(`deleted_at = '' AND (${filters})`)
-      .limit(chunkIds.length);
-
-    const rows = await query.toArray();
+      .where(whereClause)
+      .limit(normalizedChunkIds.length);
+    const rows = await fallback.toArray();
     return rows as VectorDocument[];
   }
 
@@ -325,6 +345,48 @@ export class VectorStore {
     return vector;
   }
 
+  private buildFilters(options: {
+    includeDeleted: boolean;
+    dirId?: string;
+    dirIds?: string[];
+    filePathPrefix?: string;
+  }): string[] {
+    const filters: string[] = [];
+    if (!options.includeDeleted) {
+      filters.push(`deleted_at = ''`);
+    }
+
+    const normalizedDirIds = new Set<string>();
+    if (typeof options.dirId === 'string' && options.dirId.length > 0) {
+      normalizedDirIds.add(options.dirId);
+    }
+    for (const dirId of options.dirIds || []) {
+      if (typeof dirId === 'string' && dirId.length > 0) {
+        normalizedDirIds.add(dirId);
+      }
+    }
+
+    if (normalizedDirIds.size === 1) {
+      const dirId = [...normalizedDirIds][0];
+      filters.push(`dir_id = '${this.escapeLiteral(dirId)}'`);
+    } else if (normalizedDirIds.size > 1) {
+      const dirFilter = [...normalizedDirIds]
+        .map((dirId) => `'${this.escapeLiteral(dirId)}'`)
+        .join(', ');
+      filters.push(`dir_id IN (${dirFilter})`);
+    }
+
+    if (options.filePathPrefix) {
+      filters.push(`file_path LIKE '${this.escapeLiteral(options.filePathPrefix)}%'`);
+    }
+
+    return filters;
+  }
+
+  private escapeLiteral(value: string): string {
+    return value.replace(/'/gu, "''");
+  }
+
   async softDelete(chunkIds: string[]): Promise<void> {
     const table = await this.ensureTable();
     const now = new Date().toISOString();
@@ -338,8 +400,27 @@ export class VectorStore {
   }
 
   async deleteByDirId(dirId: string): Promise<void> {
+    await this.deleteByDirIds([dirId]);
+  }
+
+  async deleteByDirIds(dirIds: string[]): Promise<void> {
+    const normalizedDirIds = Array.from(
+      new Set(
+        dirIds.filter((dirId) => typeof dirId === 'string' && dirId.length > 0)
+      )
+    );
+    if (normalizedDirIds.length === 0) {
+      return;
+    }
+
     const table = await this.ensureTable();
-    await table.delete(`dir_id = '${dirId}'`);
+    const filter =
+      normalizedDirIds.length === 1
+        ? `dir_id = '${this.escapeLiteral(normalizedDirIds[0])}'`
+        : `dir_id IN (${normalizedDirIds
+            .map((dirId) => `'${this.escapeLiteral(dirId)}'`)
+            .join(', ')})`;
+    await table.delete(filter);
   }
 
   async deleteByFileId(fileId: string): Promise<void> {
