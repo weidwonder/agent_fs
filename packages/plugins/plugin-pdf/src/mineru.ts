@@ -33,6 +33,8 @@ export type MinerUContentList = MinerUContentItem[];
  * MinerU 配置选项
  */
 export type MinerUOptions = MinerUClientConfig;
+const DEFAULT_MAX_CONCURRENCY = 4;
+const EMPTY_RESPONSE_PARSE_RETRY_LIMIT = 2;
 
 async function ensureGlobalFileAvailable(): Promise<void> {
   const globalRecord = globalThis as Record<string, unknown>;
@@ -55,16 +57,52 @@ export async function convertPDFWithMinerU(
 ): Promise<MinerUResult> {
   await ensureGlobalFileAvailable();
   const { MinerUClient } = await import('mineru-ts');
-  const client = new MinerUClient(options);
-  await client.initialize();
+  const initialConcurrency = normalizeMaxConcurrency(options.maxConcurrency);
 
-  const result = await client.parseFile(pdfPath);
-  const markdown = client.resultToMarkdown(result);
-  const contentList = client.resultToContentList(result) as MinerUContentList;
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt <= EMPTY_RESPONSE_PARSE_RETRY_LIMIT; attempt += 1) {
+    const reducedConcurrency = Math.max(
+      1,
+      Math.floor(initialConcurrency / (2 ** attempt))
+    );
+    const client = new MinerUClient({
+      ...options,
+      maxConcurrency: reducedConcurrency,
+    });
+    await client.initialize();
 
-  return {
-    markdown,
-    contentList,
-    totalPages: result.metadata?.totalPages,
-  };
+    try {
+      const result = await client.parseFile(pdfPath);
+      const markdown = client.resultToMarkdown(result);
+      const contentList = client.resultToContentList(result) as MinerUContentList;
+
+      return {
+        markdown,
+        contentList,
+        totalPages: result.metadata?.totalPages,
+      };
+    } catch (error) {
+      lastError = error;
+      if (!isEmptyResponseError(error) || attempt >= EMPTY_RESPONSE_PARSE_RETRY_LIMIT) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, (attempt + 1) * 1000));
+    }
+  }
+
+  throw (lastError as Error) ?? new Error('PDF 转换失败: 未知错误');
+}
+
+function isEmptyResponseError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return /Empty response from VLM server/u.test(error.message);
+}
+
+function normalizeMaxConcurrency(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 1) {
+    return Math.floor(value);
+  }
+  return DEFAULT_MAX_CONCURRENCY;
 }

@@ -297,6 +297,15 @@ export class Indexer {
       delete normalizedMinerU.api_host;
     }
 
+    const maxConcurrency = normalizedMinerU.maxConcurrency;
+    if (
+      typeof maxConcurrency !== 'number' ||
+      !Number.isFinite(maxConcurrency) ||
+      maxConcurrency < 1
+    ) {
+      normalizedMinerU.maxConcurrency = 4;
+    }
+
     return {
       minerU: normalizedMinerU as any,
     };

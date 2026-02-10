@@ -8,6 +8,8 @@ PDF 文档处理插件，使用 mineru-ts 将 PDF 转换为 Markdown。
 - 保留 PDF 位置映射（页级粒度）
 - 支持双向定位：Markdown <-> PDF
 - 复用 Markdown 分块和向量化流程
+- 内置 VLM 空响应重试（`Empty response from VLM server` 场景）
+- 未配置 `maxConcurrency` 时自动使用更保守默认值 `4`
 
 ## 依赖
 
@@ -74,6 +76,7 @@ MINERU_SERVER_URL=http://localhost:30000 npx tsx scripts/test-with-pdf.ts /path/
 2. **性能**：PDF 转换较慢（大文件可能需要 1-2 分钟），建议设置 120s 以上超时
 3. **位置映射**：当前只支持页级映射，不支持更精确的 bbox 映射
 4. **回退机制**：无法从内容列表定位时，会按剩余行数平均分配页范围
+5. **并发建议**：若 VLM 服务资源紧张，建议显式设置 `maxConcurrency` 为 4-8
 
 ## 输出文件
 

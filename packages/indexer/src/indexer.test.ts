@@ -121,6 +121,7 @@ describe('Indexer 插件配置注入', () => {
       minerU: {
         serverUrl: 'http://127.0.0.1:3000',
         timeout: 30000,
+        maxConcurrency: 4,
       },
     });
 
@@ -183,6 +184,98 @@ describe('Indexer 插件配置注入', () => {
       minerU: {
         serverUrl: 'http://127.0.0.1:30000',
         timeout: 30000,
+        maxConcurrency: 4,
+      },
+    });
+  });
+
+  it('未显式配置时应注入更保守的 minerU.maxConcurrency 默认值', async () => {
+    mocks.loadConfig.mockReturnValue({
+      llm: {
+        provider: 'openai-compatible',
+        base_url: 'https://example.com/v1',
+        api_key: 'test-key',
+        model: 'gpt-4o-mini',
+      },
+      embedding: {
+        default: 'local',
+        local: {
+          model: 'test-model',
+          device: 'cpu',
+        },
+      },
+      indexing: {
+        chunk_size: {
+          min_tokens: 10,
+          max_tokens: 100,
+        },
+      },
+      search: {
+        default_top_k: 10,
+        fusion: { method: 'rrf' },
+      },
+      plugins: {
+        pdf: {
+          minerU: {
+            serverUrl: 'http://127.0.0.1:30000',
+          },
+        },
+      },
+    });
+
+    const { Indexer } = await import('./indexer');
+    new Indexer();
+
+    expect(mocks.pdfCtor).toHaveBeenCalledWith({
+      minerU: {
+        serverUrl: 'http://127.0.0.1:30000',
+        maxConcurrency: 4,
+      },
+    });
+  });
+
+  it('显式配置 minerU.maxConcurrency 时应保持原值', async () => {
+    mocks.loadConfig.mockReturnValue({
+      llm: {
+        provider: 'openai-compatible',
+        base_url: 'https://example.com/v1',
+        api_key: 'test-key',
+        model: 'gpt-4o-mini',
+      },
+      embedding: {
+        default: 'local',
+        local: {
+          model: 'test-model',
+          device: 'cpu',
+        },
+      },
+      indexing: {
+        chunk_size: {
+          min_tokens: 10,
+          max_tokens: 100,
+        },
+      },
+      search: {
+        default_top_k: 10,
+        fusion: { method: 'rrf' },
+      },
+      plugins: {
+        pdf: {
+          minerU: {
+            serverUrl: 'http://127.0.0.1:30000',
+            maxConcurrency: 3,
+          },
+        },
+      },
+    });
+
+    const { Indexer } = await import('./indexer');
+    new Indexer();
+
+    expect(mocks.pdfCtor).toHaveBeenCalledWith({
+      minerU: {
+        serverUrl: 'http://127.0.0.1:30000',
+        maxConcurrency: 3,
       },
     });
   });
