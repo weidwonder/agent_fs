@@ -572,6 +572,109 @@ describe('IndexPipeline summary mode', () => {
     rmSync(dirPath, { recursive: true, force: true });
   });
 
+  it('首次索引中断后应跳过已写入 AFD 的未变更文件', async () => {
+    const dirPath = mkdtempSync(join(tmpdir(), 'agent-fs-resume-afd-'));
+    writeFileSync(join(dirPath, 'a.md'), '# A\n\ncontent');
+    writeFileSync(join(dirPath, 'b.md'), '# B\n\ncontent');
+
+    let callCount = 0;
+    let failOnSecondCall = true;
+    const toMarkdown = vi.fn(async (filePath: string) => {
+      callCount += 1;
+      if (failOnSecondCall && callCount === 2) {
+        throw new Error('模拟中断');
+      }
+      return { markdown: `# ${filePath}\n\ncontent`, mapping: [] };
+    });
+    const plugin = { toMarkdown };
+    const pluginManager = {
+      getSupportedExtensions: () => ['md'],
+      getPlugin: () => plugin,
+    };
+
+    const summaryService = {
+      generateChunkSummariesBatch: vi.fn().mockResolvedValue([{ summary: '' }]),
+      generateChunkSummary: vi.fn(),
+      generateDocumentSummary: vi.fn(),
+      generateDirectorySummary: vi.fn().mockResolvedValue({ summary: '' }),
+    };
+
+    const embeddingService = {
+      embed: vi.fn().mockResolvedValue([0, 0, 0]),
+    };
+
+    const vectorStore = {
+      addDocuments: vi.fn().mockResolvedValue(undefined),
+      deleteByFileId: vi.fn().mockResolvedValue(undefined),
+      deleteByDirId: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const archivedNames = new Set<string>();
+    const afdStorage = {
+      write: vi.fn().mockImplementation(async (archiveName: string) => {
+        archivedNames.add(archiveName);
+      }),
+      exists: vi.fn().mockImplementation(async (archiveName: string) => archivedNames.has(archiveName)),
+      delete: vi.fn().mockImplementation(async (archiveName: string) => {
+        archivedNames.delete(archiveName);
+      }),
+    };
+
+    const invertedIndex = {
+      addFile: vi.fn().mockResolvedValue(undefined),
+      removeFile: vi.fn().mockResolvedValue(undefined),
+      removeDirectory: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const firstPipeline = new IndexPipeline({
+      dirPath,
+      pluginManager: pluginManager as any,
+      embeddingService: embeddingService as any,
+      summaryService: summaryService as any,
+      vectorStore: vectorStore as any,
+      afdStorage: afdStorage as any,
+      invertedIndex: invertedIndex as any,
+      chunkOptions: { minTokens: 1, maxTokens: 200 },
+      summaryOptions: {
+        mode: 'skip',
+        tokenBudget: 10000,
+      },
+    });
+    await expect(firstPipeline.run()).rejects.toThrow(/模拟中断/u);
+    expect(existsSync(join(dirPath, '.fs_index', 'index.json'))).toBe(false);
+    expect(archivedNames.size).toBe(1);
+
+    failOnSecondCall = false;
+    toMarkdown.mockClear();
+    vectorStore.addDocuments.mockClear();
+    afdStorage.write.mockClear();
+    invertedIndex.addFile.mockClear();
+
+    const secondPipeline = new IndexPipeline({
+      dirPath,
+      pluginManager: pluginManager as any,
+      embeddingService: embeddingService as any,
+      summaryService: summaryService as any,
+      vectorStore: vectorStore as any,
+      afdStorage: afdStorage as any,
+      invertedIndex: invertedIndex as any,
+      chunkOptions: { minTokens: 1, maxTokens: 200 },
+      summaryOptions: {
+        mode: 'skip',
+        tokenBudget: 10000,
+      },
+    });
+    const metadata = await secondPipeline.run();
+
+    expect(toMarkdown).toHaveBeenCalledTimes(1);
+    expect(vectorStore.addDocuments).toHaveBeenCalledTimes(1);
+    expect(afdStorage.write).toHaveBeenCalledTimes(1);
+    expect(invertedIndex.addFile).toHaveBeenCalledTimes(1);
+    expect(metadata.files).toHaveLength(2);
+
+    rmSync(dirPath, { recursive: true, force: true });
+  });
+
   it('增量索引应仅重建变更文件并清理旧数据', async () => {
     const dirPath = mkdtempSync(join(tmpdir(), 'agent-fs-incremental-change-'));
     const filePath = join(dirPath, 'update.md');

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import type {
@@ -78,6 +78,21 @@ interface ProcessFileInput {
   total: number;
 }
 
+interface ResumeDirectorySnapshot {
+  relativePath: string;
+  parentRelativePath: string | null;
+  directoryPath: string;
+  dirId: string;
+  parentDirId: string | null;
+  files: FileMetadata[];
+}
+
+interface ResumeSnapshot {
+  version: '1.0';
+  projectId: string;
+  directories: ResumeDirectorySnapshot[];
+}
+
 type FileStage =
   | 'convert'
   | 'chunk'
@@ -92,6 +107,8 @@ export class IndexPipeline {
   private projectId: string;
   private existingMetadataByRelativePath = new Map<string, IndexMetadata>();
   private existingFileArchiveById = new Map<string, { dirPath: string; archiveName: string }>();
+  private resumeSnapshot: ResumeSnapshot | null = null;
+  private resumeSnapshotPath = '';
   private processedFiles = 0;
   private totalFiles = 0;
   private readonly fileChecker = new FileChecker();
@@ -116,12 +133,37 @@ export class IndexPipeline {
       directory: dirPath,
     });
 
-    this.existingMetadataByRelativePath = this.loadExistingMetadataMap(dirPath);
+    const persistedMetadata = this.loadExistingMetadataMap(dirPath);
+    const persistedRootMetadata = persistedMetadata.get('.');
+    const persistedResumeSnapshot = this.loadResumeSnapshot(dirPath);
+    const persistedResumeProjectId = persistedResumeSnapshot?.projectId;
+    const canRecoverFromResume =
+      Boolean(persistedResumeProjectId) &&
+      (!persistedRootMetadata ||
+        persistedRootMetadata.projectId === persistedResumeProjectId);
+    const recoveredMetadata =
+      canRecoverFromResume && persistedResumeSnapshot
+        ? this.buildMetadataMapFromResumeSnapshot(persistedResumeSnapshot)
+        : null;
+
+    this.existingMetadataByRelativePath = persistedMetadata;
+    if (recoveredMetadata) {
+      for (const [relativePath, metadata] of recoveredMetadata) {
+        if (!this.existingMetadataByRelativePath.has(relativePath)) {
+          this.existingMetadataByRelativePath.set(relativePath, metadata);
+        }
+      }
+    }
+
+    const existingRoot = this.existingMetadataByRelativePath.get('.');
+    this.projectId =
+      existingRoot?.projectId ??
+      (canRecoverFromResume ? persistedResumeSnapshot?.projectId : undefined) ??
+      uuidv4();
+    this.initResumeSnapshot(dirPath, canRecoverFromResume ? persistedResumeSnapshot : null);
     this.existingFileArchiveById = this.buildExistingFileArchiveMap(
       this.existingMetadataByRelativePath
     );
-    const existingRoot = this.existingMetadataByRelativePath.get('.');
-    this.projectId = existingRoot?.projectId ?? uuidv4();
     const rootDirId = existingRoot?.dirId ?? this.projectId;
 
     const tree = this.scanDirectoryTree(
@@ -140,6 +182,7 @@ export class IndexPipeline {
 
     try {
       const result = await this.indexDirectoryTree(tree);
+      this.clearResumeSnapshot();
       this.writeLog({
         level: 'info',
         event: 'run_success',
@@ -265,8 +308,20 @@ export class IndexPipeline {
         });
 
         if (previousFile && !hashResult.changed) {
-          ownFilesByIndex[fileIndex] = previousFile;
-          continue;
+          const archivedName = previousFile.afdName ?? previousFile.name ?? previousFile.fileId;
+          const archivedExists = await this.checkAfdExists(context.dirPath, archivedName);
+          if (archivedExists) {
+            ownFilesByIndex[fileIndex] = previousFile;
+            this.recordResumeFile(context, previousFile);
+            continue;
+          }
+
+          this.writeLog({
+            level: 'warn',
+            event: 'resume_archive_missing',
+            file: relativeFilePath,
+            archive: archivedName,
+          });
         }
 
         if (previousFile) {
@@ -275,10 +330,11 @@ export class IndexPipeline {
             context.dirPath,
             previousFile.afdName ?? previousFile.name ?? previousFile.fileId
           );
+          this.removeResumeFile(context.relativePath, filename);
         }
 
         const fileId = previousFile?.fileId ?? this.createFileId(relativeFilePath);
-        ownFilesByIndex[fileIndex] = await this.processFile({
+        const processedFile = await this.processFile({
           dirPath: context.dirPath,
           filePath,
           relativeFilePath,
@@ -290,6 +346,8 @@ export class IndexPipeline {
           processed: fileProgress,
           total: this.totalFiles,
         });
+        ownFilesByIndex[fileIndex] = processedFile;
+        this.recordResumeFile(context, processedFile);
       }
     });
 
@@ -311,7 +369,9 @@ export class IndexPipeline {
         context.dirPath,
         removedFile.afdName ?? removedFile.name ?? removedFile.fileId
       );
+      this.removeResumeFile(context.relativePath, removedFile.name);
     }
+    this.replaceResumeDirectoryFiles(context, ownFiles);
 
     const childResults: DirectoryRunResult[] = [];
     const currentSubdirectoryNames = new Set(context.children.map((child) => basename(child.dirPath)));
@@ -325,6 +385,11 @@ export class IndexPipeline {
       }
 
       await this.cleanupRemovedDirectory(oldSubdirectory, join(context.dirPath, oldSubdirectory.name));
+      const removedRelativePath =
+        context.relativePath === '.'
+          ? oldSubdirectory.name
+          : `${context.relativePath}/${oldSubdirectory.name}`;
+      this.removeResumeDirectory(removedRelativePath);
     }
 
     const childFileCount = childResults.reduce((sum, child) => sum + child.totalFileCount, 0);
@@ -490,6 +555,308 @@ export class IndexPipeline {
     } catch {
       // 文件可能已不存在，忽略
     }
+  }
+
+  private async checkAfdExists(dirPath: string, archiveName: string): Promise<boolean> {
+    const storage = this.getAfdStorage(dirPath) as unknown as {
+      exists?: (fileId: string) => Promise<boolean>;
+    };
+
+    if (typeof storage.exists !== 'function') {
+      return true;
+    }
+
+    try {
+      return await storage.exists(archiveName);
+    } catch {
+      return false;
+    }
+  }
+
+  private loadResumeSnapshot(rootDirPath: string): ResumeSnapshot | null {
+    const snapshotPath = join(rootDirPath, '.fs_index', 'index.resume.json');
+    if (!existsSync(snapshotPath)) {
+      return null;
+    }
+
+    try {
+      const raw = JSON.parse(readFileSync(snapshotPath, 'utf-8')) as ResumeSnapshot;
+      if (!raw || typeof raw.projectId !== 'string' || !Array.isArray(raw.directories)) {
+        return null;
+      }
+
+      const directories: ResumeDirectorySnapshot[] = raw.directories
+        .filter((item) => item && typeof item.relativePath === 'string')
+        .map((item) => {
+          const relativePath = item.relativePath.trim();
+          const files = Array.isArray(item.files)
+            ? item.files
+                .filter((file) => file && typeof file.name === 'string')
+                .map((file) => ({
+                  name: file.name,
+                  afdName: file.afdName,
+                  type: file.type,
+                  size: file.size,
+                  hash: file.hash,
+                  fileId: file.fileId,
+                  indexedAt: file.indexedAt,
+                  chunkCount: file.chunkCount,
+                  summary: file.summary,
+                }))
+            : [];
+
+          return {
+            relativePath,
+            parentRelativePath: this.getParentRelativePath(relativePath),
+            directoryPath: item.directoryPath,
+            dirId: item.dirId,
+            parentDirId: item.parentDirId,
+            files,
+          };
+        })
+        .filter((item) => item.relativePath.length > 0);
+
+      return {
+        version: '1.0',
+        projectId: raw.projectId,
+        directories,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private initResumeSnapshot(rootDirPath: string, loadedSnapshot: ResumeSnapshot | null): void {
+    this.resumeSnapshotPath = join(rootDirPath, '.fs_index', 'index.resume.json');
+    if (loadedSnapshot && loadedSnapshot.projectId === this.projectId) {
+      this.resumeSnapshot = loadedSnapshot;
+    } else {
+      this.resumeSnapshot = {
+        version: '1.0',
+        projectId: this.projectId,
+        directories: [],
+      };
+    }
+    this.persistResumeSnapshot();
+  }
+
+  private clearResumeSnapshot(): void {
+    this.resumeSnapshot = null;
+    if (!this.resumeSnapshotPath || !existsSync(this.resumeSnapshotPath)) {
+      return;
+    }
+
+    try {
+      rmSync(this.resumeSnapshotPath, { force: true });
+    } catch {
+      // 清理恢复快照失败不影响主流程
+    }
+  }
+
+  private persistResumeSnapshot(): void {
+    if (!this.resumeSnapshot || !this.resumeSnapshotPath) {
+      return;
+    }
+
+    try {
+      writeFileSync(this.resumeSnapshotPath, JSON.stringify(this.resumeSnapshot, null, 2));
+    } catch (error) {
+      this.writeLog({
+        level: 'warn',
+        event: 'resume_snapshot_write_failed',
+        detail: this.extractErrorMessage(error),
+      });
+    }
+  }
+
+  private ensureResumeDirectory(context: DirectoryContext): ResumeDirectorySnapshot | null {
+    if (!this.resumeSnapshot) {
+      return null;
+    }
+
+    const parentRelativePath = this.getParentRelativePath(context.relativePath);
+    const existing = this.resumeSnapshot.directories.find(
+      (item) => item.relativePath === context.relativePath
+    );
+    if (existing) {
+      existing.parentRelativePath = parentRelativePath;
+      existing.directoryPath = context.dirPath;
+      existing.dirId = context.dirId;
+      existing.parentDirId = context.parentDirId;
+      return existing;
+    }
+
+    const created: ResumeDirectorySnapshot = {
+      relativePath: context.relativePath,
+      parentRelativePath,
+      directoryPath: context.dirPath,
+      dirId: context.dirId,
+      parentDirId: context.parentDirId,
+      files: [],
+    };
+    this.resumeSnapshot.directories.push(created);
+    return created;
+  }
+
+  private recordResumeFile(context: DirectoryContext, file: FileMetadata): void {
+    const directory = this.ensureResumeDirectory(context);
+    if (!directory) {
+      return;
+    }
+
+    const nextFile = {
+      ...file,
+    };
+    const existingIndex = directory.files.findIndex((item) => item.name === file.name);
+    if (existingIndex >= 0) {
+      directory.files[existingIndex] = nextFile;
+    } else {
+      directory.files.push(nextFile);
+      directory.files.sort((left, right) => left.name.localeCompare(right.name));
+    }
+
+    this.persistResumeSnapshot();
+  }
+
+  private replaceResumeDirectoryFiles(context: DirectoryContext, files: FileMetadata[]): void {
+    const directory = this.ensureResumeDirectory(context);
+    if (!directory) {
+      return;
+    }
+
+    directory.files = files
+      .map((file) => ({
+        ...file,
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name));
+    this.persistResumeSnapshot();
+  }
+
+  private removeResumeFile(relativePath: string, filename: string): void {
+    if (!this.resumeSnapshot) {
+      return;
+    }
+
+    const directory = this.resumeSnapshot.directories.find((item) => item.relativePath === relativePath);
+    if (!directory) {
+      return;
+    }
+
+    const previousLength = directory.files.length;
+    directory.files = directory.files.filter((file) => file.name !== filename);
+    if (directory.files.length !== previousLength) {
+      this.persistResumeSnapshot();
+    }
+  }
+
+  private removeResumeDirectory(relativePath: string): void {
+    if (!this.resumeSnapshot) {
+      return;
+    }
+
+    const prefix = `${relativePath}/`;
+    const previousLength = this.resumeSnapshot.directories.length;
+    this.resumeSnapshot.directories = this.resumeSnapshot.directories.filter(
+      (item) => item.relativePath !== relativePath && !item.relativePath.startsWith(prefix)
+    );
+    if (this.resumeSnapshot.directories.length !== previousLength) {
+      this.persistResumeSnapshot();
+    }
+  }
+
+  private buildMetadataMapFromResumeSnapshot(snapshot: ResumeSnapshot): Map<string, IndexMetadata> {
+    const directories = snapshot.directories
+      .map((item) => ({
+        ...item,
+        files: item.files.map((file) => ({ ...file })),
+      }))
+      .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+
+    const directoryByRelativePath = new Map(directories.map((item) => [item.relativePath, item]));
+    const childrenByParent = new Map<string | null, ResumeDirectorySnapshot[]>();
+    for (const directory of directories) {
+      const key = directory.parentRelativePath;
+      const children = childrenByParent.get(key) ?? [];
+      children.push(directory);
+      childrenByParent.set(key, children);
+    }
+
+    const aggregateFilesCache = new Map<string, FileMetadata[]>();
+    const collectAggregateFiles = (relativePath: string): FileMetadata[] => {
+      const cached = aggregateFilesCache.get(relativePath);
+      if (cached) {
+        return cached;
+      }
+
+      const current = directoryByRelativePath.get(relativePath);
+      if (!current) {
+        return [];
+      }
+
+      const merged = [...current.files];
+      for (const child of childrenByParent.get(relativePath) ?? []) {
+        merged.push(...collectAggregateFiles(child.relativePath));
+      }
+      aggregateFilesCache.set(relativePath, merged);
+      return merged;
+    };
+
+    const now = new Date().toISOString();
+    const metadataMap = new Map<string, IndexMetadata>();
+    for (const directory of directories) {
+      const allFiles = collectAggregateFiles(directory.relativePath);
+      const childDirectories = childrenByParent.get(directory.relativePath) ?? [];
+
+      metadataMap.set(directory.relativePath, {
+        version: '2.0',
+        createdAt: directory.files[0]?.indexedAt ?? now,
+        updatedAt: now,
+        dirId: directory.dirId,
+        directoryPath: directory.directoryPath,
+        directorySummary: '',
+        projectId: snapshot.projectId,
+        relativePath: directory.relativePath,
+        parentDirId: directory.parentDirId,
+        stats: {
+          fileCount: allFiles.length,
+          chunkCount: allFiles.reduce((sum, file) => sum + file.chunkCount, 0),
+          totalTokens: allFiles.reduce((sum, file) => sum + file.chunkCount * 800, 0),
+        },
+        files: directory.files,
+        subdirectories: childDirectories.map((child) => {
+          const descendantFiles = collectAggregateFiles(child.relativePath);
+          return {
+            name: basename(child.directoryPath),
+            dirId: child.dirId,
+            hasIndex: true,
+            summary: null,
+            fileCount: descendantFiles.length,
+            lastUpdated: descendantFiles[0]?.indexedAt ?? null,
+            fileIds: descendantFiles.map((file) => file.fileId),
+            fileArchives: descendantFiles.map((file) => ({
+              fileId: file.fileId,
+              afdName: file.afdName ?? file.name ?? file.fileId,
+            })),
+          };
+        }),
+        unsupportedFiles: [],
+      });
+    }
+
+    return metadataMap;
+  }
+
+  private getParentRelativePath(relativePath: string): string | null {
+    if (relativePath === '.') {
+      return null;
+    }
+
+    const lastSlashIndex = relativePath.lastIndexOf('/');
+    if (lastSlashIndex === -1) {
+      return '.';
+    }
+
+    return relativePath.slice(0, lastSlashIndex);
   }
 
   getLogFilePath(): string {
