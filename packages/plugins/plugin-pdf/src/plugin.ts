@@ -11,6 +11,17 @@ import {
   type MinerUContentItem,
 } from './mineru';
 
+let minerUConversionQueue: Promise<void> = Promise.resolve();
+
+function runWithMinerUConversionLock<T>(task: () => Promise<T>): Promise<T> {
+  const run = minerUConversionQueue.then(task, task);
+  minerUConversionQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 /**
  * PDF 插件配置
  */
@@ -46,8 +57,9 @@ export class PDFPlugin implements DocumentPlugin {
       throw new Error('未配置 MinerU，请在插件配置中提供 serverUrl');
     }
 
-    // 调用 MinerU 转换
-    const result = await convertPDFWithMinerU(filePath, minerUOptions);
+    const result = await runWithMinerUConversionLock(() =>
+      convertPDFWithMinerU(filePath, minerUOptions),
+    );
 
     // 构建 PositionMapping
     const mapping = this.buildPositionMapping(result);

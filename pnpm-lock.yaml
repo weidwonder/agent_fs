@@ -337,8 +337,8 @@ importers:
         specifier: workspace:*
         version: link:../../core
       mineru-ts:
-        specifier: ^1.0.0
-        version: 1.0.0(encoding@0.1.13)
+        specifier: ^1.0.1
+        version: 1.0.1(encoding@0.1.13)
     devDependencies:
       '@types/node':
         specifier: ^20.0.0
@@ -3465,8 +3465,8 @@ packages:
     resolution: {integrity: sha512-z0yWI+4FDrrweS8Zmt4Ej5HdJmky15+L2e6Wgn3+iK5fWzb6T3fhNFq2+MeTRb064c6Wr4N/wv0DzQTjNzHNGQ==}
     engines: {node: '>=10'}
 
-  mineru-ts@1.0.0:
-    resolution: {integrity: sha512-J3E4PuNI4MnTjS6K5cCKcFsZP5v0SYLRxO4SkQA/zSBQICneh8L7Jsn3PBuZHPYXB/7MiD4Pmoaqvg5Kz9VUJA==}
+  mineru-ts@1.0.1:
+    resolution: {integrity: sha512-4V2+SbgPSwTpihu9apy/WzQ0m2aN3hqstuK0hWiWPYuv5wkWyIX3Jrq8Y77YnQkg6ajZBfgIYCerQy6oh70ABA==}
 
   minimatch@3.1.2:
     resolution: {integrity: sha512-J7p63hRiAjw1NDEww1W7i37+ByIrOWO5XQQAzZ3VOcL0PNybwpfmV/N05zFAzwQ9USyEcX6t3UO+K5aqBQOIHw==}
@@ -4264,6 +4264,7 @@ packages:
   tar@7.5.7:
     resolution: {integrity: sha512-fov56fJiRuThVFXD6o6/Q354S7pnWMJIVlDBYijsTNx6jKSE4pvrDTs6lUnmGvNyfJwFQQwWy3owKz1ucIhveQ==}
     engines: {node: '>=18'}
+    deprecated: Old versions of tar are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
 
   temp-file@3.4.0:
     resolution: {integrity: sha512-C5tjlC/HCtVUOi3KWVokd4vHVViOmGjtLwIh4MuzPo/nMYTV/p1urt3RnMz2IWXDdKEGJH3k5+KPxtqRsUYGtg==}
@@ -7948,7 +7949,7 @@ snapshots:
 
   mimic-response@3.1.0: {}
 
-  mineru-ts@1.0.0(encoding@0.1.13):
+  mineru-ts@1.0.1(encoding@0.1.13):
     dependencies:
       '@hyzyla/pdfium': 1.0.11
       axios: 1.13.4

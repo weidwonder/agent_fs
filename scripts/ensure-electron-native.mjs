@@ -51,8 +51,12 @@ function collectNativeBinaryPaths() {
 function probeElectronNativeModules() {
   const probeScript = `
 try {
-  require('better-sqlite3');
-  require('nodejieba');
+  const BetterSqlite3 = require('better-sqlite3');
+  const db = new BetterSqlite3(':memory:');
+  db.prepare('SELECT 1 AS ok').get();
+  db.close();
+  const nodejieba = require('nodejieba');
+  nodejieba.cut('Agent FS native probe');
   process.stdout.write('electron-native-probe-ok\\n');
 } catch (error) {
   process.stderr.write(String(error?.stack || error));

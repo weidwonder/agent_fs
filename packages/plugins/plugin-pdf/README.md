@@ -9,7 +9,11 @@ PDF 文档处理插件，使用 mineru-ts 将 PDF 转换为 Markdown。
 - 支持双向定位：Markdown <-> PDF
 - 复用 Markdown 分块和向量化流程
 - 内置 VLM 空响应重试（`Empty response from VLM server` 场景）
+- 内置网络异常重试（`EHOSTDOWN`/`ETIMEDOUT` 等场景）
 - 未配置 `maxConcurrency` 时自动使用更保守默认值 `4`
+- 页面级并发默认限制为 `1`，降低大 PDF 转换时的服务冲击
+- 页级可重试错误默认重试 2 次，重试后仍失败时默认跳过该页
+- 插件内置转换锁，同一进程内 PDF 会串行调用 MinerU
 
 ## 依赖
 
@@ -32,6 +36,9 @@ const plugin = createPDFPlugin({
     timeout: 600000,                     // 可选
     maxRetries: 3,                       // 可选
     maxConcurrency: 10,                  // 可选
+    pageConcurrency: 2,                  // 可选：页面级并发（默认 1）
+    pageRetryLimit: 2,                   // 可选：页面级重试次数（默认 2）
+    skipFailedPages: true,               // 可选：页面级重试耗尽后是否跳过（默认 true）
   },
 });
 
@@ -76,7 +83,8 @@ MINERU_SERVER_URL=http://localhost:30000 npx tsx scripts/test-with-pdf.ts /path/
 2. **性能**：PDF 转换较慢（大文件可能需要 1-2 分钟），建议设置 120s 以上超时
 3. **位置映射**：当前只支持页级映射，不支持更精确的 bbox 映射
 4. **回退机制**：无法从内容列表定位时，会按剩余行数平均分配页范围
-5. **并发建议**：若 VLM 服务资源紧张，建议显式设置 `maxConcurrency` 为 4-8
+5. **并发建议**：若 VLM 服务资源紧张，建议显式设置 `maxConcurrency` 为 2-4，`pageConcurrency` 为 1-2
+6. **容错建议**：对超长 PDF 建议保留 `skipFailedPages: true`，避免单页异常导致整份文档失败
 
 ## 输出文件
 

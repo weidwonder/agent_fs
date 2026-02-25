@@ -87,7 +87,7 @@ Agent FS 让 AI Agent 在本地完成“索引 → 检索 → 定位原文”的
 说明：每次索引会生成结构化运行日志：`<project>/.fs_index/logs/indexing.latest.jsonl`，包含 `file/stage/duration/detail`，用于定位卡点与超时阶段。
 说明：对超长且无句号分隔的文本块，chunker 会执行硬切分，保证单个 chunk 不超过 `maxTokens`，避免向量化阶段因超大输入超时。
 说明：Excel 转换时会按“有值/有公式”的实际单元格范围确定 sheet 边界，忽略仅有边框等样式但无内容的尾部区域。
-说明：PDF 转换对 `Empty response from VLM server` 会触发整文件重试，并在重试时逐级降低 `maxConcurrency`（默认上限 4），降低大 PDF 并发请求压垮 VLM 服务的概率。
+说明：PDF 转换对 `Empty response from VLM server` 会触发整文件重试，并在重试时逐级降低 `maxConcurrency`（默认上限 4）；同时对单页可重试错误会执行页级重试（默认 2 次），耗尽后默认跳过失败页，避免单页异常导致整文件失败。
 
 ## 4.3 增量更新机制
 
@@ -184,7 +184,7 @@ Agent FS 让 AI Agent 在本地完成“索引 → 检索 → 定位原文”的
   2. `INIT_CWD`
   3. `process.cwd()`
 - 启动前执行 `electron-rebuild`，保证 `better-sqlite3` / `nodejieba` / `canvas` 与 Electron ABI 一致
-- `native:electron` 使用非强制重建模式（不带 `-f`），无变更时可跳过重复编译；重建后会执行 `scripts/ensure-electron-native.mjs`，通过 `ELECTRON_RUN_AS_NODE=1` 探测 native 模块加载；若检测到 macOS 签名损坏（`code signature does not cover entire file...`）会自动重签名后复检
+- `native:electron` 通过 `electron-rebuild -m ../../ --force` 在 workspace 根目录强制重建 `better-sqlite3` / `nodejieba` / `canvas`；重建后会执行 `scripts/ensure-electron-native.mjs`，通过 `ELECTRON_RUN_AS_NODE=1` 实际执行 SQLite 内存查询与 `nodejieba.cut` 进行探测；若检测到 macOS 签名损坏（`code signature does not cover entire file...`）会自动重签名后复检
 
 ---
 
