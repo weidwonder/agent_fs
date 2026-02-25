@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@agent-fs/core": "workspace:*",
-    "mineru-ts": "^1.0.1"
+    "mineru-ts": "^1.0.2"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

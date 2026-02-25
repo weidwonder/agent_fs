@@ -41,8 +41,13 @@ pnpm build
 桌面客户端用于管理索引 — 选择文件夹、查看索引状态。
 
 ```bash
-cd packages/electron-app
-pnpm dev
+./scripts/run.sh -d
+```
+
+等价命令（不使用脚本时）：
+
+```bash
+pnpm --filter @agent-fs/electron-app dev
 ```
 
 操作步骤：

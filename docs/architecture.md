@@ -128,7 +128,9 @@ Agent FS 让 AI Agent 在本地完成“索引 → 检索 → 定位原文”的
    - 向量检索优先使用 `postfilter`；仅当结果低于阈值（默认 `topK`，可配置）时回退 `prefilter`
    - VectorStore 初始化时会确保 `dir_id`、`chunk_id` 标量索引，用于加速 scope 过滤与按 `chunk_id` 回填
    - 倒排召回（InvertedIndex）
-4. 用 RRF 融合排序
+4. 用 RRF 融合排序后按文件聚合：
+   - 同一文件只保留一个代表 chunk 进入 TopK
+   - 记录该文件命中 chunk 数，并按命中数对代表项做分数加权提升
 5. 从 AFD 按需读取 chunk 文本并返回
    - 优先用 chunk 行号范围回填正文；缺失时回退解析 `line/lines` locator
    - 行号补全通过 `chunk_id` 标量查询路径回填，避免走高开销向量回查

@@ -306,6 +306,15 @@ export class Indexer {
       normalizedMinerU.maxConcurrency = 4;
     }
 
+    const pageConcurrency = normalizedMinerU.pageConcurrency;
+    if (
+      typeof pageConcurrency !== 'number' ||
+      !Number.isFinite(pageConcurrency) ||
+      pageConcurrency < 1
+    ) {
+      normalizedMinerU.pageConcurrency = 2;
+    }
+
     return {
       minerU: normalizedMinerU as any,
     };

@@ -75,14 +75,21 @@ export function SearchResultCard({
     <Card className="p-4 space-y-2 hover:shadow-md transition-shadow duration-150">
       {/* Header */}
       <div className="flex justify-between items-center">
-        <Badge
-          className={cn(
-            'border-transparent',
-            getScoreBadgeClass(result.score),
+        <div className="flex items-center gap-2">
+          <Badge
+            className={cn(
+              'border-transparent',
+              getScoreBadgeClass(result.score),
+            )}
+          >
+            {result.score.toFixed(4)}
+          </Badge>
+          {typeof result.chunk_hits === 'number' && result.chunk_hits > 1 && (
+            <Badge variant="secondary" className="text-xs">
+              命中 {result.chunk_hits} chunks
+            </Badge>
           )}
-        >
-          {result.score.toFixed(4)}
-        </Badge>
+        </div>
         <span className="text-xs text-muted-foreground truncate max-w-[120px]">
           {result.chunk_id}
         </span>

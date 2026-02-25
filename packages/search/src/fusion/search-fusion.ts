@@ -3,6 +3,7 @@ import type { VectorStore } from '../vector-store';
 import type { BM25Index } from '../bm25';
 import type { EmbeddingService } from '@agent-fs/llm';
 import { fusionRRF, DEFAULT_RRF_PARAMS, type RRFParams } from './rrf';
+import { aggregateTopByFile } from './file-dedup';
 
 export interface FusionOptions {
   rrfParams?: RRFParams;
@@ -120,7 +121,14 @@ export class SearchFusion {
       rrfParams
     );
 
-    const missingItems = fused.filter((item) => !item.item.source.locator);
+    const topByFile = aggregateTopByFile(
+      fused,
+      topK,
+      (item) => item.source.filePath,
+      (item) => item.chunkId
+    );
+
+    const missingItems = topByFile.filter((item) => !item.item.source.locator);
     if (missingItems.length > 0) {
       const missingIds = Array.from(
         new Set(missingItems.map((item) => item.item.chunkId))
@@ -137,9 +145,11 @@ export class SearchFusion {
       }
     }
 
-    const results = fused.slice(0, topK).map((f) => ({
+    const results = topByFile.map((f) => ({
       ...f.item,
       score: f.score,
+      chunkHits: f.chunkHits,
+      aggregatedChunkIds: f.chunkIds,
     }));
 
     return {

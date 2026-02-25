@@ -33,6 +33,8 @@ interface SearchResultItem {
   score: number;
   content: string;
   summary: string;
+  chunk_hits?: number;
+  aggregated_chunk_ids?: string[];
   source: { file_path: string; locator: string };
 }
 

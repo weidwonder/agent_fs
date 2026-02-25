@@ -215,4 +215,29 @@ describe('SearchFusion', () => {
     expect(response.results[0].source.locator).toBe('loc-x1');
     expect(vectorStore.getByChunkIds).not.toHaveBeenCalled();
   });
+
+  it('should aggregate same-file chunks and boost score', async () => {
+    const docA1 = createVectorDoc('a:0000', '/project/a.md', 'loc-a1');
+    const docA2 = createVectorDoc('a:0001', '/project/a.md', 'loc-a2');
+    const docB1 = createVectorDoc('b:0000', '/project/b.md', 'loc-b1');
+    const { fusion } = createFusion({
+      contentResults: [
+        createVectorResult(docA1, 0.99),
+        createVectorResult(docA2, 0.95),
+        createVectorResult(docB1, 0.90),
+      ],
+    });
+
+    const response = await fusion.search(
+      { query: 'hello', scope: '/project', topK: 2 },
+      { useContentVector: true, useSummaryVector: false, useBM25: false }
+    );
+
+    expect(response.results).toHaveLength(2);
+    expect(response.results[0].chunkId).toBe('a:0000');
+    expect(response.results[1].chunkId).toBe('b:0000');
+    expect(response.results[0].chunkHits).toBe(2);
+    expect(response.results[0].aggregatedChunkIds).toEqual(['a:0000', 'a:0001']);
+    expect(new Set(response.results.map((item) => item.source.filePath)).size).toBe(2);
+  });
 });

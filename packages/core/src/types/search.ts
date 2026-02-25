@@ -22,6 +22,12 @@ export interface SearchResult {
     /** 原文定位符 */
     locator: string;
   };
+
+  /** 同一文件在候选集中命中的 chunk 数 */
+  chunkHits?: number;
+
+  /** 同一文件聚合的 chunk_id 列表 */
+  aggregatedChunkIds?: string[];
 }
 
 /**

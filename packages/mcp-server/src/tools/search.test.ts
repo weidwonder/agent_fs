@@ -78,6 +78,59 @@ vi.mock('@agent-fs/search', () => ({
 
     return [...merged.values()].sort((a, b) => b.score - a.score);
   },
+  aggregateTopByFile: <T>(
+    fused: Array<{ item: T; score: number; sources: string[] }>,
+    topK: number,
+    getFileKey: (item: T) => string | null | undefined,
+    getChunkId: (item: T) => string
+  ) => {
+    const groups = new Map<string, {
+      representative: { item: T; score: number; sources: string[] };
+      scoreSum: number;
+      chunkIds: string[];
+      chunkIdSet: Set<string>;
+      sources: Set<string>;
+    }>();
+
+    for (const row of fused) {
+      const key = ((getFileKey(row.item) || '').trim()) || `__chunk__:${getChunkId(row.item)}`;
+      const chunkId = getChunkId(row.item);
+      const group = groups.get(key);
+      if (!group) {
+        groups.set(key, {
+          representative: row,
+          scoreSum: row.score,
+          chunkIds: chunkId ? [chunkId] : [],
+          chunkIdSet: new Set(chunkId ? [chunkId] : []),
+          sources: new Set(row.sources),
+        });
+        continue;
+      }
+
+      group.scoreSum += row.score;
+      if (chunkId && !group.chunkIdSet.has(chunkId)) {
+        group.chunkIdSet.add(chunkId);
+        group.chunkIds.push(chunkId);
+      }
+      for (const source of row.sources) {
+        group.sources.add(source);
+      }
+      if (row.score > group.representative.score) {
+        group.representative = row;
+      }
+    }
+
+    return [...groups.values()]
+      .map((group) => ({
+        item: group.representative.item,
+        score: group.representative.score + (group.scoreSum - group.representative.score) * 0.35,
+        sources: [...group.sources],
+        chunkHits: group.chunkIds.length,
+        chunkIds: [...group.chunkIds],
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, topK);
+  },
 }));
 
 import {
@@ -229,9 +282,11 @@ describe('search', () => {
       top_k: 5,
     });
 
-    expect(result.results.length).toBeGreaterThanOrEqual(2);
-    expect(result.results.some((item) => item.content === '第一行' && item.summary === '摘要一')).toBe(true);
-    expect(result.results.some((item) => item.content === '第二行' && item.summary === '摘要二')).toBe(true);
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0].content).toBe('第一行');
+    expect(result.results[0].summary).toBe('摘要一');
+    expect(result.results[0].chunk_hits).toBe(2);
+    expect(result.results[0].aggregated_chunk_ids).toEqual(['f1:0000', 'f1:0001']);
 
     expect(invertedCalls).toHaveLength(1);
     expect(invertedCalls[0].options.dirIds).toEqual(['d1']);
@@ -509,5 +564,133 @@ describe('search', () => {
 
     expect(result.results).toHaveLength(1);
     expect(result.results[0].source.locator).toBe('sheet:销售数据/range:A1:B2');
+  });
+
+  it('同一文件多个 chunk 命中时应只占用一个 Top 位', async () => {
+    writeFileSync(
+      join(projectDir, '.fs_index', 'index.json'),
+      JSON.stringify(
+        {
+          version: '2.0',
+          createdAt: '2026-02-06T00:00:00.000Z',
+          updatedAt: '2026-02-06T00:00:00.000Z',
+          dirId: 'd1',
+          directoryPath: projectDir,
+          directorySummary: 'test',
+          projectId: 'd1',
+          relativePath: '.',
+          parentDirId: null,
+          stats: { fileCount: 2, chunkCount: 3, totalTokens: 20 },
+          files: [
+            {
+              name: 'a.md',
+              type: 'md',
+              size: 10,
+              hash: 'sha256:xx',
+              fileId: 'f1',
+              indexedAt: '2026-02-06T00:00:00.000Z',
+              chunkCount: 2,
+              summary: 'doc summary',
+            },
+            {
+              name: 'b.md',
+              type: 'md',
+              size: 10,
+              hash: 'sha256:xy',
+              fileId: 'f2',
+              indexedAt: '2026-02-06T00:00:00.000Z',
+              chunkCount: 1,
+              summary: 'doc summary b',
+            },
+          ],
+          subdirectories: [],
+          unsupportedFiles: [],
+        },
+        null,
+        2
+      )
+    );
+
+    const documentsDir = join(projectDir, '.fs_index', 'documents');
+    state.afdFiles.set(`${documentsDir}:a.md`, {
+      content: '第一行\n第二行\n第三行',
+      summaries: {
+        'f1:0000': '摘要一',
+        'f1:0001': '摘要二',
+      },
+    });
+    state.afdFiles.set(`${documentsDir}:b.md`, {
+      content: '甲行\n乙行',
+      summaries: {
+        'f2:0000': '摘要三',
+      },
+    });
+
+    __setSearchServicesForTest({
+      embeddingService: {
+        embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
+      } as any,
+      vectorStore: {
+        searchByHybrid: vi.fn().mockResolvedValue([
+          {
+            chunk_id: 'f1:0000',
+            score: 0.95,
+            document: {
+              chunk_id: 'f1:0000',
+              file_id: 'f1',
+              dir_id: 'd1',
+              rel_path: 'a.md',
+              file_path: join(projectDir, 'a.md'),
+              chunk_line_start: 1,
+              chunk_line_end: 1,
+              locator: 'line:1-1',
+            },
+          },
+          {
+            chunk_id: 'f1:0001',
+            score: 0.92,
+            document: {
+              chunk_id: 'f1:0001',
+              file_id: 'f1',
+              dir_id: 'd1',
+              rel_path: 'a.md',
+              file_path: join(projectDir, 'a.md'),
+              chunk_line_start: 2,
+              chunk_line_end: 2,
+              locator: 'line:2-2',
+            },
+          },
+          {
+            chunk_id: 'f2:0000',
+            score: 0.88,
+            document: {
+              chunk_id: 'f2:0000',
+              file_id: 'f2',
+              dir_id: 'd1',
+              rel_path: 'b.md',
+              file_path: join(projectDir, 'b.md'),
+              chunk_line_start: 1,
+              chunk_line_end: 1,
+              locator: 'line:1-1',
+            },
+          },
+        ]),
+        getByChunkIds: vi.fn().mockResolvedValue([]),
+      } as any,
+      invertedIndex: {
+        search: vi.fn().mockResolvedValue([]),
+      } as any,
+    });
+
+    const result = await search({
+      query: '测试',
+      scope: projectDir,
+      top_k: 2,
+    });
+
+    expect(result.results).toHaveLength(2);
+    expect(result.results[0].chunk_id).toBe('f1:0000');
+    expect(result.results[1].chunk_id).toBe('f2:0000');
+    expect(new Set(result.results.map((item: any) => item.source.file_path)).size).toBe(2);
   });
 });

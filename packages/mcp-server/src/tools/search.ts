@@ -10,6 +10,7 @@ import {
   InvertedIndex as InvertedIndexClass,
   createVectorStore,
   fusionRRF,
+  aggregateTopByFile,
   DirectoryResolver,
   type RegistryProject as ResolverProject,
 } from '@agent-fs/search';
@@ -181,8 +182,8 @@ export async function search(input: SearchInput) {
     lists.length > 0
       ? fusionRRF(
           lists,
-          (item) => item.chunkId,
-          (existing, next) => ({
+          (item: RuntimeSearchItem) => item.chunkId,
+          (existing: RuntimeSearchItem, next: RuntimeSearchItem) => ({
             chunkId: existing.chunkId,
             fileId: existing.fileId || next.fileId,
             chunkLineStart: existing.chunkLineStart ?? next.chunkLineStart,
@@ -195,7 +196,14 @@ export async function search(input: SearchInput) {
         )
       : [];
 
-  const topItems = fused.slice(0, topK).map((item) => item.item);
+  const diversified = aggregateTopByFile(
+    fused,
+    topK,
+    (item: RuntimeSearchItem) => item.fileId || item.source.filePath,
+    (item: RuntimeSearchItem) => item.chunkId
+  );
+
+  const topItems = diversified.map((item: { item: RuntimeSearchItem }) => item.item);
   await enrichChunkRangesFromVectorStore(topItems, vectorStore);
 
   const markdownCache = new Map<string, string>();
@@ -203,7 +211,12 @@ export async function search(input: SearchInput) {
   const locatorMappingCache = new Map<string, LocatorMappingItem[]>();
 
   const hydratedResults = await Promise.all(
-    fused.slice(0, topK).map(async (fusedItem) => {
+    diversified.map(async (fusedItem: {
+      item: RuntimeSearchItem;
+      score: number;
+      chunkHits: number;
+      chunkIds: string[];
+    }) => {
       const hydrated = await hydrateResult(
         fusedItem.item,
         scopedContext.fileLookup,
@@ -216,6 +229,8 @@ export async function search(input: SearchInput) {
         score: fusedItem.score,
         content: hydrated.content,
         summary: hydrated.summary,
+        chunk_hits: fusedItem.chunkHits,
+        aggregated_chunk_ids: fusedItem.chunkIds,
         source: {
           file_path: hydrated.source.filePath,
           locator: hydrated.source.locator,

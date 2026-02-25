@@ -434,7 +434,7 @@ ipcMain.handle('search', async (_event, input: {
 }) => {
   try {
     const services = await initSearchServices();
-    const { fusionRRF } = await import('@agent-fs/search');
+    const { fusionRRF, aggregateTopByFile } = await import('@agent-fs/search');
     const { createAFDStorage } = await import('@agent-fs/storage');
 
     const startTime = Date.now();
@@ -531,7 +531,14 @@ ipcMain.handle('search', async (_event, input: {
         )
       : [];
 
-    const topItems = fused.slice(0, topK).map((item: any) => item.item as FusionItem);
+    const diversified = aggregateTopByFile(
+      fused,
+      topK,
+      (item: FusionItem) => item.fileId || item.source.filePath,
+      (item: FusionItem) => item.chunkId
+    );
+
+    const topItems = diversified.map((item: any) => item.item as FusionItem);
     const getByChunkIds = (services.vectorStore as any).getByChunkIds;
     if (typeof getByChunkIds === 'function') {
       const missingChunkIds = Array.from(
@@ -585,7 +592,7 @@ ipcMain.handle('search', async (_event, input: {
     };
 
     const hydratedResults = await Promise.all(
-      fused.slice(0, topK).map(async (fusedItem: any) => {
+      diversified.map(async (fusedItem: any) => {
         const item: FusionItem = fusedItem.item;
         const fileInfo = fileLookup.get(item.fileId);
 
@@ -643,6 +650,8 @@ ipcMain.handle('search', async (_event, input: {
           score: fusedItem.score,
           content,
           summary,
+          chunk_hits: fusedItem.chunkHits,
+          aggregated_chunk_ids: fusedItem.chunkIds,
           source: {
             file_path: fileInfo?.filePath || item.source.filePath,
             locator: item.source.locator,
