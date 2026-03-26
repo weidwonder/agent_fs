@@ -35,6 +35,19 @@ interface RuntimeSearchItem {
   };
 }
 
+interface KeywordSnippet {
+  chunk_id: string;
+  locator: string;
+  text: string;
+}
+
+interface AggregatedSearchResult {
+  item: RuntimeSearchItem;
+  score: number;
+  chunkHits: number;
+  chunkIds: string[];
+}
+
 interface FileLookup {
   dirPath: string;
   filePath: string;
@@ -201,22 +214,39 @@ export async function search(input: SearchInput) {
     topK,
     (item: RuntimeSearchItem) => item.fileId || item.source.filePath,
     (item: RuntimeSearchItem) => item.chunkId
-  );
-
-  const topItems = diversified.map((item: { item: RuntimeSearchItem }) => item.item);
-  await enrichChunkRangesFromVectorStore(topItems, vectorStore);
+  ) as AggregatedSearchResult[];
 
   const markdownCache = new Map<string, string>();
   const summariesCache = new Map<string, Record<string, string>>();
   const locatorMappingCache = new Map<string, LocatorMappingItem[]>();
+  const keywordSnippetsByFile = await buildKeywordSnippetsByFile(
+    input.keyword,
+    keywordResults,
+    scopedContext.fileLookup,
+    new Set(diversified.map((item) => item.item.fileId).filter((fileId) => fileId.length > 0)),
+    vectorStore,
+    markdownCache,
+    summariesCache,
+    locatorMappingCache
+  );
+
+  const reselectedResults = await reselectionAggregatedResults(
+    diversified,
+    fused,
+    {
+      query: input.query,
+      keyword: input.keyword,
+    },
+    scopedContext.fileLookup,
+    vectorStore,
+    keywordSnippetsByFile,
+    markdownCache,
+    summariesCache,
+    locatorMappingCache
+  );
 
   const hydratedResults = await Promise.all(
-    diversified.map(async (fusedItem: {
-      item: RuntimeSearchItem;
-      score: number;
-      chunkHits: number;
-      chunkIds: string[];
-    }) => {
+    reselectedResults.map(async (fusedItem) => {
       const hydrated = await hydrateResult(
         fusedItem.item,
         scopedContext.fileLookup,
@@ -231,6 +261,7 @@ export async function search(input: SearchInput) {
         summary: hydrated.summary,
         chunk_hits: fusedItem.chunkHits,
         aggregated_chunk_ids: fusedItem.chunkIds,
+        keyword_snippets: keywordSnippetsByFile.get(hydrated.fileId),
         source: {
           file_path: hydrated.source.filePath,
           locator: hydrated.source.locator,
@@ -483,6 +514,195 @@ function mapKeywordItem(
       locator: item.locator,
     },
   };
+}
+
+async function buildKeywordSnippetsByFile(
+  keyword: string | undefined,
+  keywordResults: InvertedSearchResult[],
+  fileLookup: Map<string, FileLookup>,
+  topFileIds: Set<string>,
+  store: VectorStore,
+  markdownCache: Map<string, string>,
+  summariesCache: Map<string, Record<string, string>>,
+  locatorMappingCache: Map<string, LocatorMappingItem[]>
+): Promise<Map<string, KeywordSnippet[]>> {
+  const normalizedKeyword = keyword?.trim();
+  if (!normalizedKeyword) {
+    return new Map();
+  }
+
+  if (topFileIds.size === 0) {
+    return new Map();
+  }
+
+  const runtimeItems: RuntimeSearchItem[] = [];
+  const seenChunkIds = new Set<string>();
+
+  for (const item of keywordResults) {
+    if (!topFileIds.has(item.fileId) || seenChunkIds.has(item.chunkId)) {
+      continue;
+    }
+
+    seenChunkIds.add(item.chunkId);
+    runtimeItems.push(mapKeywordItem(item, fileLookup));
+  }
+
+  await enrichChunkRangesFromVectorStore(runtimeItems, store);
+
+  const snippetsByFile = new Map<string, KeywordSnippet[]>();
+  for (const item of runtimeItems) {
+    const hydrated = await hydrateResult(
+      item,
+      fileLookup,
+      markdownCache,
+      summariesCache,
+      locatorMappingCache
+    );
+    const snippet = createKeywordSnippet(hydrated.content, normalizedKeyword);
+    if (!snippet) {
+      continue;
+    }
+
+    const existing = snippetsByFile.get(hydrated.fileId) ?? [];
+    if (existing.length >= 3) {
+      continue;
+    }
+
+    existing.push({
+      chunk_id: hydrated.chunkId,
+      locator: hydrated.source.locator,
+      text: snippet,
+    });
+    snippetsByFile.set(hydrated.fileId, existing);
+  }
+
+  return snippetsByFile;
+}
+
+async function reselectionAggregatedResults(
+  aggregatedResults: AggregatedSearchResult[],
+  fusedResults: Array<{ item: RuntimeSearchItem; score: number; sources: string[] }>,
+  searchTerms: {
+    query: string;
+    keyword?: string;
+  },
+  fileLookup: Map<string, FileLookup>,
+  store: VectorStore,
+  keywordSnippetsByFile: Map<string, KeywordSnippet[]>,
+  markdownCache: Map<string, string>,
+  summariesCache: Map<string, Record<string, string>>,
+  locatorMappingCache: Map<string, LocatorMappingItem[]>
+): Promise<AggregatedSearchResult[]> {
+  if (aggregatedResults.length === 0) {
+    return aggregatedResults;
+  }
+
+  const fusedItemByChunkId = new Map(
+    fusedResults.map((row) => [row.item.chunkId, row.item] satisfies [string, RuntimeSearchItem])
+  );
+  const fusedScoreByChunkId = new Map(
+    fusedResults.map((row) => [row.item.chunkId, row.score] satisfies [string, number])
+  );
+  const candidateItems = new Map<string, RuntimeSearchItem>();
+
+  for (const result of aggregatedResults) {
+    for (const chunkId of result.chunkIds) {
+      const candidate = fusedItemByChunkId.get(chunkId);
+      if (candidate) {
+        candidateItems.set(chunkId, candidate);
+      }
+    }
+  }
+
+  await enrichChunkRangesFromVectorStore([...candidateItems.values()], store);
+
+  const hydratedCache = new Map<
+    string,
+    Promise<RuntimeSearchItem & { content: string; summary: string }>
+  >();
+
+  const reselection = await Promise.all(
+    aggregatedResults.map(async (result) => {
+      const snippetChunkIds = new Set(
+        (keywordSnippetsByFile.get(result.item.fileId) ?? []).map((snippet) => snippet.chunk_id)
+      );
+
+      let selectedItem = result.item;
+      let bestBonus = computeRepresentativeBonus({
+        item: result.item,
+        content: '',
+        query: searchTerms.query,
+        keyword: searchTerms.keyword,
+        snippetChunkIds,
+      });
+      let bestChunkScore = fusedScoreByChunkId.get(result.item.chunkId) ?? 0;
+
+      for (const chunkId of result.chunkIds) {
+        const candidate = candidateItems.get(chunkId);
+        if (!candidate) {
+          continue;
+        }
+
+        const hydrated = await getHydratedResultCached(
+          candidate,
+          fileLookup,
+          markdownCache,
+          summariesCache,
+          locatorMappingCache,
+          hydratedCache
+        );
+        const candidateBonus = computeRepresentativeBonus({
+          item: candidate,
+          content: hydrated.content,
+          query: searchTerms.query,
+          keyword: searchTerms.keyword,
+          snippetChunkIds,
+        });
+        const candidateChunkScore = fusedScoreByChunkId.get(chunkId) ?? 0;
+
+        if (
+          candidateBonus > bestBonus ||
+          (candidateBonus === bestBonus && candidateChunkScore > bestChunkScore)
+        ) {
+          selectedItem = candidate;
+          bestBonus = candidateBonus;
+          bestChunkScore = candidateChunkScore;
+        }
+      }
+
+      return {
+        ...result,
+        item: selectedItem,
+        score: result.score + bestBonus,
+      };
+    })
+  );
+
+  return reselection.sort((a, b) => b.score - a.score);
+}
+
+async function getHydratedResultCached(
+  item: RuntimeSearchItem,
+  fileLookup: Map<string, FileLookup>,
+  markdownCache: Map<string, string>,
+  summariesCache: Map<string, Record<string, string>>,
+  locatorMappingCache: Map<string, LocatorMappingItem[]>,
+  cache: Map<string, Promise<RuntimeSearchItem & { content: string; summary: string }>>
+): Promise<RuntimeSearchItem & { content: string; summary: string }> {
+  const cached = cache.get(item.chunkId);
+  if (cached) {
+    return cached;
+  }
+
+  const loading = hydrateResult(
+    item,
+    fileLookup,
+    markdownCache,
+    summariesCache,
+    locatorMappingCache
+  );
+  cache.set(item.chunkId, loading);
+  return loading;
 }
 
 async function hydrateResult(
@@ -739,4 +959,168 @@ function toPositiveInt(value: unknown): number | undefined {
   }
 
   return undefined;
+}
+
+function createKeywordSnippet(content: string, keyword: string, contextChars: number = 24): string {
+  const normalizedContent = content.trim();
+  const normalizedKeyword = keyword.trim();
+
+  if (!normalizedContent || !normalizedKeyword) {
+    return '';
+  }
+
+  const matchIndex = findSnippetMatchIndex(normalizedContent, normalizedKeyword);
+  if (matchIndex < 0) {
+    return normalizedContent.slice(0, Math.min(normalizedContent.length, contextChars * 2));
+  }
+
+  const start = Math.max(0, matchIndex - contextChars);
+  const end = Math.min(
+    normalizedContent.length,
+    matchIndex + normalizedKeyword.length + contextChars
+  );
+  const prefix = start > 0 ? '...' : '';
+  const suffix = end < normalizedContent.length ? '...' : '';
+  return `${prefix}${normalizedContent.slice(start, end)}${suffix}`;
+}
+
+function computeRepresentativeBonus(input: {
+  item: RuntimeSearchItem;
+  content: string;
+  query: string;
+  keyword?: string;
+  snippetChunkIds: Set<string>;
+}): number {
+  const content = input.content.trim();
+  const headingText = extractHeadingText(content);
+  const leadingText = content.slice(0, 200);
+  const exactPhrases = [input.keyword?.trim(), input.query.trim()].filter(
+    (value): value is string => Boolean(value && value.length >= 2)
+  );
+  const terms = extractSearchTerms(input.query, input.keyword);
+
+  let bonus = 0;
+
+  if (input.snippetChunkIds.has(input.item.chunkId)) {
+    bonus += 0.02;
+  }
+
+  for (const phrase of exactPhrases) {
+    if (content.includes(phrase)) {
+      bonus += 0.008;
+    }
+    if (leadingText.includes(phrase)) {
+      bonus += 0.012;
+    }
+    if (headingText.includes(phrase)) {
+      bonus += 0.016;
+    }
+  }
+
+  let headingTermHits = 0;
+  let leadingTermHits = 0;
+  for (const term of terms) {
+    if (headingText.includes(term)) {
+      headingTermHits += 1;
+    }
+    if (leadingText.includes(term)) {
+      leadingTermHits += 1;
+    }
+  }
+
+  bonus += Math.min(headingTermHits, 3) * 0.004;
+  bonus += Math.min(leadingTermHits, 4) * 0.002;
+
+  if (headingTermHits > 0 && hasStructuredAnchor(headingText)) {
+    bonus += 0.006;
+  }
+
+  return bonus;
+}
+
+function extractHeadingText(content: string): string {
+  if (!content) {
+    return '';
+  }
+
+  const lines = content
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  return lines
+    .filter((line, index) => index < 4 && (index < 2 || looksLikeHeadingLine(line)))
+    .join('\n');
+}
+
+function hasStructuredAnchor(text: string): boolean {
+  return /(^|\n)(#|第[一二三四五六七八九十百千万0-9]+[章节条款]|[一二三四五六七八九十]+[、.])/u.test(
+    text
+  );
+}
+
+function looksLikeHeadingLine(line: string): boolean {
+  return (
+    line.startsWith('#') ||
+    /^第[一二三四五六七八九十百千万0-9]+[章节条款]/u.test(line) ||
+    /^[一二三四五六七八九十]+[、.]/u.test(line)
+  );
+}
+
+function extractSearchTerms(query: string, keyword?: string): string[] {
+  const rawTerms = [...splitSearchTerms(keyword ?? ''), ...splitSearchTerms(query)];
+  return [...new Set(rawTerms)].filter((term) => term.length >= 2);
+}
+
+function splitSearchTerms(value: string): string[] {
+  if (!value.trim()) {
+    return [];
+  }
+
+  const normalized = value
+    .replace(/[？?！!]/gu, '')
+    .replace(/[（(][^）)]*[）)]/gu, ' ')
+    .trim();
+  const coarseTerms = normalized
+    .split(/[\s,，。；;、/:：]+/u)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const refinedTerms: string[] = [];
+  for (const term of coarseTerms) {
+    refinedTerms.push(term);
+    if (/[\u4e00-\u9fff]/u.test(term) && term.length >= 4) {
+      refinedTerms.push(
+        ...term
+          .split(/什么|哪些|哪类|哪种|如何|多少|是否|需要|需|应当|包括|满足|开始|采用|有关|相关|责任|内容/u)
+          .map((item) => item.trim())
+          .filter((item) => item.length >= 2)
+      );
+    }
+  }
+
+  return refinedTerms;
+}
+
+function findSnippetMatchIndex(content: string, keyword: string): number {
+  const directIndex = content.indexOf(keyword);
+  if (directIndex >= 0) {
+    return directIndex;
+  }
+
+  for (const term of splitKeywordTerms(keyword)) {
+    const termIndex = content.indexOf(term);
+    if (termIndex >= 0) {
+      return termIndex;
+    }
+  }
+
+  return -1;
+}
+
+function splitKeywordTerms(keyword: string): string[] {
+  return keyword
+    .split(/[\s,，。；;、/]+/u)
+    .map((item) => item.trim())
+    .filter((item) => item.length >= 2);
 }

@@ -283,14 +283,242 @@ describe('search', () => {
     });
 
     expect(result.results).toHaveLength(1);
-    expect(result.results[0].content).toBe('第一行');
-    expect(result.results[0].summary).toBe('摘要一');
+    expect(result.results[0].content).toBe('第二行');
+    expect(result.results[0].summary).toBe('摘要二');
     expect(result.results[0].chunk_hits).toBe(2);
     expect(result.results[0].aggregated_chunk_ids).toEqual(['f1:0000', 'f1:0001']);
 
     expect(invertedCalls).toHaveLength(1);
     expect(invertedCalls[0].options.dirIds).toEqual(['d1']);
     expect(searchByHybrid).toHaveBeenCalledTimes(1);
+  });
+
+  it('同文件关键词命中被聚合后，应优先选中关键词快照对应的 chunk 作为代表结果', async () => {
+    const documentsDir = join(projectDir, '.fs_index', 'documents');
+    state.afdFiles.set(`${documentsDir}:a.md`, {
+      content: '向量命中的代表段落\n这是被聚合的关键词命中片段，前文后文都在这里\n结尾行',
+      summaries: {
+        'f1:0000': '摘要一',
+        'f1:0001': '摘要二',
+      },
+    });
+
+    __setSearchServicesForTest({
+      embeddingService: {
+        embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
+      } as any,
+      vectorStore: {
+        searchByHybrid: vi.fn().mockResolvedValue([
+          {
+            chunk_id: 'f1:0000',
+            score: 0.9,
+            document: {
+              chunk_id: 'f1:0000',
+              file_id: 'f1',
+              dir_id: 'd1',
+              rel_path: 'a.md',
+              file_path: join(projectDir, 'a.md'),
+              chunk_line_start: 1,
+              chunk_line_end: 1,
+              content_vector: [],
+              summary_vector: [],
+              locator: 'line:1-1',
+              indexed_at: '',
+              deleted_at: '',
+            },
+          },
+        ]),
+        getByChunkIds: vi.fn().mockResolvedValue([]),
+      } as any,
+      invertedIndex: {
+        search: vi.fn().mockResolvedValue([
+          {
+            chunkId: 'f1:0001',
+            fileId: 'f1',
+            dirId: 'd1',
+            locator: 'line:2-2',
+            score: 1.1,
+          },
+        ]),
+      } as any,
+    });
+
+    const result = await search({
+      query: '代表段落',
+      keyword: '关键词命中',
+      scope: projectDir,
+      top_k: 5,
+    });
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0].chunk_id).toBe('f1:0001');
+    expect(result.results[0].content).toContain('关键词命中片段');
+    expect(result.results[0].aggregated_chunk_ids).toEqual(['f1:0000', 'f1:0001']);
+    expect(result.results[0].keyword_snippets).toEqual([
+      {
+        chunk_id: 'f1:0001',
+        locator: 'line:2-2',
+        text: expect.stringContaining('关键词命中'),
+      },
+    ]);
+  });
+
+  it('标题或条款锚点更强的文件，应在结果中优先展示', async () => {
+    writeFileSync(
+      join(baseDir, '.agent_fs', 'registry.json'),
+      JSON.stringify(
+        {
+          version: '2.0',
+          embeddingModel: 'mock',
+          embeddingDimension: 3,
+          projects: [
+            {
+              path: projectDir,
+              alias: 'project',
+              projectId: 'd1',
+              summary: 'test',
+              lastUpdated: '2026-02-06T00:00:00.000Z',
+              totalFileCount: 2,
+              totalChunkCount: 2,
+              subdirectories: [],
+              valid: true,
+            },
+          ],
+        },
+        null,
+        2
+      )
+    );
+
+    writeFileSync(
+      join(projectDir, '.fs_index', 'index.json'),
+      JSON.stringify(
+        {
+          version: '2.0',
+          createdAt: '2026-02-06T00:00:00.000Z',
+          updatedAt: '2026-02-06T00:00:00.000Z',
+          dirId: 'd1',
+          directoryPath: projectDir,
+          directorySummary: 'test',
+          projectId: 'd1',
+          relativePath: '.',
+          parentDirId: null,
+          stats: { fileCount: 2, chunkCount: 2, totalTokens: 20 },
+          files: [
+            {
+              name: 'guide.md',
+              afdName: 'guide.md',
+              type: 'md',
+              size: 10,
+              hash: 'sha256:guide',
+              fileId: 'f1',
+              indexedAt: '2026-02-06T00:00:00.000Z',
+              chunkCount: 1,
+              summary: 'guide',
+            },
+            {
+              name: 'standard.md',
+              afdName: 'standard.md',
+              type: 'md',
+              size: 10,
+              hash: 'sha256:std',
+              fileId: 'f2',
+              indexedAt: '2026-02-06T00:00:00.000Z',
+              chunkCount: 1,
+              summary: 'standard',
+            },
+          ],
+          subdirectories: [],
+          unsupportedFiles: [],
+        },
+        null,
+        2
+      )
+    );
+
+    const documentsDir = join(projectDir, '.fs_index', 'documents');
+    state.afdFiles.set(`${documentsDir}:guide.md`, {
+      content: '# 应用指南\n借款费用资本化的说明性内容，主要讨论计算口径。',
+      summaries: {
+        'f1:0000': 'guide',
+      },
+    });
+    state.afdFiles.set(`${documentsDir}:standard.md`, {
+      content:
+        '# 第二章 确认和计量\n第五条 借款费用同时满足下列条件的，才能开始资本化：\n（一）资产支出已经发生；',
+      summaries: {
+        'f2:0000': 'standard',
+      },
+    });
+
+    __setSearchServicesForTest({
+      embeddingService: {
+        embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
+      } as any,
+      vectorStore: {
+        searchByHybrid: vi.fn().mockResolvedValue([
+          {
+            chunk_id: 'f1:0000',
+            score: 0.91,
+            document: {
+              chunk_id: 'f1:0000',
+              file_id: 'f1',
+              dir_id: 'd1',
+              rel_path: 'guide.md',
+              file_path: join(projectDir, 'guide.md'),
+              chunk_line_start: 1,
+              chunk_line_end: 2,
+              locator: 'line:1-2',
+            },
+          },
+          {
+            chunk_id: 'f2:0000',
+            score: 0.88,
+            document: {
+              chunk_id: 'f2:0000',
+              file_id: 'f2',
+              dir_id: 'd1',
+              rel_path: 'standard.md',
+              file_path: join(projectDir, 'standard.md'),
+              chunk_line_start: 1,
+              chunk_line_end: 3,
+              locator: 'line:1-3',
+            },
+          },
+        ]),
+        getByChunkIds: vi.fn().mockResolvedValue([]),
+      } as any,
+      invertedIndex: {
+        search: vi.fn().mockResolvedValue([
+          {
+            chunkId: 'f1:0000',
+            fileId: 'f1',
+            dirId: 'd1',
+            locator: 'line:1-2',
+            score: 1.2,
+          },
+          {
+            chunkId: 'f2:0000',
+            fileId: 'f2',
+            dirId: 'd1',
+            locator: 'line:1-3',
+            score: 1.0,
+          },
+        ]),
+      } as any,
+    });
+
+    const result = await search({
+      query: '借款费用开始资本化需满足哪些条件',
+      keyword: '开始资本化',
+      scope: projectDir,
+      top_k: 2,
+    });
+
+    expect(result.results).toHaveLength(2);
+    expect(result.results[0].chunk_id).toBe('f2:0000');
+    expect(result.results[0].source.file_path).toBe(join(projectDir, 'standard.md'));
+    expect(result.results[0].content).toContain('才能开始资本化');
   });
 
   it('多目录 scope 应只触发一次向量检索并使用 dirIds 过滤', async () => {

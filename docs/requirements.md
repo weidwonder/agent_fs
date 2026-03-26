@@ -62,13 +62,13 @@
 |------|------|
 | 多路召回 | 向量搜索(hybrid: content+summary 1:1) + 倒排索引关键词搜索 |
 | 融合排序 | RRF（倒数排名融合） |
-| 结果聚合 | RRF 结果按文档聚合后返回；同一文件只保留一个代表 chunk 进入 TopK，并记录该文件的命中 chunk 数 |
+| 结果聚合 | RRF 结果按文档聚合后返回；同一文件只保留一个代表 chunk 进入 TopK，并记录该文件的命中 chunk 数；代表 chunk 可结合关键词命中、标题/条款锚点做二次重选 |
 | 可选 Rerank | 支持 LLM Rerank |
 | 查询类型 | 语义查询 + 精准关键词查询（可同时使用） |
 | 查询范围 | 单/多个 Project 或子文件夹，**自动包含所有子文件夹** |
 | 层级过滤 | 指定 Project 文件夹 → 搜索全部；指定子文件夹 → 仅搜索该子树 |
 | 范围解析一致性 | scope 传入 Project 时，优先基于 `.fs_index/index.json` 递归解析真实 `dirId`；索引缺失时回退 registry |
-| 结果元数据 | 搜索结果返回代表 chunk 的 `chunkId`，并可附带 `chunkHits` / `aggregatedChunkIds` 说明同文件聚合命中情况 |
+| 结果元数据 | 搜索结果返回代表 chunk 的 `chunkId`，并可附带 `chunkHits` / `aggregatedChunkIds` 说明同文件聚合命中情况；当传入 `keyword` 时，可额外返回 `keywordSnippets` 展示关键词命中片段快照，并作为代表 chunk 重选的信号之一 |
 
 ### 2.5 增量更新
 

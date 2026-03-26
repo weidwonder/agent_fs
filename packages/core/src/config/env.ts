@@ -10,11 +10,11 @@ import { homedir } from 'node:os';
 export function loadEnvFiles(): void {
   const globalEnvPath = join(homedir(), '.agent_fs', '.env');
   if (existsSync(globalEnvPath)) {
-    loadDotenv({ path: globalEnvPath });
+    loadDotenv({ path: globalEnvPath, quiet: true });
   }
 
   // 当前目录覆盖全局配置
-  loadDotenv({ override: true });
+  loadDotenv({ override: true, quiet: true });
 }
 
 /**

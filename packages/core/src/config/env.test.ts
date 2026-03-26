@@ -1,5 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { resolveEnvVariables } from './env';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { loadEnvFiles, resolveEnvVariables } from './env';
 
 describe('resolveEnvVariables', () => {
   const originalEnv = process.env;
@@ -59,5 +62,28 @@ describe('resolveEnvVariables', () => {
     expect(resolveEnvVariables(123)).toBe(123);
     expect(resolveEnvVariables(true)).toBe(true);
     expect(resolveEnvVariables(null)).toBe(null);
+  });
+
+  it('loadEnvFiles should load .env quietly without writing stdout', () => {
+    const originalCwd = process.cwd();
+    const tempDir = mkdtempSync(join(tmpdir(), 'agent-fs-env-'));
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+
+    try {
+      mkdirSync(tempDir, { recursive: true });
+      writeFileSync(join(tempDir, '.env'), 'LOCAL_ONLY_VAR=from-local-env\n');
+      delete process.env.LOCAL_ONLY_VAR;
+
+      process.chdir(tempDir);
+      loadEnvFiles();
+
+      expect(process.env.LOCAL_ONLY_VAR).toBe('from-local-env');
+      expect(stdoutSpy).not.toHaveBeenCalled();
+    } finally {
+      stdoutSpy.mockRestore();
+      process.chdir(originalCwd);
+      rmSync(tempDir, { recursive: true, force: true });
+      delete process.env.LOCAL_ONLY_VAR;
+    }
   });
 });

@@ -141,6 +141,7 @@ Electron 客户端在知识库卡片设置中提供三种手动操作：
 4. 用 RRF 融合排序后按文件聚合：
    - 同一文件只保留一个代表 chunk 进入 TopK
    - 记录该文件命中 chunk 数，并按命中数对代表项做分数加权提升
+   - 代表 chunk 会结合关键词快照、标题/条款锚点和首段命中情况做二次重选，减少“文件对了但首屏段落不对”的情况
 5. 从 AFD 按需读取 chunk 文本并返回
    - 优先用 chunk 行号范围回填正文；缺失时回退解析 `line/lines` locator
    - 行号补全通过 `chunk_id` 标量查询路径回填，避免走高开销向量回查
@@ -149,6 +150,7 @@ Electron 客户端在知识库卡片设置中提供三种手动操作：
 6. 返回结果附带聚合元数据：
    - `chunk_hits`：该文件在候选集中命中的 chunk 数
    - `aggregated_chunk_ids`：参与聚合的 chunk_id 列表
+   - `keyword_snippets`：当请求包含 `keyword` 时，返回同文件关键词命中 chunk 的局部快照；若其对应 chunk 更优，也会参与代表 chunk 重选
 
 ## 5.1.1 Electron `remove-project` 体验
 
