@@ -5,6 +5,8 @@ interface IndexProgress {
   total: number;
 }
 
+type IndexingMode = 'incremental' | 'backfill-summary' | 'reindex';
+
 interface RegisteredProject {
   path: string;
   alias: string;
@@ -56,6 +58,32 @@ interface SearchResponse {
   meta: SearchMeta;
 }
 
+interface SummaryCoverageStat {
+  covered: number;
+  total: number;
+  ratio: number;
+}
+
+interface ProjectOverview {
+  fileCount: number;
+  indexedFileCount: number;
+  chunkCount: number;
+  lastUpdated: string;
+  indexerVersion: string;
+  summaryCoverage: {
+    chunk: SummaryCoverageStat;
+    document: SummaryCoverageStat;
+    directory: SummaryCoverageStat;
+  };
+}
+
+interface IndexingLogResponse {
+  success: boolean;
+  logPath?: string;
+  lines: string[];
+  error?: string;
+}
+
 interface ProjectRemovalStatus {
   projectId: string;
   phase: 'started' | 'completed' | 'failed';
@@ -70,8 +98,13 @@ interface RawConfigResult {
 
 interface ElectronAPI {
   selectDirectory: () => Promise<string | undefined>;
-  startIndexing: (path: string) => Promise<{ success: boolean; metadata?: unknown; error?: string }>;
+  startIndexing: (
+    path: string,
+    options?: { mode?: IndexingMode }
+  ) => Promise<{ success: boolean; metadata?: unknown; error?: string }>;
   onIndexingProgress: (callback: (progress: IndexProgress) => void) => void;
+  getProjectOverview: (path: string) => Promise<{ success: boolean; overview?: ProjectOverview; error?: string }>;
+  getIndexingLog: (path: string, mode?: IndexingMode) => Promise<IndexingLogResponse>;
   getRegistry: () => Promise<{ projects: RegisteredProject[] }>;
   removeProject: (projectId: string) => Promise<{ success: boolean; cleanup_started?: boolean; error?: string }>;
   onProjectRemovalStatus: (callback: (status: ProjectRemovalStatus) => void) => () => void;

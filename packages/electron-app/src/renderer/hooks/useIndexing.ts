@@ -17,22 +17,42 @@ export function useIndexing(onComplete?: () => void) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    window.electronAPI.onIndexingProgress(setProgress);
+    window.electronAPI.onIndexingProgress((next) => {
+      setProgress((prev) => {
+        if (!prev) {
+          return next;
+        }
+        if (prev.total !== next.total) {
+          return next;
+        }
+        return {
+          ...next,
+          processed: Math.max(prev.processed, next.processed),
+        };
+      });
+    });
   }, []);
 
-  const startIndexing = useCallback(async (dirPath: string) => {
+  const startIndexing = useCallback(async (
+    dirPath: string,
+    options?: { mode?: IndexingMode }
+  ): Promise<{ success: boolean; metadata?: unknown; error?: string }> => {
     setIndexingPath(dirPath);
     setError(null);
     setProgress(null);
     try {
-      const result = await window.electronAPI.startIndexing(dirPath);
+      const result = await window.electronAPI.startIndexing(dirPath, options);
       if (!result.success) {
         setError(result.error || '索引失败');
+        return result;
       } else {
         onComplete?.();
+        return result;
       }
     } catch (e) {
-      setError((e as Error).message);
+      const message = (e as Error).message;
+      setError(message);
+      return { success: false, error: message };
     } finally {
       setIndexingPath(null);
       setProgress(null);
@@ -42,7 +62,7 @@ export function useIndexing(onComplete?: () => void) {
   const selectAndIndex = useCallback(async () => {
     const path = await window.electronAPI.selectDirectory();
     if (path) {
-      await startIndexing(path);
+      await startIndexing(path, { mode: 'incremental' });
     }
   }, [startIndexing]);
 

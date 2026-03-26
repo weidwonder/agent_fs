@@ -1,7 +1,14 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  rmSync,
+  mkdirSync,
+  readdirSync,
+} from 'node:fs';
 import type { IndexProgress, Indexer } from '@agent-fs/indexer';
 import { collectScopeContext, resolveProjectPath } from './search-scope';
 import { getProjectMemoryFromRegistry, saveProjectMemoryFile } from './project-memory';
@@ -11,6 +18,42 @@ import { sanitizeForLog } from './log-sanitizer';
 import { resolveDisplayLocator } from './locator-display';
 
 let mainWindow: BrowserWindow | null = null;
+
+type IndexingMode = 'incremental' | 'backfill-summary' | 'reindex';
+
+interface IndexMetadataLike {
+  dirId: string;
+  directoryPath: string;
+  relativePath: string;
+  updatedAt: string;
+  indexedWithVersion?: string;
+  directorySummary?: string;
+  stats: {
+    fileCount: number;
+    chunkCount: number;
+  };
+  files: Array<{
+    name: string;
+    afdName?: string;
+    fileId: string;
+    chunkCount: number;
+    summary: string;
+  }>;
+  subdirectories: Array<{
+    name: string;
+  }>;
+}
+
+interface MetadataNode {
+  dirPath: string;
+  metadata: IndexMetadataLike;
+}
+
+function resolveActionLogPath(dirPath: string, mode: IndexingMode): string {
+  const filename =
+    mode === 'backfill-summary' ? 'summary-backfill.latest.jsonl' : 'indexing.latest.jsonl';
+  return join(dirPath, '.fs_index', 'logs', filename);
+}
 
 // --- Window ---
 
@@ -78,6 +121,235 @@ function writeRegistry(registry: { version: string; projects: any[] }): void {
   const dir = join(homedir(), '.agent_fs');
   mkdirSync(dir, { recursive: true });
   writeFileSync(getRegistryPath(), JSON.stringify(registry, null, 2));
+}
+
+function readIndexMetadata(dirPath: string): IndexMetadataLike | null {
+  const indexPath = join(dirPath, '.fs_index', 'index.json');
+  if (!existsSync(indexPath)) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(readFileSync(indexPath, 'utf-8')) as IndexMetadataLike;
+  } catch {
+    return null;
+  }
+}
+
+function collectMetadataNodes(rootPath: string): MetadataNode[] {
+  const root = readIndexMetadata(rootPath);
+  if (!root) {
+    return [];
+  }
+
+  const nodes: MetadataNode[] = [];
+  const stack: MetadataNode[] = [{ dirPath: rootPath, metadata: root }];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+    nodes.push(current);
+
+    for (const subdirectory of current.metadata.subdirectories || []) {
+      const childPath = join(current.dirPath, subdirectory.name);
+      const child = readIndexMetadata(childPath);
+      if (!child) continue;
+      stack.push({
+        dirPath: childPath,
+        metadata: child,
+      });
+    }
+  }
+
+  return nodes;
+}
+
+function collectDirIds(rootPath: string): string[] {
+  return Array.from(
+    new Set(
+      collectMetadataNodes(rootPath)
+        .map((node) => node.metadata.dirId)
+        .filter((dirId) => typeof dirId === 'string' && dirId.length > 0)
+    )
+  );
+}
+
+function countProjectFiles(rootPath: string): number {
+  if (!existsSync(rootPath)) {
+    return 0;
+  }
+
+  let count = 0;
+  const stack = [rootPath];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      if (entry.name === '.fs_index') {
+        continue;
+      }
+
+      const fullPath = join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+        continue;
+      }
+
+      if (entry.isFile()) {
+        count += 1;
+      }
+    }
+  }
+
+  return count;
+}
+
+function readLogTail(logPath: string, maxLines = 200): string[] {
+  if (!existsSync(logPath)) {
+    return [];
+  }
+
+  try {
+    const content = readFileSync(logPath, 'utf-8');
+    const lines = content
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    if (lines.length <= maxLines) {
+      return lines;
+    }
+    return lines.slice(lines.length - maxLines);
+  } catch {
+    return [];
+  }
+}
+
+async function collectSummaryCoverage(nodes: MetadataNode[]): Promise<{
+  chunkCovered: number;
+  chunkTotal: number;
+  documentCovered: number;
+  documentTotal: number;
+  directoryCovered: number;
+  directoryTotal: number;
+}> {
+  const { createAFDStorage } = await import('@agent-fs/storage');
+  const storageCache = new Map<string, ReturnType<typeof createAFDStorage>>();
+  const getStorage = (dirPath: string) => {
+    const cached = storageCache.get(dirPath);
+    if (cached) {
+      return cached;
+    }
+
+    const created = createAFDStorage({
+      documentsDir: join(dirPath, '.fs_index', 'documents'),
+    });
+    storageCache.set(dirPath, created);
+    return created;
+  };
+
+  let chunkCovered = 0;
+  let chunkTotal = 0;
+  let documentCovered = 0;
+  let documentTotal = 0;
+  let directoryCovered = 0;
+  let directoryTotal = 0;
+
+  for (const node of nodes) {
+    directoryTotal += 1;
+    if ((node.metadata.directorySummary ?? '').trim().length > 0) {
+      directoryCovered += 1;
+    }
+
+    const storage = getStorage(node.dirPath);
+    for (const file of node.metadata.files) {
+      documentTotal += 1;
+      if ((file.summary ?? '').trim().length > 0) {
+        documentCovered += 1;
+      }
+
+      chunkTotal += file.chunkCount;
+      if (file.chunkCount <= 0) {
+        continue;
+      }
+
+      const archiveName = file.afdName ?? file.name ?? file.fileId;
+      let summaries: Record<string, string> = {};
+      try {
+        const raw = await storage.read(archiveName, 'summaries.json');
+        summaries = JSON.parse(raw.toString('utf-8')) as Record<string, string>;
+      } catch {
+        summaries = {};
+      }
+
+      for (let index = 0; index < file.chunkCount; index += 1) {
+        const chunkId = `${file.fileId}:${String(index).padStart(4, '0')}`;
+        if ((summaries[chunkId] ?? '').trim().length > 0) {
+          chunkCovered += 1;
+        }
+      }
+    }
+  }
+
+  return {
+    chunkCovered,
+    chunkTotal,
+    documentCovered,
+    documentTotal,
+    directoryCovered,
+    directoryTotal,
+  };
+}
+
+async function buildProjectOverview(dirPath: string): Promise<{
+  fileCount: number;
+  indexedFileCount: number;
+  chunkCount: number;
+  lastUpdated: string;
+  indexerVersion: string;
+  summaryCoverage: {
+    chunk: { covered: number; total: number; ratio: number };
+    document: { covered: number; total: number; ratio: number };
+    directory: { covered: number; total: number; ratio: number };
+  };
+}> {
+  const nodes = collectMetadataNodes(dirPath);
+  const root = nodes.find((node) => node.metadata.relativePath === '.')?.metadata ?? nodes[0]?.metadata;
+  if (!root) {
+    throw new Error('未找到索引元数据，请先执行索引');
+  }
+
+  const coverage = await collectSummaryCoverage(nodes);
+  const safeRatio = (covered: number, total: number) => {
+    if (total <= 0) {
+      return 0;
+    }
+    return covered / total;
+  };
+
+  return {
+    fileCount: countProjectFiles(dirPath),
+    indexedFileCount: root.stats.fileCount,
+    chunkCount: root.stats.chunkCount,
+    lastUpdated: root.updatedAt,
+    indexerVersion: root.indexedWithVersion || 'unknown',
+    summaryCoverage: {
+      chunk: {
+        covered: coverage.chunkCovered,
+        total: coverage.chunkTotal,
+        ratio: safeRatio(coverage.chunkCovered, coverage.chunkTotal),
+      },
+      document: {
+        covered: coverage.documentCovered,
+        total: coverage.documentTotal,
+        ratio: safeRatio(coverage.documentCovered, coverage.documentTotal),
+      },
+      directory: {
+        covered: coverage.directoryCovered,
+        total: coverage.directoryTotal,
+        ratio: safeRatio(coverage.directoryCovered, coverage.directoryTotal),
+      },
+    },
+  };
 }
 
 async function cleanupRemovedProjectData(input: {
@@ -160,28 +432,93 @@ ipcMain.handle('select-directory', async () => {
 
 // --- IPC: Indexing ---
 
-ipcMain.handle('start-indexing', async (_event, dirPath: string) => {
+async function runIndexingByMode(input: {
+  dirPath: string;
+  mode: IndexingMode;
+}): Promise<unknown> {
   let indexer: Indexer | null = null;
 
   try {
     const { createIndexer } = await import('@agent-fs/indexer');
     indexer = createIndexer({
+      runtimeVersion: app.getVersion(),
       onProgress: (progress: IndexProgress) => {
         mainWindow?.webContents.send('indexing-progress', progress);
       },
     });
 
     await indexer.init();
-    const metadata = await indexer.indexDirectory(dirPath);
-    return { success: true, metadata };
-  } catch (error) {
-    return { success: false, error: (error as Error).message };
+    if (input.mode === 'reindex') {
+      await cleanupRemovedProjectData({
+        projectPath: input.dirPath,
+        dirIds: collectDirIds(input.dirPath),
+      });
+    }
+
+    if (input.mode === 'backfill-summary') {
+      return await indexer.backfillSummaries(input.dirPath);
+    }
+
+    return await indexer.indexDirectory(input.dirPath);
   } finally {
     if (indexer) {
       await indexer.dispose();
     }
   }
+}
+
+ipcMain.handle(
+  'start-indexing',
+  async (
+    _event,
+    dirPath: string,
+    options?: { mode?: IndexingMode }
+  ) => {
+    const mode = options?.mode ?? 'incremental';
+    try {
+      const metadata = await runIndexingByMode({
+        dirPath,
+        mode,
+      });
+      return { success: true, metadata };
+    } catch (error) {
+      return { success: false, error: (error as Error).message };
+    }
+  }
+);
+
+ipcMain.handle('get-project-overview', async (_event, dirPath: string) => {
+  try {
+    const overview = await buildProjectOverview(dirPath);
+    return { success: true, overview };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
 });
+
+ipcMain.handle(
+  'get-indexing-log',
+  async (
+    _event,
+    dirPath: string,
+    mode: IndexingMode = 'incremental'
+  ) => {
+    try {
+      const logPath = resolveActionLogPath(dirPath, mode);
+      return {
+        success: true,
+        logPath,
+        lines: readLogTail(logPath),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: (error as Error).message,
+        lines: [],
+      };
+    }
+  }
+);
 
 // --- IPC: Registry ---
 

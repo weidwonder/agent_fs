@@ -13,6 +13,18 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@agent-fs/core', () => ({
   loadConfig: mocks.loadConfig,
+  MarkdownChunker: class {
+    chunk(markdown: string) {
+      return [
+        {
+          content: markdown,
+          lineStart: 1,
+          lineEnd: Math.max(1, markdown.split('\n').length),
+          locator: 'line:1',
+        },
+      ];
+    }
+  },
 }));
 
 vi.mock('@agent-fs/plugin-markdown', () => ({
@@ -396,5 +408,22 @@ describe('Indexer 插件配置注入', () => {
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }
+  });
+
+  it('runWithConcurrency 应按并发上限执行任务', async () => {
+    const { Indexer } = await import('./indexer');
+    const indexer = new Indexer() as any;
+    const tasks = [1, 2, 3, 4, 5, 6];
+    let running = 0;
+    let peak = 0;
+
+    await indexer.runWithConcurrency(tasks, 2, async () => {
+      running += 1;
+      peak = Math.max(peak, running);
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      running -= 1;
+    });
+
+    expect(peak).toBeLessThanOrEqual(2);
   });
 });

@@ -108,6 +108,16 @@ Agent FS 让 AI Agent 在本地完成“索引 → 检索 → 定位原文”的
   - 若快照记录存在但 AFD 缺失，则自动回退为重建流程（先清理旧索引再重建）
   - 本次索引完整成功后会自动删除该快照文件
 
+Electron 客户端在知识库卡片设置中提供三种手动操作：
+
+- **增量更新**：仅处理新增/变更/删除文件
+- **补全 Summary**：基于 AFD（`content.md` 与 `summaries.json`）仅补齐缺失的 chunk/document/directory 摘要，并同步更新 `summary_vector/hybrid_vector`
+- **补全 Summary 并发**：目录内文件并发遵循 `indexing.file_parallelism`；单文件内 chunk 批次并发遵循 `summary.parallel_requests`
+- **chunk 批次上限**：单次 LLM 批量请求最多 4 个 chunk，且在单文件处理完成后一次性写回 `summaries.json`
+- **失败兜底**：批量摘要输出无法解析时自动降级逐 chunk 生成，尽量减少空摘要残留
+- **重新索引**：清理当前目录 `.fs_index` 与对应向量/倒排数据后全量重建
+- 维护弹窗会实时显示当前阶段进度、摘要覆盖率刷新结果，以及日志尾部（增量/重建读取 `indexing.latest.jsonl`，补全摘要读取 `summary-backfill.latest.jsonl`）
+
 对子目录删除场景，系统会基于 `SubdirectoryInfo.fileIds` 做兜底清理，避免孤儿 AFD 文件残留。
 
 ---
@@ -211,6 +221,7 @@ interface DocumentConversionResult {
 - `projectId`：Project 全局标识
 - `relativePath`：相对 Project 的路径（根目录为 `.`）
 - `parentDirId`：父目录 ID（根目录为 `null`）
+- `indexedWithVersion`：生成该目录索引时的程序版本
 - `files[]`：文件级元数据（含 `fileId`、`hash`、`chunkCount`）
 - `subdirectories[]`：子目录信息（含 `fileIds`，用于删除清理）
 

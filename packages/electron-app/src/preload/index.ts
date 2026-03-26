@@ -5,10 +5,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectDirectory: () => ipcRenderer.invoke('select-directory'),
 
   // 索引
-  startIndexing: (dirPath: string) => ipcRenderer.invoke('start-indexing', dirPath),
+  startIndexing: (dirPath: string, options?: { mode?: 'incremental' | 'backfill-summary' | 'reindex' }) =>
+    ipcRenderer.invoke('start-indexing', dirPath, options),
   onIndexingProgress: (callback: (progress: any) => void) => {
     ipcRenderer.on('indexing-progress', (_event, progress) => callback(progress));
   },
+  getProjectOverview: (dirPath: string) => ipcRenderer.invoke('get-project-overview', dirPath),
+  getIndexingLog: (dirPath: string, mode?: 'incremental' | 'backfill-summary' | 'reindex') =>
+    ipcRenderer.invoke('get-indexing-log', dirPath, mode),
 
   // Registry
   getRegistry: () => ipcRenderer.invoke('get-registry'),

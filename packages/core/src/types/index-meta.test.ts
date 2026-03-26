@@ -6,6 +6,7 @@ describe('IndexMeta Types', () => {
     expectTypeOf<IndexMetadata>().toHaveProperty('projectId');
     expectTypeOf<IndexMetadata>().toHaveProperty('relativePath');
     expectTypeOf<IndexMetadata>().toHaveProperty('parentDirId');
+    expectTypeOf<IndexMetadata>().toHaveProperty('indexedWithVersion');
   });
 
   it('FileMetadata should not expose chunkIds', () => {

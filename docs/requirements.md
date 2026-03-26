@@ -77,6 +77,12 @@
 | 文档修改 | **检测文件变更 → 重建该文件索引** |
 | 变更检测 | 文件 ≤200MB: MD5 哈希；文件 >200MB: 大小+修改时间 |
 | 触发方式 | 手动触发（暂不支持自动检测） |
+| 手动动作 | 增量更新 / 补全 Summary / 重新索引 |
+| 补全 Summary | 基于 AFD（`content.md`/`summaries.json`）补齐缺失的 chunk/document/directory summary，并同步回写 summary 向量 |
+| 补全并发策略 | 文件级并发遵循 `indexing.file_parallelism`；单文件内 chunk 批处理并发遵循 `summary.parallel_requests` |
+| chunk 批次上限 | 单次 LLM 批量请求最多 4 个 chunk（文件处理完成后一次性写回 `summaries.json`） |
+| 失败兜底策略 | chunk 批量 JSON 解析失败时，自动降级为逐 chunk 生成并重试 |
+| 执行可观测性 | 维护弹窗实时展示进度（阶段/文件）与日志尾部，并刷新 summary 覆盖率 |
 
 ## 3. 系统架构要求
 
@@ -131,7 +137,7 @@
 
 | 文件/目录 | 用途 |
 |----------|------|
-| `index.json` | 目录元数据（文件列表、子目录列表、层级信息） |
+| `index.json` | 目录元数据（文件列表、子目录列表、层级信息、`indexedWithVersion`） |
 | `memory/project.md` | 项目级记忆入口（项目介绍与索引摘要） |
 | `memory/extend/*.md` | 项目经验扩展记忆（约定在 project.md 引用） |
 | `documents/<原文件名>.afd` | 当前目录文件对应的压缩归档（ZIP，含 content.md、metadata.json） |

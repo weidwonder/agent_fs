@@ -131,12 +131,43 @@ describe('SummaryService', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('batch 摘要 JSON 解析失败时应重试并降级为空', async () => {
+  it('batch 摘要 JSON 解析失败时应重试并降级为逐 chunk 生成', async () => {
     const service = new SummaryService(baseConfig);
     const call = vi.spyOn(service as any, 'callLLM');
     call.mockResolvedValueOnce('not json');
     call.mockResolvedValueOnce('still wrong');
     call.mockResolvedValueOnce('also wrong');
+    call.mockResolvedValueOnce('单条摘要-c1');
+    call.mockResolvedValueOnce('单条摘要-c2');
+
+    const result = await service.generateChunkSummariesBatch(
+      [
+        { id: 'c1', content: 'a' },
+        { id: 'c2', content: 'b' },
+      ],
+      { maxRetries: 2, timeoutMs: 10, tokenBudget: 10 }
+    );
+
+    expect(result.map((item) => item.summary)).toEqual(['单条摘要-c1', '单条摘要-c2']);
+    expect(call).toHaveBeenCalledTimes(5);
+    const callOptions = (call.mock.calls as unknown[][]).map(
+      (callArgs) => callArgs[1] as { maxRetries: number; timeoutMs?: number }
+    );
+    expect(callOptions.slice(0, 3)).toEqual([
+      { maxRetries: 1, timeoutMs: 10 },
+      { maxRetries: 1, timeoutMs: 10 },
+      { maxRetries: 1, timeoutMs: 10 },
+    ]);
+    expect(callOptions.slice(3)).toEqual([
+      { maxRetries: 2, timeoutMs: 10 },
+      { maxRetries: 2, timeoutMs: 10 },
+    ]);
+  });
+
+  it('batch 与逐 chunk 都失败时应降级为空', async () => {
+    const service = new SummaryService(baseConfig);
+    const call = vi.spyOn(service as any, 'callLLM');
+    call.mockRejectedValue(new Error('network'));
 
     const result = await service.generateChunkSummariesBatch(
       [
@@ -147,11 +178,8 @@ describe('SummaryService', () => {
     );
 
     expect(result.map((item) => item.summary)).toEqual(['', '']);
-    expect(call).toHaveBeenCalledTimes(3);
-    for (const callArgs of call.mock.calls as unknown[][]) {
-      const options = callArgs[1] as { maxRetries: number; timeoutMs?: number };
-      expect(options).toMatchObject({ maxRetries: 1, timeoutMs: 10 });
-    }
+    expect(result.every((item) => item.fallback)).toBe(true);
+    expect(call).toHaveBeenCalledTimes(5);
   });
 
   it('batch 摘要应按 parallelRequests 并行处理多个批次', async () => {
@@ -187,5 +215,35 @@ describe('SummaryService', () => {
     expect(call).toHaveBeenCalledTimes(3);
     expect(maxRunning).toBeGreaterThan(1);
     expect(result.map((item) => item.summary)).toEqual(['摘要-c1', '摘要-c2', '摘要-c3']);
+  });
+
+  it('batch 摘要单次请求最多应包含 4 个 chunk', async () => {
+    const service = new SummaryService(baseConfig);
+    const batchSizes: number[] = [];
+
+    const call = vi.spyOn(service as any, 'callLLM');
+    call.mockImplementation(async (...args: unknown[]) => {
+      const messages = (args[0] as Array<{ content: string }>) ?? [];
+      const firstMessage = messages[0]?.content ?? '';
+      const ids = Array.from(firstMessage.matchAll(/"id":"([^"]+)"/gu)).map(
+        (match) => match[1]
+      );
+      batchSizes.push(ids.length);
+      return JSON.stringify(ids.map((id) => ({ id, summary: `摘要-${id}` })));
+    });
+
+    const inputs = Array.from({ length: 9 }, (_, index) => ({
+      id: `c${index + 1}`,
+      content: `第${index + 1}段内容`,
+    }));
+    const result = await service.generateChunkSummariesBatch(inputs, {
+      tokenBudget: 100000,
+      maxRetries: 0,
+      parallelRequests: 1,
+    });
+
+    expect(call).toHaveBeenCalledTimes(3);
+    expect(batchSizes).toEqual([4, 4, 1]);
+    expect(result.every((item) => item.summary.startsWith('摘要-'))).toBe(true);
   });
 });

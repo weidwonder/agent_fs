@@ -8,6 +8,7 @@ import { Sidebar } from './components/Sidebar';
 import { SearchPanel } from './components/SearchPanel';
 import { StatusBar } from './components/StatusBar';
 import { SettingsDialog } from './components/SettingsDialog';
+import { ProjectOverviewDialog } from './components/ProjectOverviewDialog';
 import { useRegistry } from './hooks/useRegistry';
 import { useIndexing } from './hooks/useIndexing';
 
@@ -24,6 +25,7 @@ export default function App() {
     text: string;
   } | null>(null);
   const [searchMeta, setSearchMeta] = useState<SearchMeta | null>(null);
+  const [overviewProject, setOverviewProject] = useState<RegisteredProject | null>(null);
 
   // 移除项目
   const handleRemoveConfirm = useCallback(async (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -91,6 +93,13 @@ export default function App() {
     refresh();
   }, [refresh]);
 
+  const handleRunProjectAction = useCallback(async (
+    dirPath: string,
+    mode: IndexingMode
+  ) => {
+    return startIndexing(dirPath, { mode });
+  }, [startIndexing]);
+
   return (
     <TooltipProvider>
       <div className="flex flex-col h-screen overflow-hidden">
@@ -120,7 +129,13 @@ export default function App() {
             indexingPath={indexingPath}
             progress={progress}
             onAddDirectory={selectAndIndex}
-            onUpdateProject={(path) => startIndexing(path)}
+            onUpdateProject={(path) => startIndexing(path, { mode: 'incremental' })}
+            onManageProject={(projectId) => {
+              const project = projects.find((p) => p.projectId === projectId);
+              if (project) {
+                setOverviewProject(project);
+              }
+            }}
             onRemoveProject={(projectId) => {
               const project = projects.find((p) => p.projectId === projectId);
               if (project) {
@@ -148,6 +163,20 @@ export default function App() {
 
         {/* Settings Dialog */}
         <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+
+        <ProjectOverviewDialog
+          project={overviewProject}
+          open={overviewProject !== null}
+          disabled={indexingPath !== null}
+          indexingPath={indexingPath}
+          progress={progress}
+          onOpenChange={(open) => {
+            if (!open) {
+              setOverviewProject(null);
+            }
+          }}
+          onRunAction={handleRunProjectAction}
+        />
 
         {/* Remove Confirmation Dialog */}
         <AlertDialog

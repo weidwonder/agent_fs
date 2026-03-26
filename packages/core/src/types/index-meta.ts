@@ -5,6 +5,9 @@ export interface IndexMetadata {
   /** 版本号 */
   version: string;
 
+  /** 生成该索引时的程序版本 */
+  indexedWithVersion?: string;
+
   /** 创建时间 */
   createdAt: string;
 

@@ -1,5 +1,5 @@
 import React from 'react';
-import { RefreshCw, Trash2 } from 'lucide-react';
+import { RefreshCw, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { Card } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -18,6 +18,7 @@ interface ProjectCardProps {
   isUpdating: boolean;
   progress: IndexProgress | null;
   onUpdate: () => void;
+  onManage: () => void;
   onRemove: () => void;
   onSummaryChange: (summary: string) => void;
 }
@@ -27,13 +28,14 @@ export function ProjectCard({
   isUpdating,
   progress,
   onUpdate,
+  onManage,
   onRemove,
   onSummaryChange,
 }: ProjectCardProps) {
   return (
     <Card className="min-w-0 w-full max-w-full p-3 pr-3 space-y-2 hover:bg-accent/50 cursor-default transition-colors duration-150">
       {/* Header: title + action buttons */}
-      <div className="relative min-w-0 pr-14">
+      <div className="relative min-w-0 pr-20">
         <span className="block min-w-0 font-medium text-sm leading-tight truncate">
           {project.alias}
         </span>
@@ -46,6 +48,15 @@ export function ProjectCard({
             onClick={onUpdate}
           >
             <RefreshCw className={`h-3.5 w-3.5 ${isUpdating ? 'animate-spin' : ''}`} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 w-7 p-0 cursor-pointer"
+            disabled={isUpdating}
+            onClick={onManage}
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5" />
           </Button>
           <Button
             variant="ghost"

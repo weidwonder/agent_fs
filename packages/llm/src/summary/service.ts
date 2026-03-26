@@ -10,6 +10,7 @@ import {
 import { groupByTokenBudget, type TokenItem } from './batch-utils';
 
 type ChatMessage = { role: 'user' | 'system'; content: string };
+const MAX_CHUNKS_PER_BATCH_REQUEST = 4;
 
 export interface SummaryOptions {
   useCache?: boolean;
@@ -111,7 +112,10 @@ export class SummaryService {
       return results;
     }
 
-    const batches = groupByTokenBudget(pending, tokenBudget);
+    const batches = this.splitBatchesByMaxItems(
+      groupByTokenBudget(pending, tokenBudget),
+      MAX_CHUNKS_PER_BATCH_REQUEST
+    );
     let nextBatchIndex = 0;
     const workerCount = Math.min(parallelRequests, batches.length);
     const workers = Array.from({ length: workerCount }).map(async () => {
@@ -179,7 +183,17 @@ export class SummaryService {
     if (!parsed) {
       for (const item of batch) {
         const index = item.payload.index;
-        context.results[index] = { id: item.id, summary: '', fromCache: false, fallback: true };
+        const single = await this.generateChunkSummary(item.payload.content, {
+          useCache: context.useCache,
+          maxRetries: context.maxRetries,
+          timeoutMs: context.timeoutMs,
+        });
+        context.results[index] = {
+          id: item.id,
+          summary: single.summary,
+          fromCache: single.fromCache,
+          fallback: single.fallback,
+        };
       }
       return;
     }
@@ -194,6 +208,27 @@ export class SummaryService {
 
       context.results[index] = { id: item.id, summary, fromCache: false, fallback: false };
     }
+  }
+
+  private splitBatchesByMaxItems<T>(
+    batches: TokenItem<T>[][],
+    maxItems: number
+  ): TokenItem<T>[][] {
+    const normalizedMaxItems = Math.max(1, Math.floor(maxItems));
+    const result: TokenItem<T>[][] = [];
+
+    for (const batch of batches) {
+      if (batch.length <= normalizedMaxItems) {
+        result.push(batch);
+        continue;
+      }
+
+      for (let offset = 0; offset < batch.length; offset += normalizedMaxItems) {
+        result.push(batch.slice(offset, offset + normalizedMaxItems));
+      }
+    }
+
+    return result;
   }
 
   async generateDocumentSummary(

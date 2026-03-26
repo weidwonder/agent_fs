@@ -35,6 +35,13 @@ export interface VectorSearchOptions {
   minResultsBeforeFallback?: number;
 }
 
+export interface ChunkVectorUpdate {
+  chunkId: string;
+  summaryVector: number[];
+  hybridVector: number[];
+  indexedAt?: string;
+}
+
 const toRecord = (doc: VectorDocument): Record<string, unknown> => ({ ...doc });
 const REQUIRED_SCHEMA_FIELDS = new Set([
   'chunk_id',
@@ -237,7 +244,7 @@ export class VectorStore {
     return results.slice(0, topK).map((row) => ({
       chunk_id: row.chunk_id,
       score: this.distanceToScore(row._distance ?? 0, distanceType),
-      document: row as VectorDocument,
+      document: this.normalizeVectorDocument(row as VectorDocument),
     }));
   }
 
@@ -285,7 +292,7 @@ export class VectorStore {
     if (typeof queryFactory === 'function') {
       const query = queryFactory.call(table).where(whereClause).limit(normalizedChunkIds.length);
       const rows = await query.toArray();
-      return rows as VectorDocument[];
+      return (rows as VectorDocument[]).map((row) => this.normalizeVectorDocument(row));
     }
 
     const fallback = table
@@ -294,7 +301,7 @@ export class VectorStore {
       .where(whereClause)
       .limit(normalizedChunkIds.length);
     const rows = await fallback.toArray();
-    return rows as VectorDocument[];
+    return (rows as VectorDocument[]).map((row) => this.normalizeVectorDocument(row));
   }
 
   /**
@@ -343,6 +350,71 @@ export class VectorStore {
     }
 
     return vector;
+  }
+
+  private normalizeVectorDocument(doc: VectorDocument): VectorDocument {
+    return {
+      ...doc,
+      content_vector: this.normalizeVector(doc.content_vector),
+      summary_vector: this.normalizeVector(doc.summary_vector),
+      hybrid_vector: this.normalizeVector(doc.hybrid_vector),
+    };
+  }
+
+  private normalizeVector(raw: unknown): number[] {
+    if (Array.isArray(raw)) {
+      return raw.map((value) => this.normalizeNumber(value));
+    }
+
+    if (ArrayBuffer.isView(raw)) {
+      const maybeArrayLike = raw as unknown as { length?: number };
+      if (typeof maybeArrayLike.length === 'number') {
+        return Array.from(raw as unknown as ArrayLike<number>, (value) =>
+          this.normalizeNumber(value)
+        );
+      }
+      return [];
+    }
+
+    if (raw && typeof raw === 'object') {
+      const candidate = raw as {
+        toArray?: () => unknown;
+        values?: () => Iterable<unknown>;
+        length?: number;
+      };
+
+      if (typeof candidate.toArray === 'function') {
+        return this.normalizeVector(candidate.toArray());
+      }
+
+      if (typeof candidate.values === 'function') {
+        try {
+          return Array.from(candidate.values(), (value) => this.normalizeNumber(value));
+        } catch {
+          // 忽略 values 迭代失败，继续兜底处理
+        }
+      }
+
+      if (typeof candidate.length === 'number') {
+        try {
+          return Array.from(candidate as ArrayLike<unknown>, (value) =>
+            this.normalizeNumber(value)
+          );
+        } catch {
+          // 忽略 ArrayLike 转换失败，继续兜底处理
+        }
+      }
+    }
+
+    return [];
+  }
+
+  private normalizeNumber(value: unknown): number {
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? value : 0;
+    }
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
   }
 
   private buildFilters(options: {
@@ -452,6 +524,31 @@ export class VectorStore {
           values: { file_path: row.file_path.replace(oldPrefix, newPrefix) },
         });
       }
+    }
+  }
+
+  async updateChunkVectors(updates: ChunkVectorUpdate[]): Promise<void> {
+    if (updates.length === 0) {
+      return;
+    }
+
+    const table = await this.ensureTable();
+    const defaultIndexedAt = new Date().toISOString();
+
+    for (const update of updates) {
+      if (!update.chunkId) {
+        continue;
+      }
+
+      await table.update({
+        where: `chunk_id = '${this.escapeLiteral(update.chunkId)}'`,
+        values: {
+          summary_vector: update.summaryVector,
+          hybrid_vector: update.hybridVector,
+          indexed_at: update.indexedAt ?? defaultIndexedAt,
+          deleted_at: '',
+        },
+      });
     }
   }
 

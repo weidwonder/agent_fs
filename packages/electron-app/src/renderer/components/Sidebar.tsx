@@ -13,6 +13,7 @@ interface SidebarProps {
   progress: IndexProgress | null;
   onAddDirectory: () => void;
   onUpdateProject: (path: string) => void;
+  onManageProject: (projectId: string) => void;
   onRemoveProject: (projectId: string) => void;
   onSummaryChange: (projectId: string, summary: string) => void;
 }
@@ -23,6 +24,7 @@ export function Sidebar({
   progress,
   onAddDirectory,
   onUpdateProject,
+  onManageProject,
   onRemoveProject,
   onSummaryChange,
 }: SidebarProps) {
@@ -50,6 +52,7 @@ export function Sidebar({
                   isUpdating={indexingPath === project.path}
                   progress={indexingPath === project.path ? progress : null}
                   onUpdate={() => onUpdateProject(project.path)}
+                  onManage={() => onManageProject(project.projectId)}
                   onRemove={() => onRemoveProject(project.projectId)}
                   onSummaryChange={(summary) =>
                     onSummaryChange(project.projectId, summary)

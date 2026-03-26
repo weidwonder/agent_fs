@@ -1,8 +1,8 @@
 import { basename, join } from 'node:path';
 import { homedir } from 'node:os';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import type { Registry, IndexMetadata, Config } from '@agent-fs/core';
-import { loadConfig } from '@agent-fs/core';
+import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import type { Registry, IndexMetadata, Config, FileMetadata } from '@agent-fs/core';
+import { loadConfig, MarkdownChunker } from '@agent-fs/core';
 import { createEmbeddingService, createSummaryService } from '@agent-fs/llm';
 import { createVectorStore, InvertedIndex } from '@agent-fs/search';
 import { createAFDStorage } from '@agent-fs/storage';
@@ -16,16 +16,35 @@ import { IndexPipeline, type IndexProgress } from './pipeline';
 export interface IndexerOptions {
   configPath?: string;
   onProgress?: (progress: IndexProgress) => void;
+  runtimeVersion?: string;
+}
+
+interface MetadataTreeNode {
+  dirPath: string;
+  metadata: IndexMetadata;
+  children: MetadataTreeNode[];
+}
+
+interface FileBackfillResult {
+  chunkUpdated: boolean;
+  documentSummaryUpdated: boolean;
+  missingChunkCount: number;
+  changedChunkCount: number;
+  generatedChunkCount: number;
+  fallbackChunkCount: number;
 }
 
 export class Indexer {
   private config: Config;
   private pluginManager: PluginManager;
   private options: IndexerOptions;
+  private readonly runtimeVersion: string;
+  private backfillLogFilePath = '';
 
   constructor(options: IndexerOptions = {}) {
     this.options = options;
     this.config = loadConfig({ configPath: options.configPath });
+    this.runtimeVersion = options.runtimeVersion?.trim() || 'unknown';
     this.pluginManager = new PluginManager();
     const pluginOptions = this.resolvePluginOptions();
 
@@ -103,6 +122,7 @@ export class Indexer {
         maxRetries: summaryConfig?.max_retries,
         timeoutMs: summaryConfig?.timeout_ms,
       },
+      indexerVersion: this.runtimeVersion,
       onProgress: this.options.onProgress,
     });
 
@@ -130,6 +150,266 @@ export class Indexer {
     await embeddingService.dispose();
 
     return metadata;
+  }
+
+  async backfillSummaries(dirPath: string): Promise<IndexMetadata> {
+    const rootTree = this.loadMetadataTree(dirPath);
+    if (!rootTree) {
+      throw new Error(`未找到索引元数据，请先执行索引：${dirPath}`);
+    }
+    this.initBackfillLogFile(dirPath);
+    const backfillStartedAt = Date.now();
+
+    const storagePath = join(homedir(), '.agent_fs', 'storage');
+    mkdirSync(join(storagePath, 'vectors'), { recursive: true });
+
+    const embeddingService = createEmbeddingService(this.config.embedding);
+    await embeddingService.init();
+
+    const summaryService = createSummaryService(this.config.llm);
+
+    const vectorStore = createVectorStore({
+      storagePath: join(storagePath, 'vectors'),
+      dimension: embeddingService.getDimension(),
+    });
+    await vectorStore.init();
+
+    const summaryConfig = this.config.summary;
+    const summaryOptions = {
+      tokenBudget: summaryConfig?.chunk_batch_token_budget ?? 10000,
+      parallelRequests: summaryConfig?.parallel_requests ?? 2,
+      maxRetries: summaryConfig?.max_retries,
+      timeoutMs: summaryConfig?.timeout_ms,
+    };
+    const backfillFileParallelism = Math.max(1, this.config.indexing.file_parallelism ?? 2);
+
+    const chunker = new MarkdownChunker({
+      minTokens: this.config.indexing.chunk_size.min_tokens,
+      maxTokens: this.config.indexing.chunk_size.max_tokens,
+    });
+
+    const allNodes = this.flattenMetadataTree(rootTree);
+    const totalFiles = allNodes.reduce((sum, node) => sum + node.metadata.files.length, 0);
+    let processedFiles = 0;
+    let startedFiles = 0;
+    const stats = {
+      filesProcessed: 0,
+      filesWithMissingChunks: 0,
+      chunksGenerated: 0,
+      chunksFallback: 0,
+      chunksReEmbedded: 0,
+      documentSummariesGenerated: 0,
+      directorySummariesGenerated: 0,
+    };
+    this.writeBackfillLog({
+      level: 'info',
+      event: 'backfill_start',
+      directory: dirPath,
+      totalDirectories: allNodes.length,
+      totalFiles,
+      runtimeVersion: this.runtimeVersion,
+      fileParallelism: backfillFileParallelism,
+      summaryParallelRequests: summaryOptions.parallelRequests,
+      chunkBatchTokenBudget: summaryOptions.tokenBudget,
+    });
+
+    const sortedByDepth = [...allNodes].sort(
+      (left, right) =>
+        this.depthFromRelativePath(right.metadata.relativePath) -
+        this.depthFromRelativePath(left.metadata.relativePath)
+    );
+    const nodeByRelativePath = new Map(
+      sortedByDepth.map((node) => [node.metadata.relativePath, node])
+    );
+
+    try {
+      for (const node of sortedByDepth) {
+        const storage = createAFDStorage({
+          documentsDir: join(node.dirPath, '.fs_index', 'documents'),
+        });
+
+        await this.runWithConcurrency(
+          node.metadata.files,
+          backfillFileParallelism,
+          async (file) => {
+            const filePathForLog = this.toRelativeFilePath(node.metadata.relativePath, file.name);
+            startedFiles += 1;
+            const startedOrder = startedFiles;
+            const progressSnapshot = processedFiles;
+            this.writeBackfillLog({
+              level: 'info',
+              event: 'file_start',
+              file: filePathForLog,
+              processed: startedOrder,
+              total: totalFiles,
+            });
+            this.options.onProgress?.({
+              phase: 'summary',
+              currentFile: filePathForLog,
+              processed: progressSnapshot,
+              total: totalFiles,
+            });
+
+            try {
+              const result = await this.backfillFileSummary({
+                node,
+                file,
+                processed: progressSnapshot,
+                getProcessedCount: () => processedFiles,
+                total: totalFiles,
+                storage,
+                chunker,
+                summaryService,
+                embeddingService,
+                vectorStore,
+                summaryOptions,
+              });
+              stats.filesProcessed += 1;
+              if (result.missingChunkCount > 0) {
+                stats.filesWithMissingChunks += 1;
+              }
+              stats.chunksGenerated += result.generatedChunkCount;
+              stats.chunksFallback += result.fallbackChunkCount;
+              stats.chunksReEmbedded += result.changedChunkCount;
+              if (result.documentSummaryUpdated) {
+                stats.documentSummariesGenerated += 1;
+              }
+
+              if (result.chunkUpdated || result.documentSummaryUpdated) {
+                file.indexedAt = new Date().toISOString();
+              }
+
+              processedFiles += 1;
+              this.options.onProgress?.({
+                phase: 'write',
+                currentFile: filePathForLog,
+                processed: processedFiles,
+                total: totalFiles,
+              });
+              this.writeBackfillLog({
+                level: 'info',
+                event: 'file_done',
+                file: filePathForLog,
+                processed: processedFiles,
+                total: totalFiles,
+                missingChunks: result.missingChunkCount,
+                generatedChunks: result.generatedChunkCount,
+                fallbackChunks: result.fallbackChunkCount,
+                reEmbeddedChunks: result.changedChunkCount,
+                documentSummaryUpdated: result.documentSummaryUpdated,
+              });
+            } catch (error) {
+              this.writeBackfillLog({
+                level: 'error',
+                event: 'file_error',
+                file: filePathForLog,
+                detail: this.extractErrorMessage(error),
+              });
+              throw error;
+            }
+          }
+        );
+
+        const previousSummary = node.metadata.directorySummary ?? '';
+        if (!previousSummary.trim()) {
+          const fileSummaries = node.metadata.files.map((file) => `${file.name}: ${file.summary}`);
+          const subdirectorySummaries = node.metadata.subdirectories
+            .map((subdirectory) => {
+              const childRelativePath =
+                node.metadata.relativePath === '.'
+                  ? subdirectory.name
+                  : `${node.metadata.relativePath}/${subdirectory.name}`;
+              return nodeByRelativePath.get(childRelativePath)?.metadata.directorySummary ?? '';
+            })
+            .filter((summary) => summary.trim().length > 0);
+
+          const generated = await summaryService.generateDirectorySummary(
+            node.metadata.directoryPath,
+            fileSummaries,
+            subdirectorySummaries,
+            {
+              maxRetries: summaryOptions.maxRetries,
+              timeoutMs: summaryOptions.timeoutMs,
+            }
+          );
+          node.metadata.directorySummary = generated.summary;
+          if (generated.summary.trim().length > 0) {
+            stats.directorySummariesGenerated += 1;
+          }
+          this.writeBackfillLog({
+            level: 'info',
+            event: 'directory_summary_done',
+            directory: node.metadata.relativePath,
+            generated: generated.summary.trim().length > 0,
+          });
+        }
+
+        this.refreshDirectoryAggregates(node, nodeByRelativePath);
+        node.metadata.updatedAt = new Date().toISOString();
+        node.metadata.indexedWithVersion = this.runtimeVersion;
+        this.writeDirectoryMetadata(node.dirPath, node.metadata);
+      }
+      this.writeBackfillLog({
+        level: 'info',
+        event: 'backfill_success',
+        totalFiles,
+        durationMs: Date.now() - backfillStartedAt,
+        ...stats,
+      });
+    } catch (error) {
+      this.writeBackfillLog({
+        level: 'error',
+        event: 'backfill_error',
+        durationMs: Date.now() - backfillStartedAt,
+        detail: this.extractErrorMessage(error),
+      });
+      throw error;
+    } finally {
+      await vectorStore.close();
+      await embeddingService.dispose();
+    }
+
+    const rootMetadata = this.readIndexMetadata(dirPath);
+    if (!rootMetadata) {
+      throw new Error('补全摘要后读取根索引失败');
+    }
+
+    this.initMemoryIfNeeded(dirPath, rootMetadata);
+    this.updateRegistry(rootMetadata);
+    return rootMetadata;
+  }
+
+  private initBackfillLogFile(dirPath: string): void {
+    const logsDir = join(dirPath, '.fs_index', 'logs');
+    mkdirSync(logsDir, { recursive: true });
+    this.backfillLogFilePath = join(logsDir, 'summary-backfill.latest.jsonl');
+    writeFileSync(this.backfillLogFilePath, '');
+  }
+
+  private writeBackfillLog(entry: Record<string, unknown>): void {
+    if (!this.backfillLogFilePath) {
+      return;
+    }
+
+    try {
+      const payload = JSON.stringify({
+        timestamp: new Date().toISOString(),
+        ...entry,
+      });
+      appendFileSync(this.backfillLogFilePath, `${payload}\n`);
+    } catch {
+      // 日志写入失败不应影响主流程
+    }
+  }
+
+  private extractErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      const message = error.message?.trim();
+      if (message) {
+        return message;
+      }
+    }
+    return '未提供错误详情';
   }
 
   private initMemoryIfNeeded(dirPath: string, metadata: IndexMetadata): void {
@@ -262,6 +542,370 @@ export class Indexer {
     }
 
     return JSON.parse(readFileSync(indexPath, 'utf-8')) as IndexMetadata;
+  }
+
+  private writeDirectoryMetadata(dirPath: string, metadata: IndexMetadata): void {
+    writeFileSync(join(dirPath, '.fs_index', 'index.json'), JSON.stringify(metadata, null, 2));
+  }
+
+  private loadMetadataTree(dirPath: string): MetadataTreeNode | null {
+    const metadata = this.readIndexMetadata(dirPath);
+    if (!metadata) {
+      return null;
+    }
+
+    const children: MetadataTreeNode[] = [];
+    for (const subdirectory of metadata.subdirectories) {
+      const childPath = join(dirPath, subdirectory.name);
+      const childTree = this.loadMetadataTree(childPath);
+      if (childTree) {
+        children.push(childTree);
+      }
+    }
+
+    return {
+      dirPath,
+      metadata,
+      children,
+    };
+  }
+
+  private flattenMetadataTree(root: MetadataTreeNode): MetadataTreeNode[] {
+    const result: MetadataTreeNode[] = [];
+    const stack: MetadataTreeNode[] = [root];
+
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (!current) continue;
+      result.push(current);
+      for (const child of current.children) {
+        stack.push(child);
+      }
+    }
+
+    return result;
+  }
+
+  private depthFromRelativePath(relativePath: string): number {
+    if (!relativePath || relativePath === '.') {
+      return 0;
+    }
+    return relativePath.split('/').length;
+  }
+
+  private toRelativeFilePath(relativePath: string, filename: string): string {
+    return relativePath === '.' ? filename : `${relativePath}/${filename}`;
+  }
+
+  private async backfillFileSummary(input: {
+    node: MetadataTreeNode;
+    file: FileMetadata;
+    processed: number;
+    getProcessedCount: () => number;
+    total: number;
+    storage: ReturnType<typeof createAFDStorage>;
+    chunker: MarkdownChunker;
+    summaryService: ReturnType<typeof createSummaryService>;
+    embeddingService: ReturnType<typeof createEmbeddingService>;
+    vectorStore: ReturnType<typeof createVectorStore>;
+    summaryOptions: {
+      tokenBudget: number;
+      parallelRequests: number;
+      maxRetries?: number;
+      timeoutMs?: number;
+    };
+  }): Promise<FileBackfillResult> {
+    const archiveName = input.file.afdName ?? input.file.name ?? input.file.fileId;
+    let markdown = '';
+    try {
+      markdown = await input.storage.readText(archiveName, 'content.md');
+    } catch (error) {
+      throw new Error(`读取 AFD 内容失败: ${archiveName} - ${(error as Error).message}`);
+    }
+
+    let metadataJson = '{}';
+    try {
+      metadataJson = await input.storage.readText(archiveName, 'metadata.json');
+    } catch {
+      metadataJson = '{}';
+    }
+
+    let summaries: Record<string, string> = {};
+    try {
+      const summaryBuffer = await input.storage.read(archiveName, 'summaries.json');
+      summaries = JSON.parse(summaryBuffer.toString('utf-8')) as Record<string, string>;
+    } catch {
+      summaries = {};
+    }
+
+    this.options.onProgress?.({
+      phase: 'chunk',
+      currentFile: this.toRelativeFilePath(input.node.metadata.relativePath, input.file.name),
+      processed: Math.max(input.processed, input.getProcessedCount()),
+      total: input.total,
+    });
+    const chunks = input.chunker.chunk(markdown);
+    const chunkIds = chunks.map((_, index) =>
+      `${input.file.fileId}:${String(index).padStart(4, '0')}`
+    );
+    if (chunkIds.length !== input.file.chunkCount) {
+      throw new Error(
+        `文件 chunk 数发生变化（${input.file.name}: ${input.file.chunkCount} -> ${chunkIds.length}），请使用重新索引`
+      );
+    }
+
+    const previousSummaries = { ...summaries };
+    const missingChunkInputs = chunkIds
+      .map((chunkId, index) => ({
+        chunkId,
+        chunk: chunks[index],
+      }))
+      .filter((item) => (summaries[item.chunkId] ?? '').trim().length === 0);
+    let generatedChunkCount = 0;
+    let fallbackChunkCount = 0;
+
+    if (missingChunkInputs.length > 0) {
+      this.options.onProgress?.({
+        phase: 'summary',
+        currentFile: this.toRelativeFilePath(input.node.metadata.relativePath, input.file.name),
+        processed: Math.max(input.processed, input.getProcessedCount()),
+        total: input.total,
+      });
+
+      const generated = await input.summaryService.generateChunkSummariesBatch(
+        missingChunkInputs.map((item) => ({
+          id: item.chunkId,
+          content: item.chunk.content,
+        })),
+        {
+          tokenBudget: input.summaryOptions.tokenBudget,
+          parallelRequests: input.summaryOptions.parallelRequests,
+          maxRetries: input.summaryOptions.maxRetries,
+          timeoutMs: input.summaryOptions.timeoutMs,
+        }
+      );
+
+      for (const item of generated) {
+        summaries[item.id] = item.summary;
+        if (item.summary.trim().length > 0) {
+          generatedChunkCount += 1;
+        } else {
+          fallbackChunkCount += 1;
+        }
+      }
+    }
+
+    const chunkSummaries = chunkIds.map((chunkId) => summaries[chunkId] ?? '');
+    const changedChunkIds = chunkIds.filter(
+      (chunkId) => (previousSummaries[chunkId] ?? '') !== (summaries[chunkId] ?? '')
+    );
+
+    if (changedChunkIds.length > 0) {
+      this.options.onProgress?.({
+        phase: 'embed',
+        currentFile: this.toRelativeFilePath(input.node.metadata.relativePath, input.file.name),
+        processed: Math.max(input.processed, input.getProcessedCount()),
+        total: input.total,
+      });
+
+      const vectorDocs = await input.vectorStore.getByChunkIds(changedChunkIds);
+      const vectorByChunkId = new Map(vectorDocs.map((doc) => [doc.chunk_id, doc]));
+
+      const embedBatch = (
+        input.embeddingService as unknown as {
+          embedBatch?: (
+            texts: string[],
+            options?: { useCache?: boolean; batchSize?: number }
+          ) => Promise<{ embeddings: number[][] }>;
+        }
+      ).embedBatch;
+
+      const summaryEmbeddingsByChunkId = new Map<string, number[]>();
+      if (typeof embedBatch === 'function') {
+        const response = await embedBatch.call(
+          input.embeddingService,
+          changedChunkIds.map((chunkId) => summaries[chunkId] ?? ''),
+          { batchSize: 8 }
+        );
+        for (let i = 0; i < changedChunkIds.length; i += 1) {
+          const chunkId = changedChunkIds[i];
+          summaryEmbeddingsByChunkId.set(chunkId, response.embeddings[i] ?? []);
+        }
+      } else {
+        await Promise.all(
+          changedChunkIds.map(async (chunkId) => {
+            const vector = await input.embeddingService.embed(summaries[chunkId] ?? '');
+            summaryEmbeddingsByChunkId.set(chunkId, vector);
+          })
+        );
+      }
+
+      const indexedAt = new Date().toISOString();
+      await input.vectorStore.updateChunkVectors(
+        changedChunkIds
+          .map((chunkId) => {
+            const vectorDoc = vectorByChunkId.get(chunkId);
+            if (!vectorDoc) {
+              return null;
+            }
+
+            const summaryVector = summaryEmbeddingsByChunkId.get(chunkId) ?? [];
+            const contentVector = Array.from(
+              (vectorDoc.content_vector as ArrayLike<number> | undefined) ?? [],
+              (value) => {
+                const numeric = Number(value);
+                return Number.isFinite(numeric) ? numeric : 0;
+              }
+            );
+            const hybridDimension = Math.max(contentVector.length, summaryVector.length);
+            const hybridVector = new Array<number>(hybridDimension).fill(0);
+            for (let index = 0; index < hybridDimension; index += 1) {
+              const contentValue = contentVector[index] ?? 0;
+              const summaryValue = summaryVector[index] ?? 0;
+              hybridVector[index] = (contentValue + summaryValue) / 2;
+            }
+            return {
+              chunkId,
+              summaryVector,
+              hybridVector,
+              indexedAt,
+            };
+          })
+          .filter((item): item is { chunkId: string; summaryVector: number[]; hybridVector: number[]; indexedAt: string } => Boolean(item))
+      );
+    }
+
+    let documentSummaryUpdated = false;
+    if (!input.file.summary?.trim()) {
+      const docSummary = await input.summaryService.generateDocumentSummary(
+        this.toRelativeFilePath(input.node.metadata.relativePath, input.file.name),
+        chunkSummaries,
+        {
+          maxRetries: input.summaryOptions.maxRetries,
+          timeoutMs: input.summaryOptions.timeoutMs,
+        }
+      );
+      input.file.summary = docSummary.summary;
+      documentSummaryUpdated = docSummary.summary.trim().length > 0;
+    }
+
+    const chunkUpdated = missingChunkInputs.length > 0;
+    if (chunkUpdated) {
+      this.options.onProgress?.({
+        phase: 'write',
+        currentFile: this.toRelativeFilePath(input.node.metadata.relativePath, input.file.name),
+        processed: Math.max(input.processed, input.getProcessedCount()),
+        total: input.total,
+      });
+      await input.storage.write(archiveName, {
+        'content.md': markdown,
+        'metadata.json': metadataJson,
+        'summaries.json': JSON.stringify(summaries, null, 2),
+      });
+    }
+
+    return {
+      chunkUpdated,
+      documentSummaryUpdated,
+      missingChunkCount: missingChunkInputs.length,
+      changedChunkCount: changedChunkIds.length,
+      generatedChunkCount,
+      fallbackChunkCount,
+    };
+  }
+
+  private async runWithConcurrency<T>(
+    items: T[],
+    concurrency: number,
+    worker: (item: T, index: number) => Promise<void>
+  ): Promise<void> {
+    if (items.length === 0) {
+      return;
+    }
+
+    const workerCount = Math.max(1, Math.min(Math.floor(concurrency), items.length));
+    let nextIndex = 0;
+
+    const runners = Array.from({ length: workerCount }).map(async () => {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+        const item = items[currentIndex];
+        if (item === undefined) {
+          continue;
+        }
+        await worker(item, currentIndex);
+      }
+    });
+
+    await Promise.all(runners);
+  }
+
+  private refreshDirectoryAggregates(
+    node: MetadataTreeNode,
+    nodeByRelativePath: Map<string, MetadataTreeNode>
+  ): void {
+    const ownFileCount = node.metadata.files.length;
+    const ownChunkCount = node.metadata.files.reduce((sum, file) => sum + file.chunkCount, 0);
+
+    let childFileCount = 0;
+    let childChunkCount = 0;
+    let childTokenCount = 0;
+
+    node.metadata.subdirectories = node.metadata.subdirectories.map((subdirectory) => {
+      const childRelativePath =
+        node.metadata.relativePath === '.'
+          ? subdirectory.name
+          : `${node.metadata.relativePath}/${subdirectory.name}`;
+      const child = nodeByRelativePath.get(childRelativePath);
+      if (!child) {
+        return subdirectory;
+      }
+
+      childFileCount += child.metadata.stats.fileCount;
+      childChunkCount += child.metadata.stats.chunkCount;
+      childTokenCount += child.metadata.stats.totalTokens;
+
+      return {
+        ...subdirectory,
+        summary: child.metadata.directorySummary || null,
+        fileCount: child.metadata.stats.fileCount,
+        lastUpdated: child.metadata.updatedAt,
+        fileIds: this.collectDirectoryFileIds(child.metadata),
+        fileArchives: this.collectDirectoryFileArchives(child.metadata),
+      };
+    });
+
+    node.metadata.stats.fileCount = ownFileCount + childFileCount;
+    node.metadata.stats.chunkCount = ownChunkCount + childChunkCount;
+    node.metadata.stats.totalTokens = ownChunkCount * 800 + childTokenCount;
+  }
+
+  private collectDirectoryFileIds(metadata: IndexMetadata): string[] {
+    const ownFileIds = metadata.files.map((file) => file.fileId);
+    const childFileIds = metadata.subdirectories.flatMap((subdirectory) => subdirectory.fileIds ?? []);
+    return Array.from(new Set([...ownFileIds, ...childFileIds]));
+  }
+
+  private collectDirectoryFileArchives(
+    metadata: IndexMetadata
+  ): Array<{ fileId: string; afdName: string }> {
+    const ownArchives = metadata.files.map((file) => ({
+      fileId: file.fileId,
+      afdName: file.afdName ?? file.name ?? file.fileId,
+    }));
+    const childArchives = metadata.subdirectories.flatMap(
+      (subdirectory) => subdirectory.fileArchives ?? []
+    );
+
+    const merged = new Map<string, string>();
+    for (const item of [...ownArchives, ...childArchives]) {
+      if (!merged.has(item.fileId)) {
+        merged.set(item.fileId, item.afdName);
+      }
+    }
+
+    return [...merged.entries()].map(([fileId, afdName]) => ({ fileId, afdName }));
   }
 
   async dispose(): Promise<void> {

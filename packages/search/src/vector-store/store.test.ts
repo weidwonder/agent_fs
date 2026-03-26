@@ -282,6 +282,27 @@ describe('VectorStore', () => {
     expect(ids).toEqual(['g1', 'g3']);
   });
 
+  it('应支持按 chunk 更新 summary/hybrid 向量', async () => {
+    const docs = [
+      createDoc('u1', 'dir1', '/project/docs/u1.md', [1, 0, 0], [0, 0, 0]),
+    ];
+    await store.addDocuments(docs);
+
+    await store.updateChunkVectors([
+      {
+        chunkId: 'u1',
+        summaryVector: [0, 1, 0],
+        hybridVector: [0.5, 0.5, 0],
+        indexedAt: '2026-02-25T00:00:00.000Z',
+      },
+    ]);
+
+    const [updated] = await store.getByChunkIds(['u1']);
+    expect(Array.from(updated.summary_vector as ArrayLike<number>)).toEqual([0, 1, 0]);
+    expect(Array.from(updated.hybrid_vector as ArrayLike<number>)).toEqual([0.5, 0.5, 0]);
+    expect(updated.indexed_at).toBe('2026-02-25T00:00:00.000Z');
+  });
+
   it('should not return soft deleted documents', async () => {
     const docs = [
       createDoc('d1', 'dir1', '/project/docs/d1.md', [1, 0, 0], [0, 1, 0]),
@@ -426,6 +447,45 @@ describe('VectorStore', () => {
     expect(vectorSearch).not.toHaveBeenCalled();
     expect(results).toHaveLength(1);
     expect(results[0].chunk_id).toBe('q1');
+    await testStore.close();
+  });
+
+  it('getByChunkIds 应将类数组向量归一化为 number[]', async () => {
+    const queryToArray = vi.fn().mockResolvedValue([
+      {
+        chunk_id: 'qv1',
+        file_id: 'file_qv1',
+        dir_id: 'dir1',
+        rel_path: 'qv1.md',
+        file_path: '/project/docs/qv1.md',
+        chunk_line_start: 1,
+        chunk_line_end: 2,
+        locator: 'line:1-2',
+        indexed_at: new Date().toISOString(),
+        deleted_at: '',
+        content_vector: { 0: 1, 1: 2, 2: 3, length: 3 },
+        summary_vector: new Float32Array([4, 5, 6]),
+      },
+    ]);
+    const queryBuilder = {
+      where: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      toArray: queryToArray,
+    };
+
+    const testStore = new VectorStore({ storagePath: testDir, dimension });
+    (testStore as any).db = {};
+    (testStore as any).table = {
+      query: vi.fn(() => queryBuilder),
+      vectorSearch: vi.fn(),
+    };
+
+    const [doc] = await testStore.getByChunkIds(['qv1']);
+
+    expect(Array.isArray(doc.content_vector)).toBe(true);
+    expect(doc.content_vector).toEqual([1, 2, 3]);
+    expect(Array.isArray(doc.summary_vector)).toBe(true);
+    expect(doc.summary_vector).toEqual([4, 5, 6]);
     await testStore.close();
   });
 });

@@ -38,6 +38,7 @@ export interface IndexerOptions {
   fileParallelism?: number;
   chunkOptions: { minTokens: number; maxTokens: number };
   summaryOptions: SummaryPipelineOptions;
+  indexerVersion?: string;
   onProgress?: (progress: IndexProgress) => void;
 }
 
@@ -417,6 +418,7 @@ export class IndexPipeline {
     const now = new Date().toISOString();
     const metadata: IndexMetadata = {
       version: '2.0',
+      indexedWithVersion: this.options.indexerVersion || 'unknown',
       createdAt: now,
       updatedAt: now,
       dirId: context.dirId,
@@ -809,6 +811,7 @@ export class IndexPipeline {
 
       metadataMap.set(directory.relativePath, {
         version: '2.0',
+        indexedWithVersion: this.options.indexerVersion || 'unknown',
         createdAt: directory.files[0]?.indexedAt ?? now,
         updatedAt: now,
         dirId: directory.dirId,
