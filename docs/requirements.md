@@ -62,11 +62,13 @@
 |------|------|
 | 多路召回 | 向量搜索(hybrid: content+summary 1:1) + 倒排索引关键词搜索 |
 | 融合排序 | RRF（倒数排名融合） |
+| 结果聚合 | RRF 结果按文档聚合后返回；同一文件只保留一个代表 chunk 进入 TopK，并记录该文件的命中 chunk 数 |
 | 可选 Rerank | 支持 LLM Rerank |
 | 查询类型 | 语义查询 + 精准关键词查询（可同时使用） |
 | 查询范围 | 单/多个 Project 或子文件夹，**自动包含所有子文件夹** |
 | 层级过滤 | 指定 Project 文件夹 → 搜索全部；指定子文件夹 → 仅搜索该子树 |
 | 范围解析一致性 | scope 传入 Project 时，优先基于 `.fs_index/index.json` 递归解析真实 `dirId`；索引缺失时回退 registry |
+| 结果元数据 | 搜索结果返回代表 chunk 的 `chunkId`，并可附带 `chunkHits` / `aggregatedChunkIds` 说明同文件聚合命中情况 |
 
 ### 2.5 增量更新
 
@@ -138,9 +140,11 @@
 | 文件/目录 | 用途 |
 |----------|------|
 | `index.json` | 目录元数据（文件列表、子目录列表、层级信息、`indexedWithVersion`） |
+| `index.resume.json` | 索引中断恢复快照，仅在根目录索引未完成时存在 |
+| `logs/*.latest.jsonl` | 增量/重建与补全 Summary 的最新运行日志 |
 | `memory/project.md` | 项目级记忆入口（项目介绍与索引摘要） |
 | `memory/extend/*.md` | 项目经验扩展记忆（约定在 project.md 引用） |
-| `documents/<原文件名>.afd` | 当前目录文件对应的压缩归档（ZIP，含 content.md、metadata.json） |
+| `documents/<原文件名>.afd` | 当前目录文件对应的压缩归档（ZIP，含 content.md、metadata.json、summaries.json） |
 
 ## 4. 索引存储优化
 
@@ -192,8 +196,9 @@
 |------|------|
 | 框架 | Electron + React |
 | 风格 | 极简档案馆（类 Notion/Linear） |
-| 核心功能 | 选择目录、启动索引、查看进度、管理配置、执行语义/精准搜索（支持范围选择） |
+| 核心功能 | 选择目录、启动索引、查看进度、管理配置、执行语义/精准搜索（支持范围选择）、查看项目概况 |
 | 进度展示 | 当前文件、已完成/总数、索引更新时间 |
+| 项目概况 | 展示文件数、已索引文件数、chunk 数、索引版本、Summary 覆盖率，并支持从概况面板触发增量更新 / 补全 Summary / 重新索引 |
 | 布局约束 | 左侧项目面板与右侧搜索面板并排显示，列表卡片不得横向溢出或被搜索面板遮挡 |
 
 ## 7. 可配置项

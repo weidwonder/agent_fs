@@ -118,7 +118,7 @@ Electron 客户端在知识库卡片设置中提供三种手动操作：
 - **重新索引**：清理当前目录 `.fs_index` 与对应向量/倒排数据后全量重建
 - 维护弹窗会实时显示当前阶段进度、摘要覆盖率刷新结果，以及日志尾部（增量/重建读取 `indexing.latest.jsonl`，补全摘要读取 `summary-backfill.latest.jsonl`）
 
-对子目录删除场景，系统会基于 `SubdirectoryInfo.fileIds` 做兜底清理，避免孤儿 AFD 文件残留。
+对子目录删除场景，系统会基于 `SubdirectoryInfo.fileIds` 与 `fileArchives` 做兜底清理，避免子索引缺失时残留孤儿向量、倒排记录或 AFD 归档。
 
 ---
 
@@ -146,6 +146,9 @@ Electron 客户端在知识库卡片设置中提供三种手动操作：
    - 行号补全通过 `chunk_id` 标量查询路径回填，避免走高开销向量回查
    - AFD 归档名优先使用 `index.json.files[].afdName`，不存在时回退 `name/fileId`
    - Excel 结果展示优先使用 `sheet:<sheet>/range:<A1:B2>` 定位符；仅在无法映射时回退 `line/lines`
+6. 返回结果附带聚合元数据：
+   - `chunk_hits`：该文件在候选集中命中的 chunk 数
+   - `aggregated_chunk_ids`：参与聚合的 chunk_id 列表
 
 ## 5.1.1 Electron `remove-project` 体验
 
@@ -189,6 +192,8 @@ Electron 客户端在知识库卡片设置中提供三种手动操作：
 ## 5.5 Electron 客户端查询链路
 
 - 通过 `ipcMain.handle('search')` 复用同一套向量/倒排/RRF 能力
+- `get-project-overview` 基于递归读取 `index.json` 与 AFD 内 `summaries.json` 计算项目概况、索引版本与 Summary 覆盖率
+- `get-indexing-log` 读取 `.fs_index/logs/*.latest.jsonl` 尾部内容，供前端维护弹窗轮询展示
 - `get-registry` 会将相对路径解析为绝对路径，并过滤被父目录包含的重复条目
 - `get-project-memory` / `save-memory-file` 用于读写项目 memory（`project.md` 与 `extend/*.md`）
 - 相对路径解析策略按优先级：
@@ -223,7 +228,7 @@ interface DocumentConversionResult {
 - `parentDirId`：父目录 ID（根目录为 `null`）
 - `indexedWithVersion`：生成该目录索引时的程序版本
 - `files[]`：文件级元数据（含 `fileId`、`hash`、`chunkCount`）
-- `subdirectories[]`：子目录信息（含 `fileIds`，用于删除清理）
+- `subdirectories[]`：子目录信息（含 `fileIds` 与 `fileArchives`，用于目录缺失场景的删除清理）
 
 ## 6.3 全局注册表（`Registry` v2.0）
 
@@ -272,6 +277,10 @@ interface DocumentConversionResult {
 <project>/
 ├── .fs_index/
 │   ├── index.json                  # 根目录元数据
+│   ├── index.resume.json           # 中断恢复快照（仅索引未完成时存在）
+│   ├── logs/
+│   │   ├── indexing.latest.jsonl   # 增量/重建最新日志
+│   │   └── summary-backfill.latest.jsonl
 │   ├── memory/                     # 项目结构记忆（不参与索引）
 │   │   ├── project.md              # 项目介绍
 │   │   └── extend/                 # 项目经验扩展
