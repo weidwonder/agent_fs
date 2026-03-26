@@ -55,3 +55,7 @@ packages/storage/native/Cargo.lock
 
 # ClaudeKit
 release-manifest.json
+
+# MCP & plugins
+.mcp.json
+.omc/
