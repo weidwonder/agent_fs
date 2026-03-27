@@ -54,7 +54,7 @@ const summaryConfigSchema = z.object({
   mode: z.enum(['batch', 'skip']).default('batch'),
   chunk_batch_token_budget: z.number().int().positive().default(10000),
   parallel_requests: z.number().int().positive().max(8).default(2),
-  timeout_ms: z.number().int().positive().optional(),
+  timeout_ms: z.number().int().positive().default(45000),
   max_retries: z.number().int().min(0).max(2).optional(),
 });
 
@@ -90,6 +90,7 @@ export const configSchema = z.object({
     mode: 'batch',
     chunk_batch_token_budget: 10000,
     parallel_requests: 2,
+    timeout_ms: 45000,
   }),
   indexing: indexingConfigSchema,
   search: searchConfigSchema,

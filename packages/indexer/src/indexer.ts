@@ -68,7 +68,9 @@ export class Indexer {
     const embeddingService = createEmbeddingService(this.config.embedding);
     await embeddingService.init();
 
-    const summaryService = createSummaryService(this.config.llm);
+    const summaryService = createSummaryService(this.config.llm, {
+      maxConcurrentRequests: this.config.summary?.parallel_requests,
+    });
 
     const vectorStore = createVectorStore({
       storagePath: join(storagePath, 'vectors'),
@@ -166,7 +168,9 @@ export class Indexer {
     const embeddingService = createEmbeddingService(this.config.embedding);
     await embeddingService.init();
 
-    const summaryService = createSummaryService(this.config.llm);
+    const summaryService = createSummaryService(this.config.llm, {
+      maxConcurrentRequests: this.config.summary?.parallel_requests,
+    });
 
     const vectorStore = createVectorStore({
       storagePath: join(storagePath, 'vectors'),

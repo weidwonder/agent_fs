@@ -6,11 +6,79 @@ import {
   CHUNK_SUMMARY_PROMPT,
   DOCUMENT_SUMMARY_PROMPT,
   DIRECTORY_SUMMARY_PROMPT,
+  SUMMARY_SYSTEM_PROMPT,
 } from './prompts';
 import { groupByTokenBudget, type TokenItem } from './batch-utils';
 
 type ChatMessage = { role: 'user' | 'system'; content: string };
 const MAX_CHUNKS_PER_BATCH_REQUEST = 4;
+const DEFAULT_COMPLETION_MAX_TOKENS = 1024;
+const DEFAULT_RATE_LIMIT_DELAY_MS = 15000;
+const MAX_RATE_LIMIT_DELAY_MS = 60000;
+
+class SummaryApiError extends Error {
+  readonly status: number;
+  readonly retryAfterMs: number | null;
+
+  constructor(status: number, message: string, retryAfterMs: number | null = null) {
+    super(message);
+    this.name = 'SummaryApiError';
+    this.status = status;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+class RequestLimiter {
+  private activeCount = 0;
+  private limit: number;
+  private waiters: Array<() => void> = [];
+
+  constructor(limit: number) {
+    this.limit = Math.max(1, Math.floor(limit));
+  }
+
+  setLimit(limit: number): void {
+    this.limit = Math.max(1, Math.floor(limit));
+    this.flush();
+  }
+
+  async run<T>(task: () => Promise<T>): Promise<T> {
+    await this.acquire();
+    try {
+      return await task();
+    } finally {
+      this.release();
+    }
+  }
+
+  private async acquire(): Promise<void> {
+    if (this.activeCount < this.limit) {
+      this.activeCount += 1;
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      this.waiters.push(() => {
+        this.activeCount += 1;
+        resolve();
+      });
+    });
+  }
+
+  private release(): void {
+    this.activeCount = Math.max(0, this.activeCount - 1);
+    this.flush();
+  }
+
+  private flush(): void {
+    while (this.activeCount < this.limit && this.waiters.length > 0) {
+      const waiter = this.waiters.shift();
+      waiter?.();
+    }
+  }
+}
+
+const globalRequestLimiter = new RequestLimiter(2);
 
 export interface SummaryOptions {
   useCache?: boolean;
@@ -35,13 +103,27 @@ export interface BatchSummaryResult extends SummaryResult {
   id: string;
 }
 
+interface LLMCallOptions {
+  maxRetries: number;
+  maxTokens?: number;
+  responseFormat?: { type: 'json_object' };
+  timeoutMs?: number;
+}
+
+export interface SummaryServiceRuntimeOptions {
+  maxConcurrentRequests?: number;
+}
+
 export class SummaryService {
   private config: LLMConfig;
   private cache: SummaryCache;
 
-  constructor(config: LLMConfig) {
+  constructor(config: LLMConfig, runtimeOptions: SummaryServiceRuntimeOptions = {}) {
     this.config = config;
     this.cache = new SummaryCache(config.model);
+    if (runtimeOptions.maxConcurrentRequests) {
+      globalRequestLimiter.setLimit(runtimeOptions.maxConcurrentRequests);
+    }
   }
 
   async generateChunkSummary(
@@ -60,7 +142,7 @@ export class SummaryService {
     try {
       const prompt = CHUNK_SUMMARY_PROMPT.replace('{content}', content);
       const summary = await this.callLLM(
-        [{ role: 'user', content: prompt }],
+        this.buildMessages(prompt),
         { maxRetries, timeoutMs }
       );
 
@@ -153,6 +235,10 @@ export class SummaryService {
     const payloadItems = batch.map((item) => ({ id: item.id, text: item.payload.content }));
     const messages: ChatMessage[] = [
       {
+        role: 'system',
+        content: SUMMARY_SYSTEM_PROMPT,
+      },
+      {
         role: 'user',
         content: BATCH_CHUNK_SUMMARY_PROMPT.replace('{items}', JSON.stringify(payloadItems)),
       },
@@ -163,7 +249,12 @@ export class SummaryService {
 
     for (let attempt = 0; attempt <= context.maxRetries; attempt++) {
       try {
-        const raw = await this.callLLM(messages, { maxRetries: 1, timeoutMs: context.timeoutMs });
+        const raw = await this.callLLM(messages, {
+          maxRetries: 1,
+          maxTokens: DEFAULT_COMPLETION_MAX_TOKENS,
+          responseFormat: { type: 'json_object' },
+          timeoutMs: context.timeoutMs,
+        });
         parsed = this.parseBatchResponse(raw, expectedIds);
         if (parsed) {
           break;
@@ -171,11 +262,14 @@ export class SummaryService {
         throw new Error('invalid_json');
       } catch (error) {
         lastError = error as Error;
-        if (attempt < context.maxRetries) {
+        if (attempt < context.maxRetries && lastError.message === 'invalid_json') {
           messages.push({
             role: 'user',
-            content: `上次输出无法解析为 JSON，错误信息：${lastError.message}。请仅输出 JSON 数组，格式为 [{"id":"...","summary":"..."}]，不要添加任何额外文字。`,
+            content: `上次输出无法解析为 JSON，错误信息：${lastError.message}。请仅输出 JSON 对象，格式为 {"items":[{"id":"...","summary":"..."}]}，不要添加任何额外文字。`,
           });
+        }
+        if (attempt < context.maxRetries && isRateLimitError(lastError)) {
+          await sleep(this.getRetryDelayMs(lastError, attempt));
         }
       }
     }
@@ -251,7 +345,7 @@ export class SummaryService {
         .replace('{chunk_summaries}', chunkSummaries.join('\n'));
 
       const summary = await this.callLLM(
-        [{ role: 'user', content: prompt }],
+        this.buildMessages(prompt),
         { maxRetries: options.maxRetries ?? 3, timeoutMs: options.timeoutMs }
       );
 
@@ -284,7 +378,7 @@ export class SummaryService {
         .replace('{subdirectory_summaries}', subdirSummaries.join('\n'));
 
       const summary = await this.callLLM(
-        [{ role: 'user', content: prompt }],
+        this.buildMessages(prompt),
         { maxRetries: options.maxRetries ?? 3, timeoutMs: options.timeoutMs }
       );
 
@@ -303,12 +397,20 @@ export class SummaryService {
       return null;
     }
 
-    if (!Array.isArray(parsed)) {
+    const items = Array.isArray(parsed)
+      ? parsed
+      : parsed &&
+          typeof parsed === 'object' &&
+          Array.isArray((parsed as { items?: unknown }).items)
+        ? (parsed as { items: unknown[] }).items
+        : null;
+
+    if (!items) {
       return null;
     }
 
     const map = new Map<string, string>();
-    for (const item of parsed) {
+    for (const item of items) {
       if (!item || typeof item !== 'object') {
         return null;
       }
@@ -329,13 +431,27 @@ export class SummaryService {
     return map;
   }
 
+  private buildMessages(prompt: string): ChatMessage[] {
+    return [
+      {
+        role: 'system',
+        content: SUMMARY_SYSTEM_PROMPT,
+      },
+      {
+        role: 'user',
+        content: prompt,
+      },
+    ];
+  }
+
   private async callLLM(
     messages: ChatMessage[],
-    options: { maxRetries: number; timeoutMs?: number }
+    options: LLMCallOptions
   ): Promise<string> {
     let lastError: Error | null = null;
+    const attemptCount = Math.max(1, options.maxRetries);
 
-    for (let attempt = 0; attempt < options.maxRetries; attempt++) {
+    for (let attempt = 0; attempt < attemptCount; attempt++) {
       let timeoutId: ReturnType<typeof setTimeout> | null = null;
       const controller = options.timeoutMs ? new AbortController() : null;
 
@@ -344,23 +460,35 @@ export class SummaryService {
       }
 
       try {
-        const response = await fetch(`${this.config.base_url}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${this.config.api_key}`,
-          },
-          body: JSON.stringify({
-            model: this.config.model,
-            messages,
-            max_tokens: 500,
-            temperature: 0.3,
-          }),
-          signal: controller?.signal,
-        });
+        const response = await globalRequestLimiter.run(async () =>
+          fetch(`${this.config.base_url}/chat/completions`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${this.config.api_key}`,
+            },
+            body: JSON.stringify({
+              model: this.config.model,
+              messages,
+              max_tokens: options.maxTokens ?? DEFAULT_COMPLETION_MAX_TOKENS,
+              temperature: 0.3,
+              do_sample: false,
+              thinking: {
+                type: 'disabled',
+              },
+              ...(options.responseFormat ? { response_format: options.responseFormat } : {}),
+            }),
+            signal: controller?.signal,
+          })
+        );
 
         if (!response.ok) {
-          throw new Error(`API error: ${response.status}`);
+          const detail = await response.text().catch(() => '');
+          throw new SummaryApiError(
+            response.status,
+            `API error: ${response.status}${detail ? ` - ${detail}` : ''}`,
+            parseRetryAfterMs(response.headers.get('retry-after'))
+          );
         }
 
         const data = (await response.json()) as {
@@ -373,8 +501,8 @@ export class SummaryService {
         return data.choices[0].message.content.trim();
       } catch (error) {
         lastError = error as Error;
-        if (attempt < options.maxRetries - 1) {
-          await new Promise((resolve) => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+        if (attempt < attemptCount - 1) {
+          await sleep(this.getRetryDelayMs(lastError, attempt));
         }
       } finally {
         if (timeoutId) {
@@ -389,8 +517,49 @@ export class SummaryService {
   clearCache(): void {
     this.cache.clear();
   }
+
+  private getRetryDelayMs(error: Error, attempt: number): number {
+    if (isRateLimitError(error)) {
+      const rateLimitDelay =
+        error instanceof SummaryApiError && error.retryAfterMs !== null
+          ? error.retryAfterMs
+          : DEFAULT_RATE_LIMIT_DELAY_MS * Math.pow(2, attempt);
+      return Math.min(MAX_RATE_LIMIT_DELAY_MS, rateLimitDelay);
+    }
+
+    return Math.pow(2, attempt) * 1000;
+  }
 }
 
-export function createSummaryService(config: LLMConfig): SummaryService {
-  return new SummaryService(config);
+function parseRetryAfterMs(value: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.round(seconds * 1000);
+  }
+
+  const retryAt = Date.parse(value);
+  if (Number.isNaN(retryAt)) {
+    return null;
+  }
+
+  return Math.max(0, retryAt - Date.now());
+}
+
+function isRateLimitError(error: Error): boolean {
+  return error instanceof SummaryApiError && error.status === 429;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function createSummaryService(
+  config: LLMConfig,
+  runtimeOptions?: SummaryServiceRuntimeOptions
+): SummaryService {
+  return new SummaryService(config, runtimeOptions);
 }

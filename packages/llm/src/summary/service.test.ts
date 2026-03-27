@@ -22,8 +22,32 @@ const createOkResponse = (content: string) => ({
 const createErrorResponse = (status = 500) => ({
   ok: false,
   status,
+  text: async () => '',
+  headers: {
+    get: () => null,
+  },
   json: async () => ({ message: 'error' }),
 });
+
+const createRateLimitResponse = (retryAfter = '0.01') => ({
+  ok: false,
+  status: 429,
+  text: async () => '{"error":{"code":"1302","message":"您的账户已达到速率限制"}}',
+  headers: {
+    get: (name: string) => (name.toLowerCase() === 'retry-after' ? retryAfter : null),
+  },
+  json: async () => ({ error: { code: '1302' } }),
+});
+
+function extractPromptItems(messages: Array<{ content: string }>): Array<{ id: string }> {
+  const userMessage = messages.find((message) => message.content.includes('输入：'))?.content ?? '';
+  const match = userMessage.match(/输入：\n([\s\S]+)\n\n只输出/u);
+  if (!match) {
+    return [];
+  }
+
+  return JSON.parse(match[1]) as Array<{ id: string }>;
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -66,6 +90,12 @@ describe('SummaryService', () => {
     expect(first.fromCache).toBe(false);
     expect(second.fromCache).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body as string) as Record<string, unknown>;
+    expect(requestBody.max_tokens).toBe(1024);
+    expect(requestBody.do_sample).toBe(false);
+    expect(requestBody.thinking).toEqual({ type: 'disabled' });
+    const messages = requestBody.messages as Array<{ role: string; content: string }>;
+    expect(messages[0]?.role).toBe('system');
   });
 
   it('chunk 摘要失败时应降级为首段', async () => {
@@ -131,6 +161,50 @@ describe('SummaryService', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('遇到 429 时应按 retry-after 退避后重试', async () => {
+    vi.useFakeTimers();
+
+    const fetchMock: MockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(createRateLimitResponse('0.01'))
+      .mockResolvedValueOnce(createOkResponse('限流后成功'));
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+    const service = new SummaryService(baseConfig);
+
+    const pending = service.generateChunkSummary('限流内容', { maxRetries: 2, useCache: false });
+    await vi.runAllTimersAsync();
+
+    const result = await pending;
+
+    expect(result.summary).toBe('限流后成功');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('应按运行时全局并发上限串行化请求', async () => {
+    let running = 0;
+    let maxRunning = 0;
+    const fetchMock: MockFetch = vi.fn(async () => {
+      running += 1;
+      maxRunning = Math.max(maxRunning, running);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      running -= 1;
+      return createOkResponse('受限流保护的摘要');
+    });
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+    const service = new SummaryService(baseConfig, { maxConcurrentRequests: 1 });
+
+    await Promise.all([
+      service.generateChunkSummary('内容-1', { useCache: false }),
+      service.generateChunkSummary('内容-2', { useCache: false }),
+      service.generateChunkSummary('内容-3', { useCache: false }),
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(maxRunning).toBe(1);
+  });
+
   it('batch 摘要 JSON 解析失败时应重试并降级为逐 chunk 生成', async () => {
     const service = new SummaryService(baseConfig);
     const call = vi.spyOn(service as any, 'callLLM');
@@ -154,14 +228,37 @@ describe('SummaryService', () => {
       (callArgs) => callArgs[1] as { maxRetries: number; timeoutMs?: number }
     );
     expect(callOptions.slice(0, 3)).toEqual([
-      { maxRetries: 1, timeoutMs: 10 },
-      { maxRetries: 1, timeoutMs: 10 },
-      { maxRetries: 1, timeoutMs: 10 },
+      { maxRetries: 1, maxTokens: 1024, responseFormat: { type: 'json_object' }, timeoutMs: 10 },
+      { maxRetries: 1, maxTokens: 1024, responseFormat: { type: 'json_object' }, timeoutMs: 10 },
+      { maxRetries: 1, maxTokens: 1024, responseFormat: { type: 'json_object' }, timeoutMs: 10 },
     ]);
     expect(callOptions.slice(3)).toEqual([
       { maxRetries: 2, timeoutMs: 10 },
       { maxRetries: 2, timeoutMs: 10 },
     ]);
+  });
+
+  it('batch 摘要应支持解析 json_object 包裹的 items', async () => {
+    const service = new SummaryService(baseConfig);
+    const call = vi.spyOn(service as any, 'callLLM');
+    call.mockResolvedValue(
+      JSON.stringify({
+        items: [
+          { id: 'c1', summary: '摘要-c1' },
+          { id: 'c2', summary: '摘要-c2' },
+        ],
+      })
+    );
+
+    const result = await service.generateChunkSummariesBatch(
+      [
+        { id: 'c1', content: 'a' },
+        { id: 'c2', content: 'b' },
+      ],
+      { maxRetries: 0, timeoutMs: 10, tokenBudget: 10 }
+    );
+
+    expect(result.map((item) => item.summary)).toEqual(['摘要-c1', '摘要-c2']);
   });
 
   it('batch 与逐 chunk 都失败时应降级为空', async () => {
@@ -190,10 +287,7 @@ describe('SummaryService', () => {
     const call = vi.spyOn(service as any, 'callLLM');
     call.mockImplementation(async (...args: unknown[]) => {
       const messages = (args[0] as Array<{ content: string }>) ?? [];
-      const firstMessage = messages[0]?.content ?? '';
-      const ids = Array.from(firstMessage.matchAll(/"id":"([^"]+)"/gu)).map(
-        (match) => match[1]
-      );
+      const ids = extractPromptItems(messages).map((item) => item.id);
 
       running += 1;
       maxRunning = Math.max(maxRunning, running);
@@ -224,10 +318,7 @@ describe('SummaryService', () => {
     const call = vi.spyOn(service as any, 'callLLM');
     call.mockImplementation(async (...args: unknown[]) => {
       const messages = (args[0] as Array<{ content: string }>) ?? [];
-      const firstMessage = messages[0]?.content ?? '';
-      const ids = Array.from(firstMessage.matchAll(/"id":"([^"]+)"/gu)).map(
-        (match) => match[1]
-      );
+      const ids = extractPromptItems(messages).map((item) => item.id);
       batchSizes.push(ids.length);
       return JSON.stringify(ids.map((id) => ({ id, summary: `摘要-${id}` })));
     });
