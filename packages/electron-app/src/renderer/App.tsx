@@ -17,6 +17,7 @@ export default function App() {
   const { projects, refresh } = useRegistry();
   const {
     indexingPath,
+    currentMode,
     progress,
     error: indexError,
     clearError: clearIndexError,
@@ -177,6 +178,7 @@ export default function App() {
           open={overviewProject !== null}
           disabled={indexingPath !== null}
           indexingPath={indexingPath}
+          currentMode={currentMode}
           progress={progress}
           onOpenChange={(open) => {
             if (!open) {

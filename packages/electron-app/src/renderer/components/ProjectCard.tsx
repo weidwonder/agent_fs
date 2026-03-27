@@ -45,6 +45,7 @@ export function ProjectCard({
             size="sm"
             className="h-7 w-7 p-0 cursor-pointer"
             disabled={isUpdating}
+            aria-label="增量更新知识库"
             onClick={onUpdate}
           >
             <RefreshCw className={`h-3.5 w-3.5 ${isUpdating ? 'animate-spin' : ''}`} />
@@ -53,7 +54,7 @@ export function ProjectCard({
             variant="ghost"
             size="sm"
             className="h-7 w-7 p-0 cursor-pointer"
-            disabled={isUpdating}
+            aria-label="打开知识库设置"
             onClick={onManage}
           >
             <SlidersHorizontal className="h-3.5 w-3.5" />
@@ -63,6 +64,7 @@ export function ProjectCard({
             size="sm"
             className="h-7 w-7 p-0 text-destructive cursor-pointer"
             disabled={isUpdating}
+            aria-label="移除知识库"
             onClick={onRemove}
           >
             <Trash2 className="h-3.5 w-3.5" />

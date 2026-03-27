@@ -13,6 +13,7 @@ export { PHASE_NAMES };
 
 export function useIndexing(onComplete?: () => void) {
   const [indexingPath, setIndexingPath] = useState<string | null>(null);
+  const [currentMode, setCurrentMode] = useState<IndexingMode | null>(null);
   const [progress, setProgress] = useState<IndexProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,11 +38,13 @@ export function useIndexing(onComplete?: () => void) {
     dirPath: string,
     options?: { mode?: IndexingMode }
   ): Promise<{ success: boolean; metadata?: unknown; error?: string }> => {
+    const mode = options?.mode ?? 'incremental';
     setIndexingPath(dirPath);
+    setCurrentMode(mode);
     setError(null);
     setProgress(null);
     try {
-      const result = await window.electronAPI.startIndexing(dirPath, options);
+      const result = await window.electronAPI.startIndexing(dirPath, { mode });
       if (!result.success) {
         setError(result.error || '索引失败');
         return result;
@@ -55,6 +58,7 @@ export function useIndexing(onComplete?: () => void) {
       return { success: false, error: message };
     } finally {
       setIndexingPath(null);
+      setCurrentMode(null);
       setProgress(null);
     }
   }, [onComplete]);
@@ -72,6 +76,7 @@ export function useIndexing(onComplete?: () => void) {
 
   return {
     indexingPath,
+    currentMode,
     isIndexing: indexingPath !== null,
     progress,
     error,

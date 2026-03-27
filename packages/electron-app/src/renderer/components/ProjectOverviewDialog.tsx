@@ -19,6 +19,7 @@ interface ProjectOverviewDialogProps {
   open: boolean;
   disabled?: boolean;
   indexingPath: string | null;
+  currentMode: IndexingMode | null;
   progress: IndexProgress | null;
   onOpenChange: (open: boolean) => void;
   onRunAction: (
@@ -38,6 +39,12 @@ const EMPTY_BACKFILL_INCREMENT: BackfillCoverageIncrement = {
   documentGenerated: 0,
   directoryGenerated: 0,
 };
+
+export const PROJECT_OVERVIEW_DIALOG_CONTENT_CLASSNAME =
+  'flex max-w-xl flex-col gap-0 overflow-hidden p-0 sm:max-h-[85vh]';
+
+export const PROJECT_OVERVIEW_DIALOG_BODY_CLASSNAME =
+  'min-h-0 flex-1 overflow-y-auto px-6 py-4';
 
 function formatPercent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
@@ -117,11 +124,23 @@ function parseBackfillCoverageIncrement(lines: string[]): BackfillCoverageIncrem
   };
 }
 
+export function resolveProjectRunningMode(
+  projectPath: string | null,
+  indexingPath: string | null,
+  currentMode: IndexingMode | null,
+): IndexingMode | null {
+  if (!projectPath || projectPath !== indexingPath) {
+    return null;
+  }
+  return currentMode;
+}
+
 export function ProjectOverviewDialog({
   project,
   open,
   disabled = false,
   indexingPath,
+  currentMode,
   progress,
   onOpenChange,
   onRunAction,
@@ -129,7 +148,6 @@ export function ProjectOverviewDialog({
   const [overview, setOverview] = useState<ProjectOverview | null>(null);
   const [isLoadingOverview, setIsLoadingOverview] = useState(false);
   const [overviewError, setOverviewError] = useState<string | null>(null);
-  const [runningMode, setRunningMode] = useState<IndexingMode | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [logLines, setLogLines] = useState<string[]>([]);
   const [logPath, setLogPath] = useState<string>('');
@@ -180,13 +198,16 @@ export function ProjectOverviewDialog({
     }
   }, [project]);
 
+  const activeMode = resolveProjectRunningMode(project?.path ?? null, indexingPath, currentMode);
+  const isCurrentProjectRunning = activeMode !== null;
+
   useEffect(() => {
     if (!open || !project) {
       return;
     }
     loadOverview();
-    loadLogs('incremental');
-  }, [open, project, loadOverview, loadLogs]);
+    loadLogs(activeMode ?? 'incremental');
+  }, [open, project, activeMode, loadOverview, loadLogs]);
 
   useEffect(() => {
     if (!open) {
@@ -196,7 +217,7 @@ export function ProjectOverviewDialog({
   }, [open]);
 
   useEffect(() => {
-    if (runningMode !== 'backfill-summary') {
+    if (activeMode !== 'backfill-summary') {
       return;
     }
 
@@ -206,16 +227,16 @@ export function ProjectOverviewDialog({
       documentGenerated: Math.max(prev.documentGenerated, increment.documentGenerated),
       directoryGenerated: Math.max(prev.directoryGenerated, increment.directoryGenerated),
     }));
-  }, [logLines, runningMode]);
+  }, [logLines, activeMode]);
 
   useEffect(() => {
-    if (runningMode === 'backfill-summary' && !backfillCoverageBase && overview) {
+    if (activeMode === 'backfill-summary' && !backfillCoverageBase && overview) {
       setBackfillCoverageBase(overview.summaryCoverage);
     }
-  }, [runningMode, backfillCoverageBase, overview]);
+  }, [activeMode, backfillCoverageBase, overview]);
 
   useEffect(() => {
-    if (!open || !project || runningMode === null) {
+    if (!open || !project || activeMode === null) {
       return;
     }
 
@@ -226,11 +247,11 @@ export function ProjectOverviewDialog({
       pollBusyRef.current = true;
 
       void (async () => {
-        if (runningMode === 'backfill-summary') {
-          await loadLogs(runningMode);
+        if (activeMode === 'backfill-summary') {
+          await loadLogs(activeMode);
           return;
         }
-        await Promise.all([loadOverview(true), loadLogs(runningMode)]);
+        await Promise.all([loadOverview(true), loadLogs(activeMode)]);
       })().finally(() => {
         pollBusyRef.current = false;
       });
@@ -240,7 +261,7 @@ export function ProjectOverviewDialog({
       window.clearInterval(timer);
       pollBusyRef.current = false;
     };
-  }, [open, project, runningMode, loadOverview, loadLogs]);
+  }, [open, project, activeMode, loadOverview, loadLogs]);
 
   const runAction = useCallback(
     async (mode: IndexingMode) => {
@@ -258,7 +279,6 @@ export function ProjectOverviewDialog({
       if (mode === 'backfill-summary' && overview) {
         setBackfillCoverageBase(overview.summaryCoverage);
       }
-      setRunningMode(mode);
       try {
         await loadLogs(mode);
         const result = await onRunAction(project.path, mode);
@@ -269,7 +289,6 @@ export function ProjectOverviewDialog({
         await loadOverview();
         await loadLogs(mode);
       } finally {
-        setRunningMode(null);
         setBackfillCoverageBase(null);
         setLiveBackfillIncrement(EMPTY_BACKFILL_INCREMENT);
       }
@@ -281,7 +300,7 @@ export function ProjectOverviewDialog({
     if (!overview) {
       return null;
     }
-    if (runningMode !== 'backfill-summary' || !backfillCoverageBase) {
+    if (activeMode !== 'backfill-summary' || !backfillCoverageBase) {
       return overview.summaryCoverage;
     }
 
@@ -321,7 +340,7 @@ export function ProjectOverviewDialog({
         generated: liveBackfillIncrement.directoryGenerated,
       }),
     };
-  }, [overview, runningMode, backfillCoverageBase, liveBackfillIncrement]);
+  }, [overview, activeMode, backfillCoverageBase, liveBackfillIncrement]);
 
   const summaryRows = useMemo(() => {
     if (!displaySummaryCoverage) {
@@ -335,20 +354,16 @@ export function ProjectOverviewDialog({
   }, [displaySummaryCoverage]);
 
   const runningLabel = useMemo(() => {
-    if (!runningMode) return '';
-    if (runningMode === 'incremental') return '增量更新';
-    if (runningMode === 'backfill-summary') return '补全 Summary';
+    if (!activeMode) return '';
+    if (activeMode === 'incremental') return '增量更新';
+    if (activeMode === 'backfill-summary') return '补全 Summary';
     return '重新索引';
-  }, [runningMode]);
-  const isCurrentProjectRunning = Boolean(
-    project &&
-    indexingPath === project.path
-  );
+  }, [activeMode]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
-        <DialogHeader>
+      <DialogContent className={PROJECT_OVERVIEW_DIALOG_CONTENT_CLASSNAME}>
+        <DialogHeader className="shrink-0 px-6 pb-4 pt-6">
           <DialogTitle>知识库设置</DialogTitle>
           <DialogDescription>
             {project ? `项目：${project.alias}` : '查看知识库概况并执行维护操作'}
@@ -356,111 +371,115 @@ export function ProjectOverviewDialog({
         </DialogHeader>
 
         {isLoadingOverview ? (
-          <div className="flex items-center justify-center py-10">
+          <div className="flex flex-1 items-center justify-center px-6 py-10">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
         ) : overview ? (
-          <div className="space-y-4">
-            {isCurrentProjectRunning && progress && (
-              <div className="rounded-md border p-3">
-                <p className="mb-2 text-xs text-muted-foreground">执行进度</p>
-                <IndexProgressBar progress={progress} />
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-md border p-3">
-                <p className="text-xs text-muted-foreground">文件数量</p>
-                <p className="text-sm font-medium">{overview.fileCount}</p>
-              </div>
-              <div className="rounded-md border p-3">
-                <p className="text-xs text-muted-foreground">已索引文件数量</p>
-                <p className="text-sm font-medium">{overview.indexedFileCount}</p>
-              </div>
-              <div className="rounded-md border p-3">
-                <p className="text-xs text-muted-foreground">Chunk 数量</p>
-                <p className="text-sm font-medium">{overview.chunkCount}</p>
-              </div>
-              <div className="rounded-md border p-3">
-                <p className="text-xs text-muted-foreground">最近更新时间</p>
-                <p className="text-sm font-medium">{formatDateTime(overview.lastUpdated)}</p>
-              </div>
-            </div>
-
-            <div className="rounded-md border p-3">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-xs text-muted-foreground">索引程序版本</p>
-                <Badge variant="secondary">{overview.indexerVersion}</Badge>
-              </div>
-              <Separator className="my-3" />
-              <div className="space-y-2">
-                {summaryRows.map((row) => (
-                  <div key={row.label} className="flex items-center justify-between text-sm">
-                    <span>{row.label}</span>
-                    <span className="text-muted-foreground">
-                      {row.stat.covered}/{row.stat.total} ({formatPercent(row.stat.ratio)})
-                    </span>
-                  </div>
-                ))}
-              </div>
-              {runningMode === 'backfill-summary' && (
-                <p className="mt-2 text-[11px] text-muted-foreground">
-                  执行中显示实时增量，最终以任务完成后的统计为准
-                </p>
+          <div className={PROJECT_OVERVIEW_DIALOG_BODY_CLASSNAME}>
+            <div className="space-y-4">
+              {isCurrentProjectRunning && progress && (
+                <div className="rounded-md border p-3">
+                  <p className="mb-2 text-xs text-muted-foreground">执行进度</p>
+                  <IndexProgressBar progress={progress} />
+                </div>
               )}
-            </div>
 
-            <div className="rounded-md border p-3">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-xs text-muted-foreground">执行日志</p>
-                <span className="text-[11px] text-muted-foreground">
-                  {logPath ? logPath.split('/').pop() : ''}
-                </span>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">文件数量</p>
+                  <p className="text-sm font-medium">{overview.fileCount}</p>
+                </div>
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">已索引文件数量</p>
+                  <p className="text-sm font-medium">{overview.indexedFileCount}</p>
+                </div>
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Chunk 数量</p>
+                  <p className="text-sm font-medium">{overview.chunkCount}</p>
+                </div>
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">最近更新时间</p>
+                  <p className="text-sm font-medium">{formatDateTime(overview.lastUpdated)}</p>
+                </div>
               </div>
-              <ScrollArea className="mt-2 h-44 rounded-md border bg-muted/30 p-2">
-                {logLines.length > 0 ? (
-                  <pre className="whitespace-pre-wrap break-all text-[11px] leading-5 text-foreground">
-                    {logLines.map(formatLogLine).join('\n')}
-                  </pre>
-                ) : (
-                  <p className="text-xs text-muted-foreground">暂无日志</p>
+
+              <div className="rounded-md border p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs text-muted-foreground">索引程序版本</p>
+                  <Badge variant="secondary">{overview.indexerVersion}</Badge>
+                </div>
+                <Separator className="my-3" />
+                <div className="space-y-2">
+                  {summaryRows.map((row) => (
+                    <div key={row.label} className="flex items-center justify-between text-sm">
+                      <span>{row.label}</span>
+                      <span className="text-muted-foreground">
+                        {row.stat.covered}/{row.stat.total} ({formatPercent(row.stat.ratio)})
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                {activeMode === 'backfill-summary' && (
+                  <p className="mt-2 text-[11px] text-muted-foreground">
+                    执行中显示实时增量，最终以任务完成后的统计为准
+                  </p>
                 )}
-              </ScrollArea>
-              {logError && (
-                <p className="mt-2 text-xs text-destructive">{logError}</p>
+              </div>
+
+              <div className="rounded-md border p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs text-muted-foreground">执行日志</p>
+                  <span className="text-[11px] text-muted-foreground">
+                    {logPath ? logPath.split('/').pop() : ''}
+                  </span>
+                </div>
+                <ScrollArea className="mt-2 h-44 rounded-md border bg-muted/30 p-2">
+                  {logLines.length > 0 ? (
+                    <pre className="whitespace-pre-wrap break-all text-[11px] leading-5 text-foreground">
+                      {logLines.map(formatLogLine).join('\n')}
+                    </pre>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">暂无日志</p>
+                  )}
+                </ScrollArea>
+                {logError && (
+                  <p className="mt-2 text-xs text-destructive">{logError}</p>
+                )}
+              </div>
+
+              {(actionError || overviewError) && (
+                <p className="text-sm text-destructive">{actionError || overviewError}</p>
               )}
             </div>
           </div>
         ) : (
-          <p className="text-sm text-destructive">{overviewError || '暂无概况数据'}</p>
+          <div className="flex-1 px-6 py-4">
+            <p className="text-sm text-destructive">{overviewError || '暂无概况数据'}</p>
+          </div>
         )}
 
-        {(actionError || overviewError) && (
-          <p className="text-sm text-destructive">{actionError || overviewError}</p>
-        )}
-
-        <DialogFooter className="flex gap-2 sm:justify-between">
+        <DialogFooter className="flex shrink-0 gap-2 border-t px-6 py-4 sm:justify-between">
           <div className="text-xs text-muted-foreground">
-            {runningMode ? `正在执行：${runningLabel}...` : ''}
+            {activeMode ? `正在执行：${runningLabel}...` : ''}
           </div>
           <div className="flex gap-2">
             <Button
               variant="outline"
-              disabled={disabled || runningMode !== null}
+              disabled={disabled || activeMode !== null}
               onClick={() => runAction('incremental')}
             >
               增量更新
             </Button>
             <Button
               variant="outline"
-              disabled={disabled || runningMode !== null}
+              disabled={disabled || activeMode !== null}
               onClick={() => runAction('backfill-summary')}
             >
               补全Summary
             </Button>
             <Button
               variant="destructive"
-              disabled={disabled || runningMode !== null}
+              disabled={disabled || activeMode !== null}
               onClick={() => runAction('reindex')}
             >
               重新索引
