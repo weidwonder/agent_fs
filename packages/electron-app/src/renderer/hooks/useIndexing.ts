@@ -66,11 +66,16 @@ export function useIndexing(onComplete?: () => void) {
     }
   }, [startIndexing]);
 
+  const clearError = useCallback(() => {
+    setError(null);
+  }, []);
+
   return {
     indexingPath,
     isIndexing: indexingPath !== null,
     progress,
     error,
+    clearError,
     startIndexing,
     selectAndIndex,
   };

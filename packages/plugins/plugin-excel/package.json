@@ -11,12 +11,11 @@
     }
   },
   "files": [
-    "dist",
-    "dotnet"
+    "dist"
   ],
   "scripts": {
-    "build": "tsc",
-    "build:dotnet": "cd dotnet/excel-converter && dotnet publish -c Release -o ../../dist/dotnet",
+    "build": "pnpm build:dotnet && tsc",
+    "build:dotnet": "rm -rf ./dist/dotnet && dotnet publish ./dotnet/excel-converter/ExcelConverter.csproj -c Release && mkdir -p ./dist/dotnet && publish_dir=$(find ./dotnet/excel-converter/bin/Release -type d -path '*/publish' | head -n 1) && test -n \"$publish_dir\" && cp -R \"$publish_dir\"/. ./dist/dotnet/",
     "build:all": "pnpm build:dotnet && pnpm build",
     "clean": "rm -rf dist",
     "lint": "eslint src",

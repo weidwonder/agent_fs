@@ -20,6 +20,12 @@ export interface DocxServiceOptions {
   timeoutMs?: number;
 }
 
+interface ConverterLaunchTarget {
+  command: string;
+  args: string[];
+  path: string;
+}
+
 type PendingRequest = {
   resolve: (data: DocxSuccessData) => void;
   reject: (error: Error) => void;
@@ -44,13 +50,14 @@ export class DocxService {
   async start(): Promise<void> {
     if (this.process) return;
 
-    if (!existsSync(this.converterPath)) {
+    const launchTarget = resolveConverterLaunchTarget(this.converterPath);
+    if (!existsSync(launchTarget.path)) {
       throw new Error(
-        `DocxConverter 未找到: ${this.converterPath}，请先运行 pnpm --filter @agent-fs/plugin-docx build:dotnet`,
+        `DocxConverter 未找到: ${launchTarget.path}，请先运行 pnpm --filter @agent-fs/plugin-docx build:dotnet`,
       );
     }
 
-    this.process = this.spawnFn('dotnet', [this.converterPath]);
+    this.process = this.spawnFn(launchTarget.command, launchTarget.args);
     this.process.stdout.on('data', (chunk: Buffer) => this.handleStdout(chunk));
     this.process.stderr.on('data', (chunk: Buffer) => {
       const chunkText = chunk.toString('utf8');
@@ -150,9 +157,12 @@ export class DocxService {
   }
 }
 
-function resolveConverterPath(): string {
+export function resolveConverterPath(): string {
   const custom = process.env.AGENT_FS_DOCX_CONVERTER;
-  if (custom) return custom;
+  if (custom) return resolveExistingPath(custom);
+
+  const packagedPath = resolvePackagedResourcePath('docx', 'DocxConverter.dll');
+  if (packagedPath) return packagedPath;
 
   const baseDir = dirname(fileURLToPath(import.meta.url));
   const defaultPath = join(
@@ -166,7 +176,8 @@ function resolveConverterPath(): string {
     'publish',
     'DocxConverter.dll',
   );
-  if (existsSync(defaultPath)) return defaultPath;
+  const resolvedDefaultPath = resolveExistingPath(defaultPath);
+  if (existsSync(resolvedDefaultPath)) return resolvedDefaultPath;
 
   try {
     const require = createRequire(import.meta.url);
@@ -182,7 +193,8 @@ function resolveConverterPath(): string {
       'publish',
       'DocxConverter.dll',
     );
-    if (existsSync(fallbackPath)) return fallbackPath;
+    const resolvedFallbackPath = resolveExistingPath(fallbackPath);
+    if (existsSync(resolvedFallbackPath)) return resolvedFallbackPath;
   } catch {
     // 忽略解析失败
   }
@@ -204,12 +216,87 @@ function resolveConverterPath(): string {
         'publish',
         'DocxConverter.dll',
       );
-      if (existsSync(candidatePath)) return candidatePath;
+      const resolvedCandidatePath = resolveExistingPath(candidatePath);
+      if (existsSync(resolvedCandidatePath)) return resolvedCandidatePath;
       const parent = dirname(current);
       if (parent === current) break;
       current = parent;
     }
   }
 
-  return defaultPath;
+  return resolvedDefaultPath;
+}
+
+function resolvePackagedResourcePath(...pathSegments: string[]): string | null {
+  const resourcesPath = Reflect.get(process, 'resourcesPath');
+  if (typeof resourcesPath !== 'string' || resourcesPath.length === 0) {
+    return null;
+  }
+
+  const packagedPath = resolveExistingPath(
+    join(resourcesPath, 'converters', ...pathSegments),
+  );
+  return existsSync(packagedPath) ? packagedPath : null;
+}
+
+export function resolveExistingPath(inputPath: string): string {
+  for (const candidate of buildPathCandidates(inputPath)) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return inputPath;
+}
+
+export function resolveConverterLaunchTarget(inputPath: string): ConverterLaunchTarget {
+  for (const candidate of buildLaunchPathCandidates(inputPath)) {
+    if (!existsSync(candidate)) {
+      continue;
+    }
+
+    if (candidate.endsWith('.dll')) {
+      return {
+        command: 'dotnet',
+        args: [candidate],
+        path: candidate,
+      };
+    }
+
+    return {
+      command: candidate,
+      args: [],
+      path: candidate,
+    };
+  }
+
+  return {
+    command: 'dotnet',
+    args: [resolveExistingPath(inputPath)],
+    path: resolveExistingPath(inputPath),
+  };
+}
+
+function buildPathCandidates(inputPath: string): string[] {
+  const candidates = [inputPath];
+  if (inputPath.includes('app.asar')) {
+    candidates.unshift(inputPath.replace(/app\.asar([/\\])/u, 'app.asar.unpacked$1'));
+  }
+
+  const executableCandidates = candidates.flatMap((candidate) => {
+    if (!candidate.endsWith('.dll')) {
+      return [];
+    }
+
+    const basePath = candidate.slice(0, -'.dll'.length);
+    return process.platform === 'win32'
+      ? [`${basePath}.exe`, basePath]
+      : [basePath];
+  });
+
+  return Array.from(new Set([...executableCandidates, ...candidates]));
+}
+
+function buildLaunchPathCandidates(inputPath: string): string[] {
+  return buildPathCandidates(inputPath);
 }

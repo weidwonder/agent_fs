@@ -204,6 +204,12 @@ Electron 客户端在知识库卡片设置中提供三种手动操作：
   3. `process.cwd()`
 - 启动前执行 `electron-rebuild`，保证 `better-sqlite3` / `nodejieba` / `canvas` 与 Electron ABI 一致
 - `native:electron` 通过 `electron-rebuild -m ../../ --force` 在 workspace 根目录强制重建 `better-sqlite3` / `nodejieba` / `canvas`；重建后会执行 `scripts/ensure-electron-native.mjs`，通过 `ELECTRON_RUN_AS_NODE=1` 实际执行 SQLite 内存查询与 `nodejieba.cut` 进行探测；若检测到 macOS 签名损坏（`code signature does not cover entire file...`）会自动重签名后复检
+- `@agent-fs/search` 必须显式声明 `apache-arrow` 运行时依赖；`@lancedb/lancedb` 仅通过 peer dependency 约束 Arrow 版本，Electron 打包产物不能依赖 workspace hoist“碰巧可用”
+- `@agent-fs/plugin-docx` 的 `build` 必须先执行 `build:dotnet`，并且 Electron 打包时需将 `plugin-docx/dotnet/**` 解包到 `app.asar.unpacked`；外部 `dotnet` 进程不得直接读取 `app.asar` 内路径
+- `@agent-fs/plugin-excel` 的 `build` 必须先执行 `build:dotnet`，运行时优先启动 `dist/dotnet/ExcelConverter` 发布可执行文件；仅在本地开发兜底时才回退 `dotnet run --project <csproj>`
+- Electron 打包产物必须额外将 `DocxConverter` / `ExcelConverter` 复制到 `Contents/Resources/converters/{docx,excel}`，运行时优先从该目录解析，避免依赖 `app.asar` 或 workspace 包路径
+- `scripts/install_macos.sh` 安装完成后必须执行 `scripts/verify-packaged-app.mjs` 烟测；除校验 `apache-arrow`、`Contents/Resources/converters/` 下转换器产物存在外，还必须通过打包后 JS 入口实际启动 `ConverterClient`
+- Renderer 侧索引失败提示需支持手动关闭，避免一次失败后错误提示常驻遮挡后续操作
 
 ---
 

@@ -9,12 +9,20 @@ import { SearchPanel } from './components/SearchPanel';
 import { StatusBar } from './components/StatusBar';
 import { SettingsDialog } from './components/SettingsDialog';
 import { ProjectOverviewDialog } from './components/ProjectOverviewDialog';
+import { IndexErrorToast } from './components/IndexErrorToast';
 import { useRegistry } from './hooks/useRegistry';
 import { useIndexing } from './hooks/useIndexing';
 
 export default function App() {
   const { projects, refresh } = useRegistry();
-  const { indexingPath, progress, error: indexError, startIndexing, selectAndIndex } = useIndexing(refresh);
+  const {
+    indexingPath,
+    progress,
+    error: indexError,
+    clearError: clearIndexError,
+    startIndexing,
+    selectAndIndex,
+  } = useIndexing(refresh);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<{ projectId: string; alias: string; path: string } | null>(null);
@@ -211,12 +219,7 @@ export default function App() {
           </AlertDialogContent>
         </AlertDialog>
 
-        {/* Index Error Toast */}
-        {indexError && (
-          <div className="fixed bottom-12 right-4 max-w-sm p-3 rounded-lg bg-destructive text-destructive-foreground text-sm shadow-lg animate-in slide-in-from-bottom-2">
-            索引失败：{indexError}
-          </div>
-        )}
+        <IndexErrorToast error={indexError} onClose={clearIndexError} />
 
         {removeStatusMessage && (
           <div className={`fixed bottom-12 left-4 max-w-sm p-3 rounded-lg text-sm shadow-lg animate-in slide-in-from-bottom-2 ${

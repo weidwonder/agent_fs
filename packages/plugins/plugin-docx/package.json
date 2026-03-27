@@ -10,9 +10,12 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist",
+    "dotnet"
+  ],
   "scripts": {
-    "build": "tsc",
+    "build": "pnpm build:dotnet && tsc",
     "build:dotnet": "dotnet publish ./dotnet/DocxConverter/DocxConverter.csproj -c Release -o ./dotnet/DocxConverter/bin/Release/net8.0/publish",
     "clean": "rm -rf dist dotnet/DocxConverter/bin",
     "lint": "eslint src",

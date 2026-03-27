@@ -20,9 +20,10 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@msgpack/msgpack": "^3.1.2",
     "@agent-fs/core": "workspace:*",
     "@lancedb/lancedb": "^0.23.0",
+    "@msgpack/msgpack": "^3.1.2",
+    "apache-arrow": "^18.1.0",
     "better-sqlite3": "^11.10.0",
     "nodejieba": "^2.6.0"
   },

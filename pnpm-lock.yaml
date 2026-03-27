@@ -358,6 +358,9 @@ importers:
       '@msgpack/msgpack':
         specifier: ^3.1.2
         version: 3.1.3
+      apache-arrow:
+        specifier: ^18.1.0
+        version: 18.1.0
       better-sqlite3:
         specifier: ^11.10.0
         version: 11.10.0

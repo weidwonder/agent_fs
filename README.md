@@ -34,6 +34,20 @@ pnpm install
 pnpm build
 ```
 
+### 安装 macOS 桌面应用到 Applications
+
+完成依赖安装后，可以直接执行：
+
+```bash
+./scripts/install_macos.sh
+```
+
+如果已经有可复用的 `.app` 打包产物，也可以跳过构建，直接覆盖安装：
+
+```bash
+./scripts/install_macos.sh --skip-build
+```
+
 ## 使用
 
 ### 1. 启动桌面客户端
@@ -149,6 +163,8 @@ pnpm clean           # 清理构建产物
 ```
 
 `pnpm build` 与 `packages/electron-app` 下的 `pnpm dev/build` 已自动串联 `native:sync`，编译前会先完成 native 架构统一。
+
+如需在本机安装 Electron 桌面应用，可执行 `./scripts/install_macos.sh`。
 
 ### 项目结构
 
