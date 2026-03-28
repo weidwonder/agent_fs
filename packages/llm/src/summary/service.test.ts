@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LLMConfig } from '@agent-fs/core';
 import { SummaryCache } from './cache';
-import { SummaryService } from './service';
+import { SummaryService, resetSummaryRequestLimiterForTest } from './service';
 
 type MockFetch = ReturnType<typeof vi.fn>;
 
@@ -52,6 +52,7 @@ function extractPromptItems(messages: Array<{ content: string }>): Array<{ id: s
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
+  resetSummaryRequestLimiterForTest();
 });
 
 describe('SummaryCache', () => {
@@ -182,6 +183,8 @@ describe('SummaryService', () => {
   });
 
   it('应按运行时全局并发上限串行化请求', async () => {
+    vi.useFakeTimers();
+
     let running = 0;
     let maxRunning = 0;
     const fetchMock: MockFetch = vi.fn(async () => {
@@ -193,20 +196,26 @@ describe('SummaryService', () => {
     });
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
-    const service = new SummaryService(baseConfig, { maxConcurrentRequests: 1 });
+    const service = new SummaryService(baseConfig, {
+      maxConcurrentRequests: 1,
+      minRequestIntervalMs: 0,
+    });
 
-    await Promise.all([
+    const pending = Promise.all([
       service.generateChunkSummary('内容-1', { useCache: false }),
       service.generateChunkSummary('内容-2', { useCache: false }),
       service.generateChunkSummary('内容-3', { useCache: false }),
     ]);
+
+    await vi.runAllTimersAsync();
+    await pending;
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(maxRunning).toBe(1);
   });
 
   it('batch 摘要 JSON 解析失败时应重试并降级为逐 chunk 生成', async () => {
-    const service = new SummaryService(baseConfig);
+    const service = new SummaryService(baseConfig, { minRequestIntervalMs: 0 });
     const call = vi.spyOn(service as any, 'callLLM');
     call.mockResolvedValueOnce('not json');
     call.mockResolvedValueOnce('still wrong');
@@ -259,6 +268,33 @@ describe('SummaryService', () => {
     );
 
     expect(result.map((item) => item.summary)).toEqual(['摘要-c1', '摘要-c2']);
+  });
+
+  it('batch 遇到 429 时不应降级为逐 chunk 继续放大请求', async () => {
+    vi.useFakeTimers();
+
+    const fetchMock: MockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(createRateLimitResponse('0.01'))
+      .mockResolvedValueOnce(createRateLimitResponse('0.01'));
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+    const service = new SummaryService(baseConfig);
+
+    const pending = service.generateChunkSummariesBatch(
+      [
+        { id: 'c1', content: 'a' },
+        { id: 'c2', content: 'b' },
+      ],
+      { maxRetries: 1, timeoutMs: 10, tokenBudget: 10 }
+    );
+    await vi.runAllTimersAsync();
+
+    const result = await pending;
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.map((item) => item.summary)).toEqual(['', '']);
+    expect(result.every((item) => item.fallback)).toBe(true);
   });
 
   it('batch 与逐 chunk 都失败时应降级为空', async () => {

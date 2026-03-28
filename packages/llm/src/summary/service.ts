@@ -13,8 +13,9 @@ import { groupByTokenBudget, type TokenItem } from './batch-utils';
 type ChatMessage = { role: 'user' | 'system'; content: string };
 const MAX_CHUNKS_PER_BATCH_REQUEST = 4;
 const DEFAULT_COMPLETION_MAX_TOKENS = 1024;
-const DEFAULT_RATE_LIMIT_DELAY_MS = 15000;
-const MAX_RATE_LIMIT_DELAY_MS = 60000;
+const DEFAULT_RATE_LIMIT_DELAY_MS = 30000;
+const MAX_RATE_LIMIT_DELAY_MS = 120000;
+const DEFAULT_REQUEST_MIN_INTERVAL_MS = 1500;
 
 class SummaryApiError extends Error {
   readonly status: number;
@@ -32,9 +33,14 @@ class RequestLimiter {
   private activeCount = 0;
   private limit: number;
   private waiters: Array<() => void> = [];
+  private minIntervalMs: number;
+  private nextStartAt = 0;
+  private cooldownUntil = 0;
+  private scheduleTail: Promise<void> = Promise.resolve();
 
-  constructor(limit: number) {
+  constructor(limit: number, minIntervalMs = 0) {
     this.limit = Math.max(1, Math.floor(limit));
+    this.minIntervalMs = Math.max(0, Math.floor(minIntervalMs));
   }
 
   setLimit(limit: number): void {
@@ -42,9 +48,27 @@ class RequestLimiter {
     this.flush();
   }
 
+  setMinInterval(minIntervalMs: number): void {
+    this.minIntervalMs = Math.max(0, Math.floor(minIntervalMs));
+  }
+
+  setCooldown(delayMs: number): void {
+    const normalizedDelayMs = Math.max(0, Math.floor(delayMs));
+    this.cooldownUntil = Math.max(this.cooldownUntil, Date.now() + normalizedDelayMs);
+  }
+
+  reset(): void {
+    this.activeCount = 0;
+    this.waiters = [];
+    this.nextStartAt = 0;
+    this.cooldownUntil = 0;
+    this.scheduleTail = Promise.resolve();
+  }
+
   async run<T>(task: () => Promise<T>): Promise<T> {
     await this.acquire();
     try {
+      await this.schedule();
       return await task();
     } finally {
       this.release();
@@ -70,6 +94,25 @@ class RequestLimiter {
     this.flush();
   }
 
+  private async schedule(): Promise<void> {
+    let releaseSchedule!: () => void;
+    const previousSchedule = this.scheduleTail;
+    this.scheduleTail = new Promise<void>((resolve) => {
+      releaseSchedule = resolve;
+    });
+
+    await previousSchedule;
+
+    const scheduledStartAt = Math.max(Date.now(), this.cooldownUntil, this.nextStartAt);
+    this.nextStartAt = scheduledStartAt + this.minIntervalMs;
+    releaseSchedule();
+
+    const waitMs = scheduledStartAt - Date.now();
+    if (waitMs > 0) {
+      await sleep(waitMs);
+    }
+  }
+
   private flush(): void {
     while (this.activeCount < this.limit && this.waiters.length > 0) {
       const waiter = this.waiters.shift();
@@ -78,7 +121,7 @@ class RequestLimiter {
   }
 }
 
-const globalRequestLimiter = new RequestLimiter(2);
+const globalRequestLimiter = new RequestLimiter(2, DEFAULT_REQUEST_MIN_INTERVAL_MS);
 
 export interface SummaryOptions {
   useCache?: boolean;
@@ -112,6 +155,7 @@ interface LLMCallOptions {
 
 export interface SummaryServiceRuntimeOptions {
   maxConcurrentRequests?: number;
+  minRequestIntervalMs?: number;
 }
 
 export class SummaryService {
@@ -123,6 +167,9 @@ export class SummaryService {
     this.cache = new SummaryCache(config.model);
     if (runtimeOptions.maxConcurrentRequests) {
       globalRequestLimiter.setLimit(runtimeOptions.maxConcurrentRequests);
+    }
+    if (runtimeOptions.minRequestIntervalMs !== undefined) {
+      globalRequestLimiter.setMinInterval(runtimeOptions.minRequestIntervalMs);
     }
   }
 
@@ -275,6 +322,20 @@ export class SummaryService {
     }
 
     if (!parsed) {
+      if (lastError && isRateLimitError(lastError)) {
+        globalRequestLimiter.setCooldown(this.getRetryDelayMs(lastError, context.maxRetries));
+        for (const item of batch) {
+          const index = item.payload.index;
+          context.results[index] = {
+            id: item.id,
+            summary: '',
+            fromCache: false,
+            fallback: true,
+          };
+        }
+        return;
+      }
+
       for (const item of batch) {
         const index = item.payload.index;
         const single = await this.generateChunkSummary(item.payload.content, {
@@ -502,7 +563,11 @@ export class SummaryService {
       } catch (error) {
         lastError = error as Error;
         if (attempt < attemptCount - 1) {
-          await sleep(this.getRetryDelayMs(lastError, attempt));
+          const retryDelayMs = this.getRetryDelayMs(lastError, attempt);
+          if (isRateLimitError(lastError)) {
+            globalRequestLimiter.setCooldown(retryDelayMs);
+          }
+          await sleep(retryDelayMs);
         }
       } finally {
         if (timeoutId) {
@@ -555,6 +620,12 @@ function isRateLimitError(error: Error): boolean {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function resetSummaryRequestLimiterForTest(): void {
+  globalRequestLimiter.reset();
+  globalRequestLimiter.setLimit(2);
+  globalRequestLimiter.setMinInterval(DEFAULT_REQUEST_MIN_INTERVAL_MS);
 }
 
 export function createSummaryService(
