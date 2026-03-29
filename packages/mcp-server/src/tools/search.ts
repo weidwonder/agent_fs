@@ -182,7 +182,7 @@ export async function search(input: SearchInput) {
 
   const lists = [
     {
-      name: 'hybrid_vector',
+      name: 'content_vector',
       items: hybridVectorResults.map((item) => mapVectorItem(item, scopedContext.fileLookup)),
     },
     {
@@ -459,7 +459,7 @@ async function searchVector(
         : [{}];
 
   for (const request of requests) {
-    const results = await store.searchByHybrid(queryVector, {
+    const results = await store.searchByContent(queryVector, {
       ...request,
       topK: topK * 3,
       minResultsBeforeFallback: topK,

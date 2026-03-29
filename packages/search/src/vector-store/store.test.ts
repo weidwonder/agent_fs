@@ -16,7 +16,7 @@ describe('VectorStore', () => {
     dirId: string,
     filePath: string,
     contentVector: number[],
-    summaryVector: number[]
+    _summaryVector?: number[]
   ): VectorDocument => ({
     chunk_id: id,
     file_id: `file_${id}`,
@@ -26,7 +26,6 @@ describe('VectorStore', () => {
     chunk_line_start: 1,
     chunk_line_end: 3,
     content_vector: contentVector,
-    summary_vector: summaryVector,
     locator: `line:${id}`,
     indexed_at: new Date().toISOString(),
     deleted_at: '',
@@ -68,7 +67,6 @@ describe('VectorStore', () => {
         content: 'legacy content',
         summary: 'legacy summary',
         content_vector: [0, 0, 0],
-        summary_vector: [0, 0, 0],
         locator: 'line:1',
         indexed_at: new Date().toISOString(),
         deleted_at: '',
@@ -79,7 +77,7 @@ describe('VectorStore', () => {
     await store.init();
 
     await expect(
-      store.addDocuments([createDoc('new-1', 'dir1', '/project/docs/new.md', [1, 0, 0], [0, 1, 0])])
+      store.addDocuments([createDoc('new-1', 'dir1', '/project/docs/new.md', [1, 0, 0])])
     ).resolves.toBeUndefined();
 
     const results = await store.getByChunkIds(['new-1']);
@@ -90,8 +88,8 @@ describe('VectorStore', () => {
 
   it('should add documents and search by content', async () => {
     const docs = [
-      createDoc('c1', 'dir1', '/project/docs/a.md', [1, 0, 0], [0, 1, 0]),
-      createDoc('c2', 'dir1', '/project/docs/b.md', [0, 1, 0], [1, 0, 0]),
+      createDoc('c1', 'dir1', '/project/docs/a.md', [1, 0, 0]),
+      createDoc('c2', 'dir1', '/project/docs/b.md', [0, 1, 0]),
     ];
 
     await store.addDocuments(docs);
@@ -101,32 +99,6 @@ describe('VectorStore', () => {
     expect(results[0].chunk_id).toBe('c1');
     expect(results[0].document.chunk_line_start).toBe(1);
     expect(results[0].document.chunk_line_end).toBe(3);
-  });
-
-  it('should search by summary', async () => {
-    const docs = [
-      createDoc('s1', 'dir1', '/project/docs/s1.md', [1, 0, 0], [0, 1, 0]),
-      createDoc('s2', 'dir1', '/project/docs/s2.md', [0, 1, 0], [0, 0, 1]),
-    ];
-
-    await store.addDocuments(docs);
-
-    const results = await store.searchBySummary([0, 1, 0], { topK: 1 });
-    expect(results.length).toBe(1);
-    expect(results[0].chunk_id).toBe('s1');
-  });
-
-  it('应按 content+summary 的 1:1 合并向量检索', async () => {
-    const docs = [
-      createDoc('h1', 'dir1', '/project/docs/h1.md', [1, 0, 0], [0, 1, 0]),
-      createDoc('h2', 'dir1', '/project/docs/h2.md', [1, 0, 0], [0, 0, 1]),
-    ];
-
-    await store.addDocuments(docs);
-
-    const results = await store.searchByHybrid([1, 1, 0], { topK: 1 });
-    expect(results.length).toBe(1);
-    expect(results[0].chunk_id).toBe('h1');
   });
 
   it('should filter by dirId', async () => {
@@ -282,27 +254,6 @@ describe('VectorStore', () => {
     expect(ids).toEqual(['g1', 'g3']);
   });
 
-  it('应支持按 chunk 更新 summary/hybrid 向量', async () => {
-    const docs = [
-      createDoc('u1', 'dir1', '/project/docs/u1.md', [1, 0, 0], [0, 0, 0]),
-    ];
-    await store.addDocuments(docs);
-
-    await store.updateChunkVectors([
-      {
-        chunkId: 'u1',
-        summaryVector: [0, 1, 0],
-        hybridVector: [0.5, 0.5, 0],
-        indexedAt: '2026-02-25T00:00:00.000Z',
-      },
-    ]);
-
-    const [updated] = await store.getByChunkIds(['u1']);
-    expect(Array.from(updated.summary_vector as ArrayLike<number>)).toEqual([0, 1, 0]);
-    expect(Array.from(updated.hybrid_vector as ArrayLike<number>)).toEqual([0.5, 0.5, 0]);
-    expect(updated.indexed_at).toBe('2026-02-25T00:00:00.000Z');
-  });
-
   it('should not return soft deleted documents', async () => {
     const docs = [
       createDoc('d1', 'dir1', '/project/docs/d1.md', [1, 0, 0], [0, 1, 0]),
@@ -351,7 +302,7 @@ describe('VectorStore', () => {
     (testStore as any).db = {};
     (testStore as any).table = { vectorSearch };
 
-    const results = await testStore.searchByHybrid([1, 0, 0], {
+    const results = await testStore.searchByContent([1, 0, 0], {
       topK: 1,
       dirIds: ['dir1'],
     });
@@ -397,7 +348,7 @@ describe('VectorStore', () => {
     (testStore as any).db = {};
     (testStore as any).table = { vectorSearch };
 
-    const results = await testStore.searchByHybrid([1, 0, 0], {
+    const results = await testStore.searchByContent([1, 0, 0], {
       topK: 30,
       dirIds: ['dir1'],
       minResultsBeforeFallback: 10,
@@ -464,7 +415,6 @@ describe('VectorStore', () => {
         indexed_at: new Date().toISOString(),
         deleted_at: '',
         content_vector: { 0: 1, 1: 2, 2: 3, length: 3 },
-        summary_vector: new Float32Array([4, 5, 6]),
       },
     ]);
     const queryBuilder = {
@@ -484,8 +434,6 @@ describe('VectorStore', () => {
 
     expect(Array.isArray(doc.content_vector)).toBe(true);
     expect(doc.content_vector).toEqual([1, 2, 3]);
-    expect(Array.isArray(doc.summary_vector)).toBe(true);
-    expect(doc.summary_vector).toEqual([4, 5, 6]);
     await testStore.close();
   });
 });

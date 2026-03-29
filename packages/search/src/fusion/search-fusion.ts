@@ -8,7 +8,6 @@ import { aggregateTopByFile } from './file-dedup';
 export interface FusionOptions {
   rrfParams?: RRFParams;
   useContentVector?: boolean;
-  useSummaryVector?: boolean;
   useBM25?: boolean;
 }
 
@@ -27,7 +26,6 @@ export class SearchFusion {
     const {
       rrfParams = DEFAULT_RRF_PARAMS,
       useContentVector = true,
-      useSummaryVector = true,
       useBM25 = true,
     } = fusionOptions;
 
@@ -39,7 +37,7 @@ export class SearchFusion {
     const lists: { name: string; items: SearchResult[] }[] = [];
 
     let queryVector: number[] | null = null;
-    if (useContentVector || useSummaryVector) {
+    if (useContentVector) {
       queryVector = await this.embeddingService.embed(query);
     }
 
@@ -51,27 +49,6 @@ export class SearchFusion {
 
       lists.push({
         name: 'content_vector',
-        items: results.map((r) => ({
-          chunkId: r.chunk_id,
-          score: r.score,
-          content: '',
-          summary: '',
-          source: {
-            filePath: r.document.file_path,
-            locator: r.document.locator,
-          },
-        })),
-      });
-    }
-
-    if (useSummaryVector && queryVector) {
-      const results = await this.vectorStore.searchBySummary(queryVector, {
-        topK: topK * 2,
-        filePathPrefix,
-      });
-
-      lists.push({
-        name: 'summary_vector',
         items: results.map((r) => ({
           chunkId: r.chunk_id,
           score: r.score,

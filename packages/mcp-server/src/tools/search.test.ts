@@ -230,7 +230,7 @@ describe('search', () => {
 
   it('融合结果会从 AFD 补全文本和摘要', async () => {
     const invertedCalls: Array<{ query: string; options: { dirIds?: string[]; topK?: number } }> = [];
-    const searchByHybrid = vi.fn().mockResolvedValue([
+    const searchByContent = vi.fn().mockResolvedValue([
       {
         chunk_id: 'f1:0000',
         score: 0.9,
@@ -243,7 +243,6 @@ describe('search', () => {
           chunk_line_start: 1,
           chunk_line_end: 1,
           content_vector: [],
-          summary_vector: [],
           locator: 'line:1-1',
           indexed_at: '',
           deleted_at: '',
@@ -256,7 +255,7 @@ describe('search', () => {
         embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
       } as any,
       vectorStore: {
-        searchByHybrid,
+        searchByContent,
         getByChunkIds: vi.fn().mockResolvedValue([]),
       } as any,
       invertedIndex: {
@@ -290,7 +289,7 @@ describe('search', () => {
 
     expect(invertedCalls).toHaveLength(1);
     expect(invertedCalls[0].options.dirIds).toEqual(['d1']);
-    expect(searchByHybrid).toHaveBeenCalledTimes(1);
+    expect(searchByContent).toHaveBeenCalledTimes(1);
   });
 
   it('同文件关键词命中被聚合后，应优先选中关键词快照对应的 chunk 作为代表结果', async () => {
@@ -308,7 +307,7 @@ describe('search', () => {
         embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
       } as any,
       vectorStore: {
-        searchByHybrid: vi.fn().mockResolvedValue([
+        searchByContent: vi.fn().mockResolvedValue([
           {
             chunk_id: 'f1:0000',
             score: 0.9,
@@ -321,7 +320,6 @@ describe('search', () => {
               chunk_line_start: 1,
               chunk_line_end: 1,
               content_vector: [],
-              summary_vector: [],
               locator: 'line:1-1',
               indexed_at: '',
               deleted_at: '',
@@ -456,7 +454,7 @@ describe('search', () => {
         embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
       } as any,
       vectorStore: {
-        searchByHybrid: vi.fn().mockResolvedValue([
+        searchByContent: vi.fn().mockResolvedValue([
           {
             chunk_id: 'f1:0000',
             score: 0.91,
@@ -563,7 +561,7 @@ describe('search', () => {
       )
     );
 
-    const searchByHybrid = vi.fn().mockResolvedValue([
+    const searchByContent = vi.fn().mockResolvedValue([
       {
         chunk_id: 'f1:0000',
         score: 0.8,
@@ -576,7 +574,6 @@ describe('search', () => {
           chunk_line_start: 1,
           chunk_line_end: 1,
           content_vector: [],
-          summary_vector: [],
           locator: 'line:1-1',
           indexed_at: '',
           deleted_at: '',
@@ -589,7 +586,7 @@ describe('search', () => {
         embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
       } as any,
       vectorStore: {
-        searchByHybrid,
+        searchByContent,
         getByChunkIds: vi.fn().mockResolvedValue([]),
       } as any,
       invertedIndex: {
@@ -603,8 +600,8 @@ describe('search', () => {
       top_k: 5,
     });
 
-    expect(searchByHybrid).toHaveBeenCalledTimes(1);
-    expect(searchByHybrid).toHaveBeenCalledWith([0.1, 0.2, 0.3], {
+    expect(searchByContent).toHaveBeenCalledTimes(1);
+    expect(searchByContent).toHaveBeenCalledWith([0.1, 0.2, 0.3], {
       dirIds: ['d1-sub-a', 'd1-sub-b'],
       topK: 15,
       minResultsBeforeFallback: 5,
@@ -617,7 +614,7 @@ describe('search', () => {
         embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
       } as any,
       vectorStore: {
-        searchByHybrid: vi.fn().mockResolvedValue([
+        searchByContent: vi.fn().mockResolvedValue([
           {
             chunk_id: 'f1:0001',
             score: 0.9,
@@ -630,7 +627,6 @@ describe('search', () => {
               chunk_line_start: 2,
               chunk_line_end: 2,
               content_vector: [],
-              summary_vector: [],
               locator: 'sheet:销售数据/range:A1:B10',
               indexed_at: '',
               deleted_at: '',
@@ -674,7 +670,7 @@ describe('search', () => {
         embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
       } as any,
       vectorStore: {
-        searchByHybrid: vi.fn().mockResolvedValue([]),
+        searchByContent: vi.fn().mockResolvedValue([]),
         getByChunkIds,
       } as any,
       invertedIndex: {
@@ -757,7 +753,7 @@ describe('search', () => {
         embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
       } as any,
       vectorStore: {
-        searchByHybrid: vi.fn().mockResolvedValue([
+        searchByContent: vi.fn().mockResolvedValue([
           {
             chunk_id: 'f1:0000',
             score: 0.9,
@@ -770,7 +766,6 @@ describe('search', () => {
               chunk_line_start: 2,
               chunk_line_end: 3,
               content_vector: [],
-              summary_vector: [],
               locator: 'line:2-3',
               indexed_at: '',
               deleted_at: '',
@@ -859,7 +854,7 @@ describe('search', () => {
         embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
       } as any,
       vectorStore: {
-        searchByHybrid: vi.fn().mockResolvedValue([
+        searchByContent: vi.fn().mockResolvedValue([
           {
             chunk_id: 'f1:0000',
             score: 0.95,

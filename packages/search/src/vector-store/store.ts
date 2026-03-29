@@ -35,13 +35,6 @@ export interface VectorSearchOptions {
   minResultsBeforeFallback?: number;
 }
 
-export interface ChunkVectorUpdate {
-  chunkId: string;
-  summaryVector: number[];
-  hybridVector: number[];
-  indexedAt?: string;
-}
-
 const toRecord = (doc: VectorDocument): Record<string, unknown> => ({ ...doc });
 const REQUIRED_SCHEMA_FIELDS = new Set([
   'chunk_id',
@@ -52,8 +45,6 @@ const REQUIRED_SCHEMA_FIELDS = new Set([
   'chunk_line_start',
   'chunk_line_end',
   'content_vector',
-  'summary_vector',
-  'hybrid_vector',
   'locator',
   'indexed_at',
   'deleted_at',
@@ -110,8 +101,6 @@ export class VectorStore {
       chunk_line_start: 0,
       chunk_line_end: 0,
       content_vector: new Array(this.options.dimension).fill(0),
-      summary_vector: new Array(this.options.dimension).fill(0),
-      hybrid_vector: new Array(this.options.dimension).fill(0),
       locator: '',
       indexed_at: '',
       deleted_at: '',
@@ -172,7 +161,7 @@ export class VectorStore {
   async addDocuments(docs: VectorDocument[]): Promise<void> {
     if (docs.length === 0) return;
     const table = await this.ensureTable();
-    await table.add(docs.map((doc) => toRecord(this.withHybridVector(doc))));
+    await table.add(docs.map((doc) => toRecord(doc)));
   }
 
   async searchByContent(
@@ -182,23 +171,9 @@ export class VectorStore {
     return this.searchByVectorColumn(vector, 'content_vector', options);
   }
 
-  async searchBySummary(
-    vector: number[],
-    options: VectorSearchOptions = {}
-  ): Promise<VectorSearchResult[]> {
-    return this.searchByVectorColumn(vector, 'summary_vector', options);
-  }
-
-  async searchByHybrid(
-    vector: number[],
-    options: VectorSearchOptions = {}
-  ): Promise<VectorSearchResult[]> {
-    return this.searchByVectorColumn(vector, 'hybrid_vector', options);
-  }
-
   private async searchByVectorColumn(
     vector: number[],
-    vectorColumn: 'content_vector' | 'summary_vector' | 'hybrid_vector',
+    vectorColumn: 'content_vector',
     options: VectorSearchOptions = {}
   ): Promise<VectorSearchResult[]> {
     const {
@@ -323,41 +298,10 @@ export class VectorStore {
     }
   }
 
-  private withHybridVector(doc: VectorDocument): VectorDocument {
-    const hybridVector =
-      doc.hybrid_vector && doc.hybrid_vector.length > 0
-        ? doc.hybrid_vector
-        : this.composeHybridVector(doc.content_vector, doc.summary_vector);
-
-    return {
-      ...doc,
-      hybrid_vector: hybridVector,
-    };
-  }
-
-  private composeHybridVector(contentVector: number[], summaryVector: number[]): number[] {
-    const dimension = Math.max(
-      this.options.dimension,
-      contentVector.length,
-      summaryVector.length
-    );
-    const vector = new Array<number>(dimension).fill(0);
-
-    for (let index = 0; index < dimension; index += 1) {
-      const contentValue = contentVector[index] ?? 0;
-      const summaryValue = summaryVector[index] ?? 0;
-      vector[index] = (contentValue + summaryValue) / 2;
-    }
-
-    return vector;
-  }
-
   private normalizeVectorDocument(doc: VectorDocument): VectorDocument {
     return {
       ...doc,
       content_vector: this.normalizeVector(doc.content_vector),
-      summary_vector: this.normalizeVector(doc.summary_vector),
-      hybrid_vector: this.normalizeVector(doc.hybrid_vector),
     };
   }
 
@@ -524,31 +468,6 @@ export class VectorStore {
           values: { file_path: row.file_path.replace(oldPrefix, newPrefix) },
         });
       }
-    }
-  }
-
-  async updateChunkVectors(updates: ChunkVectorUpdate[]): Promise<void> {
-    if (updates.length === 0) {
-      return;
-    }
-
-    const table = await this.ensureTable();
-    const defaultIndexedAt = new Date().toISOString();
-
-    for (const update of updates) {
-      if (!update.chunkId) {
-        continue;
-      }
-
-      await table.update({
-        where: `chunk_id = '${this.escapeLiteral(update.chunkId)}'`,
-        values: {
-          summary_vector: update.summaryVector,
-          hybrid_vector: update.hybridVector,
-          indexed_at: update.indexedAt ?? defaultIndexedAt,
-          deleted_at: '',
-        },
-      });
     }
   }
 
