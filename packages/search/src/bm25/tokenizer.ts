@@ -1,4 +1,4 @@
-import nodejieba from 'nodejieba';
+import { getNodeJieba } from '../nodejieba-runtime';
 
 /**
  * 停用词列表（常见中英文停用词）
@@ -42,7 +42,7 @@ export function tokenize(text: string, options: TokenizeOptions = {}): string[] 
   const { removeStopWords = true, lowercase = true, minLength = 1 } = options;
 
   // 使用 jieba 分词（搜索模式，粒度更细）
-  let tokens = nodejieba.cutForSearch(text);
+  let tokens = getNodeJieba().cutForSearch(text);
 
   // 合并连续英文/数字分词，避免被拆成单字母
   const merged: string[] = [];

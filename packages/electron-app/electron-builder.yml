@@ -6,6 +6,7 @@ directories:
 files:
   - out/**
 asarUnpack:
+  - node_modules/**/nodejieba/**
   - node_modules/**/@agent-fs/plugin-docx/dotnet/**
   - node_modules/**/@agent-fs/plugin-excel/dist/dotnet/**
 extraResources:

@@ -11,7 +11,12 @@ const PHASE_NAMES: Record<IndexProgress['phase'], string> = {
 
 export { PHASE_NAMES };
 
-export function useIndexing(onComplete?: () => void) {
+export function useIndexing(callbacks?: {
+  onRegistered?: () => void;
+  onComplete?: () => void;
+}) {
+  const onRegistered = callbacks?.onRegistered;
+  const onComplete = callbacks?.onComplete;
   const [indexingPath, setIndexingPath] = useState<string | null>(null);
   const [currentMode, setCurrentMode] = useState<IndexingMode | null>(null);
   const [progress, setProgress] = useState<IndexProgress | null>(null);
@@ -42,8 +47,13 @@ export function useIndexing(onComplete?: () => void) {
     setIndexingPath(dirPath);
     setCurrentMode(mode);
     setError(null);
-    setProgress(null);
+      setProgress(null);
     try {
+      const registerResult = await window.electronAPI.registerProject(dirPath);
+      if (registerResult.success) {
+        onRegistered?.();
+      }
+
       const result = await window.electronAPI.startIndexing(dirPath, { mode });
       if (!result.success) {
         setError(result.error || '索引失败');
@@ -61,7 +71,7 @@ export function useIndexing(onComplete?: () => void) {
       setCurrentMode(null);
       setProgress(null);
     }
-  }, [onComplete]);
+  }, [onComplete, onRegistered]);
 
   const selectAndIndex = useCallback(async () => {
     const path = await window.electronAPI.selectDirectory();

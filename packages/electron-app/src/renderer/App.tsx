@@ -23,7 +23,10 @@ export default function App() {
     clearError: clearIndexError,
     startIndexing,
     selectAndIndex,
-  } = useIndexing(refresh);
+  } = useIndexing({
+    onRegistered: refresh,
+    onComplete: refresh,
+  });
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<{ projectId: string; alias: string; path: string } | null>(null);

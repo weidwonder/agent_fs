@@ -106,6 +106,9 @@ interface ElectronAPI {
   getProjectOverview: (path: string) => Promise<{ success: boolean; overview?: ProjectOverview; error?: string }>;
   getIndexingLog: (path: string, mode?: IndexingMode) => Promise<IndexingLogResponse>;
   getRegistry: () => Promise<{ projects: RegisteredProject[] }>;
+  registerProject: (
+    path: string
+  ) => Promise<{ success: boolean; project?: RegisteredProject; error?: string }>;
   removeProject: (projectId: string) => Promise<{ success: boolean; cleanup_started?: boolean; error?: string }>;
   onProjectRemovalStatus: (callback: (status: ProjectRemovalStatus) => void) => () => void;
   updateProjectSummary: (projectId: string, summary: string) => Promise<{ success: boolean; error?: string }>;

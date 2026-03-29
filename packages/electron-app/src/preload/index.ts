@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Registry
   getRegistry: () => ipcRenderer.invoke('get-registry'),
+  registerProject: (dirPath: string) => ipcRenderer.invoke('register-project', dirPath),
   removeProject: (projectId: string) => ipcRenderer.invoke('remove-project', projectId),
   onProjectRemovalStatus: (callback: (status: any) => void) => {
     const listener = (_event: unknown, status: any) => callback(status);

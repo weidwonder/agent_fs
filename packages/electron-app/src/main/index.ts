@@ -9,9 +9,11 @@ import {
   mkdirSync,
   readdirSync,
 } from 'node:fs';
+import type { Registry } from '@agent-fs/core';
 import type { IndexProgress, Indexer } from '@agent-fs/indexer';
 import { collectScopeContext, resolveProjectPath } from './search-scope';
 import { getProjectMemoryFromRegistry, saveProjectMemoryFile } from './project-memory';
+import { upsertPendingProject } from './project-registry';
 import { removeProjectWithBackgroundCleanup } from './project-removal';
 import { resolveRendererDevUrl } from './renderer-url';
 import { sanitizeForLog } from './log-sanitizer';
@@ -101,23 +103,23 @@ function getRegistryPath(): string {
   return join(homedir(), '.agent_fs', 'registry.json');
 }
 
-function readRegistry(): { version: string; projects: any[] } {
+function readRegistry(): Registry {
   const path = getRegistryPath();
   if (!existsSync(path)) {
-    return { version: '2.0', projects: [] };
+    return { version: '2.0', embeddingModel: '', embeddingDimension: 512, projects: [] };
   }
   try {
     const data = JSON.parse(readFileSync(path, 'utf-8'));
     if (!Array.isArray(data.projects)) {
-      return { version: '2.0', projects: [] };
+      return { version: '2.0', embeddingModel: '', embeddingDimension: 512, projects: [] };
     }
-    return data;
+    return data as Registry;
   } catch {
-    return { version: '2.0', projects: [] };
+    return { version: '2.0', embeddingModel: '', embeddingDimension: 512, projects: [] };
   }
 }
 
-function writeRegistry(registry: { version: string; projects: any[] }): void {
+function writeRegistry(registry: Registry): void {
   const dir = join(homedir(), '.agent_fs');
   mkdirSync(dir, { recursive: true });
   writeFileSync(getRegistryPath(), JSON.stringify(registry, null, 2));
@@ -540,6 +542,17 @@ ipcMain.handle('get-registry', async () => {
   });
 
   return registry;
+});
+
+ipcMain.handle('register-project', async (_event, dirPath: string) => {
+  try {
+    const registry = readRegistry();
+    const project = upsertPendingProject(registry, dirPath);
+    writeRegistry(registry);
+    return { success: true, project };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
 });
 
 ipcMain.handle('update-project-summary', async (_event, projectId: string, newSummary: string) => {

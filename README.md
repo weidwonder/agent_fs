@@ -67,8 +67,8 @@ pnpm --filter @agent-fs/electron-app dev
 操作步骤：
 
 1. 点击「选择文件夹」按钮，选择你要索引的文档目录
-2. 等待索引完成（会显示进度：扫描文件 → 转换文档 → 切分内容 → 生成摘要 → 计算向量 → 写入索引）
-3. 索引完成后，该目录会出现在「已索引目录」列表中
+2. 目录会立即出现在左侧项目列表中，随后显示进度：扫描文件 → 转换文档 → 切分内容 → 生成摘要 → 计算向量 → 写入索引
+3. 索引完成后，该目录即可用于搜索和项目管理
 
 <!-- TODO: 添加索引过程截图
 ![索引进度](docs/assets/screenshot-indexing.png)
@@ -163,6 +163,8 @@ pnpm clean           # 清理构建产物
 ```
 
 `pnpm build` 与 `packages/electron-app` 下的 `pnpm dev/build` 已自动串联 `native:sync`，编译前会先完成 native 架构统一。
+
+Electron 桌面端打包时会自动解包 `nodejieba` 词典资源，避免发布版在索引写入阶段因分词词典无法被原生库读取而崩溃。
 
 如需在本机安装 Electron 桌面应用，可执行 `./scripts/install_macos.sh`。
 

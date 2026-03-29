@@ -1,5 +1,6 @@
-import nodejieba from 'nodejieba';
 import { readFileSync } from 'node:fs';
+
+import { getNodeJieba } from '../nodejieba-runtime';
 
 export interface BuildIndexEntryInput {
   text: string;
@@ -19,7 +20,7 @@ const STOPWORDS = new Set(
 );
 
 export function tokenizeText(text: string): string[] {
-  return nodejieba
+  return getNodeJieba()
     .cutForSearch(text)
     .map((token) => token.trim().toLowerCase())
     .filter((token) => {
