@@ -39,8 +39,6 @@ interface HContext {
     embed: ReturnType<typeof vi.fn>;
   };
   summaryService: {
-    generateChunkSummariesBatch: ReturnType<typeof vi.fn>;
-    generateChunkSummary: ReturnType<typeof vi.fn>;
     generateDocumentSummary: ReturnType<typeof vi.fn>;
     generateDirectorySummary: ReturnType<typeof vi.fn>;
   };
@@ -125,7 +123,6 @@ function createPipeline(context: HContext): IndexPipeline {
     chunkOptions: { minTokens: 1, maxTokens: 200 },
     summaryOptions: {
       mode: 'skip',
-      tokenBudget: 10000,
     },
   });
 }
@@ -162,10 +159,6 @@ async function createContext(): Promise<HContext> {
   };
 
   const summaryService = {
-    generateChunkSummariesBatch: vi.fn(async (chunks: Array<{ id: string }>) =>
-      chunks.map((chunk) => ({ id: chunk.id, summary: '' }))
-    ),
-    generateChunkSummary: vi.fn(async () => ({ summary: '' })),
     generateDocumentSummary: vi.fn(async () => ({ summary: '' })),
     generateDirectorySummary: vi.fn(async () => ({ summary: '' })),
   };
@@ -253,6 +246,7 @@ describe('Phase H: Storage Optimization E2E', () => {
           items: keywordResults.map((item) => ({
             chunkId: item.chunkId,
             fileId: item.fileId,
+            filePath: '',
           })),
         },
       ],

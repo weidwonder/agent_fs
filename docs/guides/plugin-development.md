@@ -272,6 +272,7 @@ Locator 的质量直接影响 `get_chunk` 与结果可读性。
 1. `markdown` → `MarkdownChunker` 切分 chunk
 2. `mapping` → 参与定位信息回填，并落入 AFD 的 `metadata.json`
 3. `searchableText` → 构建倒排索引（优先级高于 chunk 文本）
+4. 文档摘要直接基于完整 `markdown` 生成；若文档超过 10K token，会退化为“前 1K token 正文 + 全部章节标题”，因此 Markdown 结构和标题层级质量会直接影响摘要质量
 
 注意事项：
 

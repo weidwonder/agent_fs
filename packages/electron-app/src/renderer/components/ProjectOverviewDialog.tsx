@@ -29,13 +29,11 @@ interface ProjectOverviewDialogProps {
 }
 
 interface BackfillCoverageIncrement {
-  chunkGenerated: number;
   documentGenerated: number;
   directoryGenerated: number;
 }
 
 const EMPTY_BACKFILL_INCREMENT: BackfillCoverageIncrement = {
-  chunkGenerated: 0,
   documentGenerated: 0,
   directoryGenerated: 0,
 };
@@ -85,7 +83,6 @@ function formatLogLine(raw: string): string {
 }
 
 function parseBackfillCoverageIncrement(lines: string[]): BackfillCoverageIncrement {
-  let chunkGenerated = 0;
   let documentGenerated = 0;
   let directoryGenerated = 0;
 
@@ -102,10 +99,6 @@ function parseBackfillCoverageIncrement(lines: string[]): BackfillCoverageIncrem
 
     const event = entry.event;
     if (event === 'file_done') {
-      const generatedChunks = entry.generatedChunks;
-      if (typeof generatedChunks === 'number' && Number.isFinite(generatedChunks)) {
-        chunkGenerated += Math.max(0, Math.floor(generatedChunks));
-      }
       if (entry.documentSummaryUpdated === true) {
         documentGenerated += 1;
       }
@@ -118,7 +111,6 @@ function parseBackfillCoverageIncrement(lines: string[]): BackfillCoverageIncrem
   }
 
   return {
-    chunkGenerated,
     documentGenerated,
     directoryGenerated,
   };
@@ -223,7 +215,6 @@ export function ProjectOverviewDialog({
 
     const increment = parseBackfillCoverageIncrement(logLines);
     setLiveBackfillIncrement((prev) => ({
-      chunkGenerated: Math.max(prev.chunkGenerated, increment.chunkGenerated),
       documentGenerated: Math.max(prev.documentGenerated, increment.documentGenerated),
       directoryGenerated: Math.max(prev.directoryGenerated, increment.directoryGenerated),
     }));
@@ -321,12 +312,6 @@ export function ProjectOverviewDialog({
     };
 
     return {
-      chunk: mergeCovered({
-        total: overview.summaryCoverage.chunk.total,
-        currentCovered: overview.summaryCoverage.chunk.covered,
-        baseCovered: backfillCoverageBase.chunk.covered,
-        generated: liveBackfillIncrement.chunkGenerated,
-      }),
       document: mergeCovered({
         total: overview.summaryCoverage.document.total,
         currentCovered: overview.summaryCoverage.document.covered,
@@ -347,7 +332,6 @@ export function ProjectOverviewDialog({
       return [];
     }
     return [
-      { label: 'Chunk 摘要覆盖', stat: displaySummaryCoverage.chunk },
       { label: '文档摘要覆盖', stat: displaySummaryCoverage.document },
       { label: '目录摘要覆盖', stat: displaySummaryCoverage.directory },
     ];

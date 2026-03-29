@@ -179,18 +179,16 @@ function toChunkInfo(
   chunkId: string,
   doc: VectorChunkDoc,
   markdown: string,
-  summaries: Record<string, string>,
   fallbackPath: string
 ): ChunkInfo {
   const parsedByRange = extractByLineRange(markdown, doc.chunk_line_start, doc.chunk_line_end);
   const parsedByLocator = parsedByRange ? '' : extractByLocator(markdown, doc.locator);
   const content = parsedByRange || parsedByLocator || '';
-  const summary = summaries[chunkId] ?? '';
 
   return {
     id: chunkId,
     content,
-    summary,
+    summary: '',
     token_count: Math.ceil(content.length / 4),
     source: {
       file_path: doc.file_path || fallbackPath,
@@ -214,13 +212,6 @@ export async function getChunk(input: GetChunkInput) {
   });
 
   const markdown = await storage.readText(fileInfo.afdName, 'content.md');
-  let summaries: Record<string, string> = {};
-  try {
-    const summaryBuffer = await storage.read(fileInfo.afdName, 'summaries.json');
-    summaries = JSON.parse(summaryBuffer.toString('utf-8')) as Record<string, string>;
-  } catch {
-    summaries = {};
-  }
 
   const idsToLoad = include_neighbors
     ? [chunk_id, ...buildNeighborIds(fileId, chunkIndex, neighbor_count)]
@@ -236,7 +227,7 @@ export async function getChunk(input: GetChunkInput) {
   }
 
   const result: { chunk: ChunkInfo; neighbors?: { before: ChunkInfo[]; after: ChunkInfo[] } } = {
-    chunk: toChunkInfo(chunk_id, mainDoc, markdown, summaries, filePath),
+    chunk: toChunkInfo(chunk_id, mainDoc, markdown, filePath),
   };
 
   if (include_neighbors) {
@@ -247,14 +238,14 @@ export async function getChunk(input: GetChunkInput) {
       const neighborId = `${fileId}:${String(i).padStart(4, '0')}`;
       const neighborDoc = docMap.get(neighborId);
       if (!neighborDoc) continue;
-      before.push(toChunkInfo(neighborId, neighborDoc, markdown, summaries, filePath));
+      before.push(toChunkInfo(neighborId, neighborDoc, markdown, filePath));
     }
 
     for (let i = chunkIndex + 1; i <= chunkIndex + neighbor_count; i += 1) {
       const neighborId = `${fileId}:${String(i).padStart(4, '0')}`;
       const neighborDoc = docMap.get(neighborId);
       if (!neighborDoc) continue;
-      after.push(toChunkInfo(neighborId, neighborDoc, markdown, summaries, filePath));
+      after.push(toChunkInfo(neighborId, neighborDoc, markdown, filePath));
     }
 
     result.neighbors = { before, after };

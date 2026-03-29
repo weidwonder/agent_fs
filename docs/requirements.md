@@ -30,18 +30,18 @@
     ↓
 [MarkdownChunker] 基于 markdown 按结构切分
     ↓
-超大块(>1.2K token) → SentenceSplitter 再切分
+超大块(>0.8K token) → SentenceSplitter 再切分
     ↓
-每个 chunk 目标: 0.6-1.2K token，不切开段落和句子
+每个 chunk 目标: 0.4-0.8K token，不切开段落和句子
     ↓
-[LLM] 生成 chunk summary + 文档 summary
+[LLM] 生成文档 summary（直接基于 markdown；超过 10K token 时回退为“前 1K token 正文 + 全部章节标题”）
     ↓
-[Embedding] 向量化 chunk 和 summary
+[Embedding] 向量化 chunk 内容
     ↓
 [存储]
-    ├─ 向量库: chunk 向量 + summary 向量（不存文本）
+    ├─ 向量库: chunk 内容向量（不存文本）
     ├─ 倒排索引: searchableText 构建索引（持久化到 SQLite）
-    └─ AFD 文件: markdown 压缩存储（.afd 格式）
+    └─ AFD 文件: markdown 与文档摘要压缩存储（.afd 格式）
     ↓
 汇总生成目录 summary
 ```
@@ -50,7 +50,7 @@
 
 | 层级 | 索引内容 | 存储位置 |
 |------|----------|----------|
-| Chunk | chunk 向量、summary 向量、chunk 在 markdown 的行范围 | 向量库（LanceDB） |
+| Chunk | chunk 内容向量、chunk 在 markdown 的行范围 | 向量库（LanceDB） |
 | 倒排索引 | term → {chunk_id, locator, tf, positions} | SQLite（文件级 BLOB） |
 | 文档内容 | markdown（语义化）、metadata | .afd 压缩文件 |
 | 文档元数据 | 文件名、hash、fileId、chunkCount、summary | .fs_index/index.json |
@@ -60,7 +60,7 @@
 
 | 需求 | 说明 |
 |------|------|
-| 多路召回 | 向量搜索(hybrid: content+summary 1:1) + 倒排索引关键词搜索 |
+| 多路召回 | 向量搜索(content_vector) + 倒排索引关键词搜索 |
 | 融合排序 | RRF（倒数排名融合） |
 | 结果聚合 | RRF 结果按文档聚合后返回；同一文件只保留一个代表 chunk 进入 TopK，并记录该文件的命中 chunk 数；代表 chunk 可结合关键词命中、标题/条款锚点做二次重选 |
 | 可选 Rerank | 支持 LLM Rerank |
@@ -80,12 +80,11 @@
 | 变更检测 | 文件 ≤200MB: MD5 哈希；文件 >200MB: 大小+修改时间 |
 | 触发方式 | 手动触发（暂不支持自动检测） |
 | 手动动作 | 增量更新 / 补全 Summary / 重新索引 |
-| 补全 Summary | 基于 AFD（`content.md`/`summaries.json`）补齐缺失的 chunk/document/directory summary，并同步回写 summary 向量 |
-| 补全并发策略 | 文件级并发遵循 `indexing.file_parallelism`；单文件内 chunk 批处理并发遵循 `summary.parallel_requests` |
-| chunk 批次上限 | 单次 LLM 批量请求最多 4 个 chunk（文件处理完成后一次性写回 `summaries.json`） |
-| 失败兜底策略 | chunk 批量 JSON 解析失败时，自动降级为逐 chunk 生成并重试 |
-| OpenAI 兼容约束 | Summary 请求需显式关闭 thinking，并在 chunk 批处理时声明结构化 JSON 输出，避免模型将结果写入 reasoning 字段 |
-| 限流保护 | Summary 请求需做全局队列限流、最小请求间隔与 `429` 退避重试；batch 请求若因 `429` 耗尽重试，不得立刻降级为逐 chunk 请求放大限流 |
+| 补全 Summary | 基于 AFD（`content.md`/`summaries.json`）补齐缺失的 document/directory summary |
+| 补全并发策略 | 文件级并发遵循 `indexing.file_parallelism`；LLM 请求并发遵循 `summary.parallel_requests` |
+| 文档摘要输入 | 默认直接使用完整 markdown；超过 10K token 时回退为“前 1K token 正文 + 全部章节标题” |
+| OpenAI 兼容约束 | Summary 请求需显式关闭 thinking，避免模型将内容写入 reasoning 字段 |
+| 限流保护 | Summary 请求需做全局队列限流、最小请求间隔与 `429` 退避重试 |
 | 执行可观测性 | 维护弹窗实时展示进度（阶段/文件）与日志尾部，并刷新 summary 覆盖率 |
 
 ## 3. 系统架构要求
@@ -146,7 +145,7 @@
 | `logs/*.latest.jsonl` | 增量/重建与补全 Summary 的最新运行日志 |
 | `memory/project.md` | 项目级记忆入口（项目介绍与索引摘要） |
 | `memory/extend/*.md` | 项目经验扩展记忆（约定在 project.md 引用） |
-| `documents/<原文件名>.afd` | 当前目录文件对应的压缩归档（ZIP，含 content.md、metadata.json、summaries.json） |
+| `documents/<原文件名>.afd` | 当前目录文件对应的压缩归档（ZIP，含 content.md、metadata.json、summaries.json，其中 `summaries.json` 仅保存 `documentSummary`） |
 
 ## 4. 索引存储优化
 
@@ -177,7 +176,7 @@
 
 | 优化项 | 说明 |
 |--------|------|
-| 存储内容 | 仅存向量（content_vector, summary_vector, hybrid_vector） |
+| 存储内容 | 仅存向量（content_vector） |
 | 移除字段 | content、summary 文本字段（从 AFD 读取） |
 | 新增字段 | file_id、chunk_line_start、chunk_line_end（用于定位 AFD） |
 | 空间节省 | 向量库体积减少 70-80% |
@@ -200,7 +199,7 @@
 | 风格 | 极简档案馆（类 Notion/Linear） |
 | 核心功能 | 选择目录、启动索引、查看进度、管理配置、执行语义/精准搜索（支持范围选择）、查看项目概况 |
 | 进度展示 | 当前文件、已完成/总数、索引更新时间 |
-| 项目概况 | 展示文件数、已索引文件数、chunk 数、索引版本、Summary 覆盖率，并支持从概况面板触发增量更新 / 补全 Summary / 重新索引 |
+| 项目概况 | 展示文件数、已索引文件数、chunk 数、索引版本、文档/目录 Summary 覆盖率，并支持从概况面板触发增量更新 / 补全 Summary / 重新索引 |
 | 布局约束 | 左侧项目面板与右侧搜索面板并排显示，列表卡片不得横向溢出或被搜索面板遮挡 |
 
 ## 7. 可配置项
@@ -208,7 +207,7 @@
 | 配置项 | 说明 |
 |--------|------|
 | LLM | OpenAI 兼容 API（base_url / key / model） |
-| Summary | mode / chunk_batch_token_budget / parallel_requests / timeout_ms / max_retries |
+| Summary | mode / parallel_requests / timeout_ms / max_retries |
 | Embedding | 本地模型（默认）或 API；API 支持 `timeout_ms / max_retries` |
 | Rerank | 可选，支持 LLM Rerank |
 | 索引参数 | chunk_size.min_tokens / chunk_size.max_tokens / indexing.file_parallelism |

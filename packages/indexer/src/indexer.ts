@@ -26,12 +26,7 @@ interface MetadataTreeNode {
 }
 
 interface FileBackfillResult {
-  chunkUpdated: boolean;
   documentSummaryUpdated: boolean;
-  missingChunkCount: number;
-  changedChunkCount: number;
-  generatedChunkCount: number;
-  fallbackChunkCount: number;
 }
 
 export class Indexer {
@@ -119,8 +114,6 @@ export class Indexer {
       fileParallelism: this.config.indexing.file_parallelism ?? 2,
       summaryOptions: {
         mode: summaryConfig?.mode ?? 'batch',
-        tokenBudget: summaryConfig?.chunk_batch_token_budget ?? 10000,
-        parallelRequests: summaryConfig?.parallel_requests ?? 2,
         maxRetries: summaryConfig?.max_retries,
         timeoutMs: summaryConfig?.timeout_ms,
       },
@@ -162,26 +155,12 @@ export class Indexer {
     this.initBackfillLogFile(dirPath);
     const backfillStartedAt = Date.now();
 
-    const storagePath = join(homedir(), '.agent_fs', 'storage');
-    mkdirSync(join(storagePath, 'vectors'), { recursive: true });
-
-    const embeddingService = createEmbeddingService(this.config.embedding);
-    await embeddingService.init();
-
     const summaryService = createSummaryService(this.config.llm, {
       maxConcurrentRequests: this.config.summary?.parallel_requests,
     });
 
-    const vectorStore = createVectorStore({
-      storagePath: join(storagePath, 'vectors'),
-      dimension: embeddingService.getDimension(),
-    });
-    await vectorStore.init();
-
     const summaryConfig = this.config.summary;
     const summaryOptions = {
-      tokenBudget: summaryConfig?.chunk_batch_token_budget ?? 10000,
-      parallelRequests: summaryConfig?.parallel_requests ?? 2,
       maxRetries: summaryConfig?.max_retries,
       timeoutMs: summaryConfig?.timeout_ms,
     };
@@ -198,10 +177,6 @@ export class Indexer {
     let startedFiles = 0;
     const stats = {
       filesProcessed: 0,
-      filesWithMissingChunks: 0,
-      chunksGenerated: 0,
-      chunksFallback: 0,
-      chunksReEmbedded: 0,
       documentSummariesGenerated: 0,
       directorySummariesGenerated: 0,
     };
@@ -213,8 +188,6 @@ export class Indexer {
       totalFiles,
       runtimeVersion: this.runtimeVersion,
       fileParallelism: backfillFileParallelism,
-      summaryParallelRequests: summaryOptions.parallelRequests,
-      chunkBatchTokenBudget: summaryOptions.tokenBudget,
     });
 
     const sortedByDepth = [...allNodes].sort(
@@ -264,22 +237,14 @@ export class Indexer {
                 storage,
                 chunker,
                 summaryService,
-                embeddingService,
-                vectorStore,
                 summaryOptions,
               });
               stats.filesProcessed += 1;
-              if (result.missingChunkCount > 0) {
-                stats.filesWithMissingChunks += 1;
-              }
-              stats.chunksGenerated += result.generatedChunkCount;
-              stats.chunksFallback += result.fallbackChunkCount;
-              stats.chunksReEmbedded += result.changedChunkCount;
               if (result.documentSummaryUpdated) {
                 stats.documentSummariesGenerated += 1;
               }
 
-              if (result.chunkUpdated || result.documentSummaryUpdated) {
+              if (result.documentSummaryUpdated) {
                 file.indexedAt = new Date().toISOString();
               }
 
@@ -296,10 +261,6 @@ export class Indexer {
                 file: filePathForLog,
                 processed: processedFiles,
                 total: totalFiles,
-                missingChunks: result.missingChunkCount,
-                generatedChunks: result.generatedChunkCount,
-                fallbackChunks: result.fallbackChunkCount,
-                reEmbeddedChunks: result.changedChunkCount,
                 documentSummaryUpdated: result.documentSummaryUpdated,
               });
             } catch (error) {
@@ -368,9 +329,6 @@ export class Indexer {
         detail: this.extractErrorMessage(error),
       });
       throw error;
-    } finally {
-      await vectorStore.close();
-      await embeddingService.dispose();
     }
 
     const rootMetadata = this.readIndexMetadata(dirPath);
@@ -610,11 +568,7 @@ export class Indexer {
     storage: ReturnType<typeof createAFDStorage>;
     chunker: MarkdownChunker;
     summaryService: ReturnType<typeof createSummaryService>;
-    embeddingService: ReturnType<typeof createEmbeddingService>;
-    vectorStore: ReturnType<typeof createVectorStore>;
     summaryOptions: {
-      tokenBudget: number;
-      parallelRequests: number;
       maxRetries?: number;
       timeoutMs?: number;
     };
@@ -634,12 +588,18 @@ export class Indexer {
       metadataJson = '{}';
     }
 
-    let summaries: Record<string, string> = {};
+    let storedDocumentSummary = '';
+    let hasLegacyChunkSummaries = false;
     try {
       const summaryBuffer = await input.storage.read(archiveName, 'summaries.json');
-      summaries = JSON.parse(summaryBuffer.toString('utf-8')) as Record<string, string>;
+      const parsed = JSON.parse(summaryBuffer.toString('utf-8')) as Record<string, unknown>;
+      if (typeof parsed.documentSummary === 'string') {
+        storedDocumentSummary = parsed.documentSummary;
+      }
+      hasLegacyChunkSummaries = Object.keys(parsed).some((key) => key !== 'documentSummary');
     } catch {
-      summaries = {};
+      storedDocumentSummary = '';
+      hasLegacyChunkSummaries = false;
     }
 
     this.options.onProgress?.({
@@ -658,17 +618,11 @@ export class Indexer {
       );
     }
 
-    const previousSummaries = { ...summaries };
-    const missingChunkInputs = chunkIds
-      .map((chunkId, index) => ({
-        chunkId,
-        chunk: chunks[index],
-      }))
-      .filter((item) => (summaries[item.chunkId] ?? '').trim().length === 0);
-    let generatedChunkCount = 0;
-    let fallbackChunkCount = 0;
+    const metadataSummary = input.file.summary?.trim() ?? '';
+    let nextDocumentSummary = metadataSummary || storedDocumentSummary;
+    let documentSummaryUpdated = false;
 
-    if (missingChunkInputs.length > 0) {
+    if (!nextDocumentSummary.trim()) {
       this.options.onProgress?.({
         phase: 'summary',
         currentFile: this.toRelativeFilePath(input.node.metadata.relativePath, input.file.name),
@@ -676,125 +630,31 @@ export class Indexer {
         total: input.total,
       });
 
-      const generated = await input.summaryService.generateChunkSummariesBatch(
-        missingChunkInputs.map((item) => ({
-          id: item.chunkId,
-          content: item.chunk.content,
-        })),
-        {
-          tokenBudget: input.summaryOptions.tokenBudget,
-          parallelRequests: input.summaryOptions.parallelRequests,
-          maxRetries: input.summaryOptions.maxRetries,
-          timeoutMs: input.summaryOptions.timeoutMs,
-        }
-      );
-
-      for (const item of generated) {
-        summaries[item.id] = item.summary;
-        if (item.summary.trim().length > 0) {
-          generatedChunkCount += 1;
-        } else {
-          fallbackChunkCount += 1;
-        }
-      }
-    }
-
-    const chunkSummaries = chunkIds.map((chunkId) => summaries[chunkId] ?? '');
-    const changedChunkIds = chunkIds.filter(
-      (chunkId) => (previousSummaries[chunkId] ?? '') !== (summaries[chunkId] ?? '')
-    );
-
-    if (changedChunkIds.length > 0) {
-      this.options.onProgress?.({
-        phase: 'embed',
-        currentFile: this.toRelativeFilePath(input.node.metadata.relativePath, input.file.name),
-        processed: Math.max(input.processed, input.getProcessedCount()),
-        total: input.total,
-      });
-
-      const vectorDocs = await input.vectorStore.getByChunkIds(changedChunkIds);
-      const vectorByChunkId = new Map(vectorDocs.map((doc) => [doc.chunk_id, doc]));
-
-      const embedBatch = (
-        input.embeddingService as unknown as {
-          embedBatch?: (
-            texts: string[],
-            options?: { useCache?: boolean; batchSize?: number }
-          ) => Promise<{ embeddings: number[][] }>;
-        }
-      ).embedBatch;
-
-      const summaryEmbeddingsByChunkId = new Map<string, number[]>();
-      if (typeof embedBatch === 'function') {
-        const response = await embedBatch.call(
-          input.embeddingService,
-          changedChunkIds.map((chunkId) => summaries[chunkId] ?? ''),
-          { batchSize: 8 }
-        );
-        for (let i = 0; i < changedChunkIds.length; i += 1) {
-          const chunkId = changedChunkIds[i];
-          summaryEmbeddingsByChunkId.set(chunkId, response.embeddings[i] ?? []);
-        }
-      } else {
-        await Promise.all(
-          changedChunkIds.map(async (chunkId) => {
-            const vector = await input.embeddingService.embed(summaries[chunkId] ?? '');
-            summaryEmbeddingsByChunkId.set(chunkId, vector);
-          })
-        );
-      }
-
-      const indexedAt = new Date().toISOString();
-      await input.vectorStore.updateChunkVectors(
-        changedChunkIds
-          .map((chunkId) => {
-            const vectorDoc = vectorByChunkId.get(chunkId);
-            if (!vectorDoc) {
-              return null;
-            }
-
-            const summaryVector = summaryEmbeddingsByChunkId.get(chunkId) ?? [];
-            const contentVector = Array.from(
-              (vectorDoc.content_vector as ArrayLike<number> | undefined) ?? [],
-              (value) => {
-                const numeric = Number(value);
-                return Number.isFinite(numeric) ? numeric : 0;
-              }
-            );
-            const hybridDimension = Math.max(contentVector.length, summaryVector.length);
-            const hybridVector = new Array<number>(hybridDimension).fill(0);
-            for (let index = 0; index < hybridDimension; index += 1) {
-              const contentValue = contentVector[index] ?? 0;
-              const summaryValue = summaryVector[index] ?? 0;
-              hybridVector[index] = (contentValue + summaryValue) / 2;
-            }
-            return {
-              chunkId,
-              summaryVector,
-              hybridVector,
-              indexedAt,
-            };
-          })
-          .filter((item): item is { chunkId: string; summaryVector: number[]; hybridVector: number[]; indexedAt: string } => Boolean(item))
-      );
-    }
-
-    let documentSummaryUpdated = false;
-    if (!input.file.summary?.trim()) {
       const docSummary = await input.summaryService.generateDocumentSummary(
         this.toRelativeFilePath(input.node.metadata.relativePath, input.file.name),
-        chunkSummaries,
+        markdown,
         {
           maxRetries: input.summaryOptions.maxRetries,
           timeoutMs: input.summaryOptions.timeoutMs,
         }
       );
-      input.file.summary = docSummary.summary;
-      documentSummaryUpdated = docSummary.summary.trim().length > 0;
+      nextDocumentSummary = docSummary.summary;
+      if (docSummary.summary.trim().length > 0) {
+        documentSummaryUpdated = true;
+      }
+    } else if (metadataSummary !== nextDocumentSummary) {
+      documentSummaryUpdated = true;
     }
 
-    const chunkUpdated = missingChunkInputs.length > 0;
-    if (chunkUpdated) {
+    if (input.file.summary !== nextDocumentSummary) {
+      input.file.summary = nextDocumentSummary;
+      documentSummaryUpdated = true;
+    }
+
+    const shouldRewriteSummaries =
+      hasLegacyChunkSummaries || storedDocumentSummary !== nextDocumentSummary;
+
+    if (shouldRewriteSummaries) {
       this.options.onProgress?.({
         phase: 'write',
         currentFile: this.toRelativeFilePath(input.node.metadata.relativePath, input.file.name),
@@ -804,17 +664,12 @@ export class Indexer {
       await input.storage.write(archiveName, {
         'content.md': markdown,
         'metadata.json': metadataJson,
-        'summaries.json': JSON.stringify(summaries, null, 2),
+        'summaries.json': JSON.stringify({ documentSummary: nextDocumentSummary }, null, 2),
       });
     }
 
     return {
-      chunkUpdated,
       documentSummaryUpdated,
-      missingChunkCount: missingChunkInputs.length,
-      changedChunkCount: changedChunkIds.length,
-      generatedChunkCount,
-      fallbackChunkCount,
     };
   }
 

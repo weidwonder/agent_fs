@@ -17,8 +17,6 @@ interface IntegrationContext {
     embed: ReturnType<typeof vi.fn>;
   };
   summaryService: {
-    generateChunkSummariesBatch: ReturnType<typeof vi.fn>;
-    generateChunkSummary: ReturnType<typeof vi.fn>;
     generateDocumentSummary: ReturnType<typeof vi.fn>;
     generateDirectorySummary: ReturnType<typeof vi.fn>;
   };
@@ -68,10 +66,6 @@ async function createContext(): Promise<IntegrationContext> {
   };
 
   const summaryService = {
-    generateChunkSummariesBatch: vi.fn(async (chunks: Array<{ id: string }>) =>
-      chunks.map((chunk) => ({ id: chunk.id, summary: '' }))
-    ),
-    generateChunkSummary: vi.fn(async () => ({ summary: '' })),
     generateDocumentSummary: vi.fn(async () => ({ summary: '' })),
     generateDirectorySummary: vi.fn(async () => ({ summary: '' })),
   };
@@ -130,7 +124,6 @@ function createPipeline(context: IntegrationContext): IndexPipeline {
     chunkOptions: { minTokens: 1, maxTokens: 200 },
     summaryOptions: {
       mode: 'skip',
-      tokenBudget: 10000,
     },
   });
 }

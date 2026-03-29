@@ -27,7 +27,11 @@ describe('F-Post: SearchFusion Complete Integration', () => {
 
   const mockEmbeddingService: EmbeddingService = {
     embed: async (text: string) => mockVector(text),
-    embedBatch: async (texts: string[]) => texts.map(mockVector),
+    embedBatch: async (texts: string[]) => ({
+      embeddings: texts.map(mockVector),
+      cacheHits: 0,
+      computations: texts.length,
+    }),
     getDimension: () => DIMENSION,
     init: async () => {},
     dispose: async () => {},
@@ -71,10 +75,9 @@ describe('F-Post: SearchFusion Complete Integration', () => {
         dir_id: 'sf-dir-001',
         rel_path: TEST_FILES.markdown,
         file_path: filePath,
-        content: chunk.content,
-        summary: `摘要 ${i}: ${chunk.content.slice(0, 30)}`,
+        chunk_line_start: chunk.lineStart,
+        chunk_line_end: chunk.lineEnd,
         content_vector: mockVector(chunk.content),
-        summary_vector: mockVector(`摘要 ${i}`),
         locator: chunk.locator,
         indexed_at: new Date().toISOString(),
         deleted_at: '',
@@ -99,6 +102,7 @@ describe('F-Post: SearchFusion Complete Integration', () => {
 
     const response = await fusion.search({
       query: 'INSPECTION REPORT CONFORMED',
+      scope: tempDir,
       topK: 5,
     });
 
@@ -142,11 +146,11 @@ describe('F-Post: SearchFusion Complete Integration', () => {
       {
         query: 'semantic query for vectors',
         keyword: 'INSPECTION REPORT',
+        scope: tempDir,
         topK: 5,
       },
       {
         useContentVector: false,
-        useSummaryVector: false,
         useBM25: true,
       }
     );
@@ -167,10 +171,9 @@ describe('F-Post: SearchFusion Complete Integration', () => {
       dir_id: 'dir-001',
       rel_path: TEST_FILES.markdown,
       file_path: filePath,
-      content: chunk.content,
-      summary: `完整摘要 ${i}`,
+      chunk_line_start: chunk.lineStart,
+      chunk_line_end: chunk.lineEnd,
       content_vector: mockVector(chunk.content),
-      summary_vector: mockVector(`摘要 ${i}`),
       locator: chunk.locator,
       indexed_at: new Date().toISOString(),
       deleted_at: '',
@@ -193,12 +196,12 @@ describe('F-Post: SearchFusion Complete Integration', () => {
     const fusion = createSearchFusion(vectorStore, bm25Index, mockEmbeddingService);
 
     const response = await fusion.search(
-      { query: 'INSPECTION', topK: 3 },
-      { useContentVector: false, useSummaryVector: false, useBM25: true }
+      { query: 'INSPECTION', scope: tempDir, topK: 3 },
+      { useContentVector: false, useBM25: true }
     );
 
     for (const resultItem of response.results) {
-      expect(resultItem.summary).toContain('完整摘要');
+      expect(typeof resultItem.summary).toBe('string');
       expect(resultItem.source.locator).toBeDefined();
       expect(resultItem.source.locator.length).toBeGreaterThan(0);
     }

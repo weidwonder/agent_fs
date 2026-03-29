@@ -71,7 +71,6 @@ interface ProjectOverview {
   lastUpdated: string;
   indexerVersion: string;
   summaryCoverage: {
-    chunk: SummaryCoverageStat;
     document: SummaryCoverageStat;
     directory: SummaryCoverageStat;
   };

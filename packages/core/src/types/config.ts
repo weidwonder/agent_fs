@@ -112,10 +112,7 @@ export interface SummaryConfig {
   /** Summary 生成模式 */
   mode?: SummaryMode;
 
-  /** chunk 批量生成的 token 预算 */
-  chunk_batch_token_budget?: number;
-
-  /** chunk 摘要批次并发请求数 */
+  /** Summary 请求并发数 */
   parallel_requests?: number;
 
   /** 单次请求超时 */

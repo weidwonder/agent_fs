@@ -17,8 +17,6 @@ interface BenchmarkContext {
     embed: ReturnType<typeof vi.fn>;
   };
   summaryService: {
-    generateChunkSummariesBatch: ReturnType<typeof vi.fn>;
-    generateChunkSummary: ReturnType<typeof vi.fn>;
     generateDocumentSummary: ReturnType<typeof vi.fn>;
     generateDirectorySummary: ReturnType<typeof vi.fn>;
   };
@@ -215,7 +213,6 @@ function createPipeline(context: BenchmarkContext): IndexPipeline {
     chunkOptions: { minTokens: 1, maxTokens: 200 },
     summaryOptions: {
       mode: 'skip',
-      tokenBudget: 10000,
     },
   });
 }
@@ -233,10 +230,6 @@ async function createContext(): Promise<BenchmarkContext> {
     embed: vi.fn(async (text: string) => createEmbedding(text)),
   };
   const summaryService = {
-    generateChunkSummariesBatch: vi.fn(async (chunks: Array<{ id: string }>) =>
-      chunks.map((chunk) => ({ id: chunk.id, summary: '' }))
-    ),
-    generateChunkSummary: vi.fn(async () => ({ summary: '' })),
     generateDocumentSummary: vi.fn(async () => ({ summary: '' })),
     generateDirectorySummary: vi.fn(async () => ({ summary: '' })),
   };
@@ -331,6 +324,7 @@ describe('Phase H.5: 性能基准 E2E', () => {
             items: fusionKeywordInput.map((item) => ({
               chunkId: item.chunkId,
               fileId: item.fileId,
+              filePath: '',
             })),
           },
         ],

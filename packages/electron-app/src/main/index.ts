@@ -227,30 +227,11 @@ function readLogTail(logPath: string, maxLines = 200): string[] {
 }
 
 async function collectSummaryCoverage(nodes: MetadataNode[]): Promise<{
-  chunkCovered: number;
-  chunkTotal: number;
   documentCovered: number;
   documentTotal: number;
   directoryCovered: number;
   directoryTotal: number;
 }> {
-  const { createAFDStorage } = await import('@agent-fs/storage');
-  const storageCache = new Map<string, ReturnType<typeof createAFDStorage>>();
-  const getStorage = (dirPath: string) => {
-    const cached = storageCache.get(dirPath);
-    if (cached) {
-      return cached;
-    }
-
-    const created = createAFDStorage({
-      documentsDir: join(dirPath, '.fs_index', 'documents'),
-    });
-    storageCache.set(dirPath, created);
-    return created;
-  };
-
-  let chunkCovered = 0;
-  let chunkTotal = 0;
   let documentCovered = 0;
   let documentTotal = 0;
   let directoryCovered = 0;
@@ -262,39 +243,15 @@ async function collectSummaryCoverage(nodes: MetadataNode[]): Promise<{
       directoryCovered += 1;
     }
 
-    const storage = getStorage(node.dirPath);
     for (const file of node.metadata.files) {
       documentTotal += 1;
       if ((file.summary ?? '').trim().length > 0) {
         documentCovered += 1;
       }
-
-      chunkTotal += file.chunkCount;
-      if (file.chunkCount <= 0) {
-        continue;
-      }
-
-      const archiveName = file.afdName ?? file.name ?? file.fileId;
-      let summaries: Record<string, string> = {};
-      try {
-        const raw = await storage.read(archiveName, 'summaries.json');
-        summaries = JSON.parse(raw.toString('utf-8')) as Record<string, string>;
-      } catch {
-        summaries = {};
-      }
-
-      for (let index = 0; index < file.chunkCount; index += 1) {
-        const chunkId = `${file.fileId}:${String(index).padStart(4, '0')}`;
-        if ((summaries[chunkId] ?? '').trim().length > 0) {
-          chunkCovered += 1;
-        }
-      }
     }
   }
 
   return {
-    chunkCovered,
-    chunkTotal,
     documentCovered,
     documentTotal,
     directoryCovered,
@@ -309,7 +266,6 @@ async function buildProjectOverview(dirPath: string): Promise<{
   lastUpdated: string;
   indexerVersion: string;
   summaryCoverage: {
-    chunk: { covered: number; total: number; ratio: number };
     document: { covered: number; total: number; ratio: number };
     directory: { covered: number; total: number; ratio: number };
   };
@@ -335,11 +291,6 @@ async function buildProjectOverview(dirPath: string): Promise<{
     lastUpdated: root.updatedAt,
     indexerVersion: root.indexedWithVersion || 'unknown',
     summaryCoverage: {
-      chunk: {
-        covered: coverage.chunkCovered,
-        total: coverage.chunkTotal,
-        ratio: safeRatio(coverage.chunkCovered, coverage.chunkTotal),
-      },
       document: {
         covered: coverage.documentCovered,
         total: coverage.documentTotal,
@@ -800,7 +751,7 @@ ipcMain.handle('search', async (_event, input: {
     console.log('[search] dirIds:', dirIds);
     console.log('[search] fileLookup size:', fileLookup.size);
 
-    const hybridResults: any[] = [];
+    const vectorResults: any[] = [];
 
     // 语义搜索（需要 query）
     if (input.query.trim()) {
@@ -810,11 +761,11 @@ ipcMain.handle('search', async (_event, input: {
       const searchOptions = dirIds.length > 0
         ? { dirIds, topK: topK * 3, minResultsBeforeFallback: topK }
         : { topK: topK * 3, minResultsBeforeFallback: topK };
-      const results = await services.vectorStore.searchByHybrid(queryVector, searchOptions);
-      hybridResults.push(...results);
+      const results = await services.vectorStore.searchByVector(queryVector, searchOptions);
+      vectorResults.push(...results);
     }
 
-    console.log('[search] hybridResults:', hybridResults.length);
+    console.log('[search] vectorResults:', vectorResults.length);
 
     // 关键词搜索（query 或 keyword 任一存在即可）
     const keywordText = input.keyword?.trim() || input.query?.trim() || '';
@@ -860,7 +811,7 @@ ipcMain.handle('search', async (_event, input: {
     });
 
     const lists = [
-      { name: 'hybrid_vector', items: hybridResults.map(mapVectorItem) },
+      { name: 'content_vector', items: vectorResults.map(mapVectorItem) },
       { name: 'inverted_index', items: keywordResults.map(mapKeywordItem) },
     ].filter((list: any) => list.items.length > 0);
 
@@ -929,7 +880,7 @@ ipcMain.handle('search', async (_event, input: {
     // 内容回填
     const afdCache = new Map<string, any>();
     const markdownCache = new Map<string, string>();
-    const summariesCache = new Map<string, Record<string, string>>();
+    const summariesCache = new Map<string, { documentSummary: string }>();
     const locatorMappingCache = new Map<string, LocatorMappingItem[]>();
 
     const getStorage = (dirPath: string) => {
@@ -973,12 +924,16 @@ ipcMain.handle('search', async (_event, input: {
           if (!summariesCache.has(archiveCacheKey)) {
             try {
               const buf = await storage.read(archiveName, 'summaries.json');
-              summariesCache.set(archiveCacheKey, JSON.parse(buf.toString('utf-8')));
+              const parsed = JSON.parse(buf.toString('utf-8')) as { documentSummary?: unknown };
+              summariesCache.set(archiveCacheKey, {
+                documentSummary:
+                  typeof parsed.documentSummary === 'string' ? parsed.documentSummary : '',
+              });
             } catch {
-              summariesCache.set(archiveCacheKey, {});
+              summariesCache.set(archiveCacheKey, { documentSummary: '' });
             }
           }
-          summary = (summariesCache.get(archiveCacheKey) || {})[item.chunkId] || '';
+          summary = summariesCache.get(archiveCacheKey)?.documentSummary || '';
 
           const locatorMappings = await readLocatorMappings(
             storage,

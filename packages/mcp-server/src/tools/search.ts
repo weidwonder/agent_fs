@@ -217,7 +217,7 @@ export async function search(input: SearchInput) {
   ) as AggregatedSearchResult[];
 
   const markdownCache = new Map<string, string>();
-  const summariesCache = new Map<string, Record<string, string>>();
+  const summariesCache = new Map<string, { documentSummary: string }>();
   const locatorMappingCache = new Map<string, LocatorMappingItem[]>();
   const keywordSnippetsByFile = await buildKeywordSnippetsByFile(
     input.keyword,
@@ -523,7 +523,7 @@ async function buildKeywordSnippetsByFile(
   topFileIds: Set<string>,
   store: VectorStore,
   markdownCache: Map<string, string>,
-  summariesCache: Map<string, Record<string, string>>,
+  summariesCache: Map<string, { documentSummary: string }>,
   locatorMappingCache: Map<string, LocatorMappingItem[]>
 ): Promise<Map<string, KeywordSnippet[]>> {
   const normalizedKeyword = keyword?.trim();
@@ -590,7 +590,7 @@ async function reselectionAggregatedResults(
   store: VectorStore,
   keywordSnippetsByFile: Map<string, KeywordSnippet[]>,
   markdownCache: Map<string, string>,
-  summariesCache: Map<string, Record<string, string>>,
+  summariesCache: Map<string, { documentSummary: string }>,
   locatorMappingCache: Map<string, LocatorMappingItem[]>
 ): Promise<AggregatedSearchResult[]> {
   if (aggregatedResults.length === 0) {
@@ -685,7 +685,7 @@ async function getHydratedResultCached(
   item: RuntimeSearchItem,
   fileLookup: Map<string, FileLookup>,
   markdownCache: Map<string, string>,
-  summariesCache: Map<string, Record<string, string>>,
+  summariesCache: Map<string, { documentSummary: string }>,
   locatorMappingCache: Map<string, LocatorMappingItem[]>,
   cache: Map<string, Promise<RuntimeSearchItem & { content: string; summary: string }>>
 ): Promise<RuntimeSearchItem & { content: string; summary: string }> {
@@ -709,7 +709,7 @@ async function hydrateResult(
   item: RuntimeSearchItem,
   fileLookup: Map<string, FileLookup>,
   markdownCache: Map<string, string>,
-  summariesCache: Map<string, Record<string, string>>,
+  summariesCache: Map<string, { documentSummary: string }>,
   locatorMappingCache: Map<string, LocatorMappingItem[]>
 ): Promise<RuntimeSearchItem & { content: string; summary: string }> {
   const fileInfo = fileLookup.get(item.fileId);
@@ -750,7 +750,7 @@ async function hydrateResult(
       locator: displayLocator,
     },
     content: parsedContent,
-    summary: summaries[item.chunkId] ?? '',
+    summary: summaries.documentSummary,
   };
 }
 
@@ -857,8 +857,8 @@ async function readSummaries(
   storage: AFDStorage,
   archiveName: string,
   cacheKey: string,
-  cache: Map<string, Record<string, string>>
-): Promise<Record<string, string>> {
+  cache: Map<string, { documentSummary: string }>
+): Promise<{ documentSummary: string }> {
   const cached = cache.get(cacheKey);
   if (cached) {
     return cached;
@@ -866,11 +866,15 @@ async function readSummaries(
 
   try {
     const buffer = await storage.read(archiveName, 'summaries.json');
-    const parsed = JSON.parse(buffer.toString('utf-8')) as Record<string, string>;
-    cache.set(cacheKey, parsed);
-    return parsed;
+    const parsed = JSON.parse(buffer.toString('utf-8')) as { documentSummary?: unknown };
+    const normalized = {
+      documentSummary:
+        typeof parsed.documentSummary === 'string' ? parsed.documentSummary : '',
+    };
+    cache.set(cacheKey, normalized);
+    return normalized;
   } catch {
-    const empty: Record<string, string> = {};
+    const empty = { documentSummary: '' };
     cache.set(cacheKey, empty);
     return empty;
   }

@@ -125,7 +125,6 @@ describe('configSchema', () => {
     };
     const result = validateConfig(minConfig);
     expect(result.summary?.mode).toBe('batch');
-    expect(result.summary?.chunk_batch_token_budget).toBe(10000);
     expect(result.summary?.parallel_requests).toBe(2);
     expect(result.summary?.timeout_ms).toBe(45000);
   });

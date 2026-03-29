@@ -62,10 +62,9 @@ describe('F-Post: Fusion Search Integration', () => {
         dir_id: 'fusion-dir-001',
         rel_path: TEST_FILES.markdown,
         file_path: filePath,
-        content: chunk.content,
-        summary: `摘要 ${i}`,
+        chunk_line_start: chunk.lineStart,
+        chunk_line_end: chunk.lineEnd,
         content_vector: mockVector(chunk.content),
-        summary_vector: mockVector(`摘要 ${i}`),
         locator: chunk.locator,
         indexed_at: new Date().toISOString(),
         deleted_at: '',
@@ -97,7 +96,6 @@ describe('F-Post: Fusion Search Integration', () => {
           items: vectorResults.map((r) => ({
             chunkId: r.chunk_id,
             score: r.score,
-            content: r.document.content,
           })),
         },
         {

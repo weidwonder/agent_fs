@@ -255,11 +255,6 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                   { value: 'batch', label: 'batch' },
                   { value: 'skip', label: 'skip' },
                 ])}
-                {renderField(
-                  'Token 预算',
-                  'summary.chunk_batch_token_budget',
-                  { type: 'number' },
-                )}
                 {renderField('并发请求数', 'summary.parallel_requests', {
                   type: 'number',
                 })}

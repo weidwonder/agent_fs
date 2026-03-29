@@ -76,8 +76,8 @@ Agent FS 让 AI Agent 在本地完成“索引 → 检索 → 定位原文”的
    - `mapping`
    - 可选 `searchableText`
 2. `MarkdownChunker` 按结构切分 chunk
-3. 生成 chunk 摘要（可按配置跳过；batch 模式支持按 `summary.parallel_requests` 并行请求）
-4. 生成向量并写入 LanceDB（仅存向量与定位信息，不存大文本）
+3. 生成文档摘要（直接基于完整 markdown；超过 10K token 时回退为“前 1K token 正文 + 全部章节标题”）
+4. 生成向量并写入 LanceDB（仅存 `content_vector` 与定位信息，不存大文本）
 5. 写入 SQLite 倒排索引
 6. 写入 AFD 文件（`content.md` + `metadata.json` + `summaries.json`）
 
@@ -111,12 +111,10 @@ Agent FS 让 AI Agent 在本地完成“索引 → 检索 → 定位原文”的
 Electron 客户端在知识库卡片设置中提供三种手动操作：
 
 - **增量更新**：仅处理新增/变更/删除文件
-- **补全 Summary**：基于 AFD（`content.md` 与 `summaries.json`）仅补齐缺失的 chunk/document/directory 摘要，并同步更新 `summary_vector/hybrid_vector`
-- **补全 Summary 并发**：目录内文件并发遵循 `indexing.file_parallelism`；单文件内 chunk 批次并发遵循 `summary.parallel_requests`
-- **chunk 批次上限**：单次 LLM 批量请求最多 4 个 chunk，且在单文件处理完成后一次性写回 `summaries.json`
-- **失败兜底**：批量摘要输出无法解析时自动降级逐 chunk 生成，尽量减少空摘要残留
+- **补全 Summary**：基于 AFD（`content.md` 与 `summaries.json`）仅补齐缺失的 document/directory 摘要
+- **补全 Summary 并发**：目录内文件并发遵循 `indexing.file_parallelism`；LLM 请求并发遵循 `summary.parallel_requests`
 - **重新索引**：清理当前目录 `.fs_index` 与对应向量/倒排数据后全量重建
-- 维护弹窗会实时显示当前阶段进度、摘要覆盖率刷新结果，以及日志尾部（增量/重建读取 `indexing.latest.jsonl`，补全摘要读取 `summary-backfill.latest.jsonl`）
+- 维护弹窗会实时显示当前阶段进度、文档/目录摘要覆盖率刷新结果，以及日志尾部（增量/重建读取 `indexing.latest.jsonl`，补全摘要读取 `summary-backfill.latest.jsonl`）
 
 对子目录删除场景，系统会基于 `SubdirectoryInfo.fileIds` 与 `fileArchives` 做兜底清理，避免子索引缺失时残留孤儿向量、倒排记录或 AFD 归档。
 
@@ -132,9 +130,9 @@ Electron 客户端在知识库卡片设置中提供三种手动操作：
    - 同时构建 `fileId -> {dirPath, filePath, afdName}` 映射，用于结果回填
    - 若目录缺少索引元数据，回退使用 registry 的 `projectId/subdirectories[].dirId`
 3. 执行多路召回：
-   - 向量召回（VectorStore，使用 `hybrid_vector = 0.5*content + 0.5*summary`）
+   - 向量召回（VectorStore，使用 `content_vector`）
    - 当 scope 展开为多个 `dirId` 时，向量召回使用一次查询并通过 `dirIds` 过滤，避免按目录循环导致 CPU 飙高
-   - Electron 与 MCP 均使用单路 `hybrid_vector` 召回，不再重复查询 `content_vector/summary_vector` 两路
+   - Electron 与 MCP 均使用单路 `content_vector` 召回
    - 向量检索优先使用 `postfilter`；仅当结果低于阈值（默认 `topK`，可配置）时回退 `prefilter`
    - VectorStore 初始化时会确保 `dir_id`、`chunk_id` 标量索引，用于加速 scope 过滤与按 `chunk_id` 回填
    - 倒排召回（InvertedIndex）
@@ -194,7 +192,7 @@ Electron 客户端在知识库卡片设置中提供三种手动操作：
 ## 5.5 Electron 客户端查询链路
 
 - 通过 `ipcMain.handle('search')` 复用同一套向量/倒排/RRF 能力
-- `get-project-overview` 基于递归读取 `index.json` 与 AFD 内 `summaries.json` 计算项目概况、索引版本与 Summary 覆盖率
+- `get-project-overview` 基于递归读取 `index.json` 计算项目概况、索引版本与文档/目录 Summary 覆盖率
 - `get-indexing-log` 读取 `.fs_index/logs/*.latest.jsonl` 尾部内容，供前端维护弹窗轮询展示
 - `get-registry` 会将相对路径解析为绝对路径，并过滤被父目录包含的重复条目
 - `get-project-memory` / `save-memory-file` 用于读写项目 memory（`project.md` 与 `extend/*.md`）
@@ -257,7 +255,7 @@ interface DocumentConversionResult {
 - `rel_path`
 - `file_path`
 - `chunk_line_start` / `chunk_line_end`
-- `content_vector` / `summary_vector` / `hybrid_vector`
+- `content_vector`
 - `locator`
 - `indexed_at` / `deleted_at`
 
@@ -308,7 +306,7 @@ interface DocumentConversionResult {
 
 - `content.md`
 - `metadata.json`（含 mapping）
-- `summaries.json`
+- `summaries.json`（仅保存 `documentSummary`）
 
 ---
 

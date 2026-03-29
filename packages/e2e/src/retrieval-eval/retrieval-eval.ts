@@ -7,7 +7,7 @@ import { createVectorStore, fusionRRF, InvertedIndex, type VectorStore } from '@
 import { computeMetrics, dedupeScoredChunks, type EvalMetrics, type ScoredChunk } from './retrieval-eval-core';
 
 type QueryType = 'semantic' | 'keyword' | 'hybrid';
-type EvalMethod = 'content_vector' | 'summary_vector' | 'inverted_index' | 'rrf_fusion';
+type EvalMethod = 'content_vector' | 'inverted_index' | 'rrf_fusion';
 
 interface EvalQuery {
   id: string;
@@ -92,26 +92,6 @@ async function searchContentVector(
   return dedupeScoredChunks(allResults, topK, minScore);
 }
 
-async function searchSummaryVector(
-  vectorStore: VectorStore,
-  queryVector: number[],
-  dirIds: string[],
-  topK: number,
-  minScore: number
-): Promise<string[]> {
-  const allResults: ScoredChunk[] = [];
-
-  for (const dirId of dirIds) {
-    const results = await vectorStore.searchBySummary(queryVector, {
-      dirId,
-      topK: topK * 3,
-    });
-    allResults.push(...results.map((item) => ({ chunkId: item.chunk_id, score: item.score })));
-  }
-
-  return dedupeScoredChunks(allResults, topK, minScore);
-}
-
 async function searchKeyword(
   invertedIndex: InvertedIndex,
   keyword: string,
@@ -133,7 +113,7 @@ async function searchKeyword(
 function printSummary(results: Record<EvalMethod, EvalMetrics[]>, topK: number): void {
   console.log('\n=== Agent FS 召回准确率评测报告 ===\n');
 
-  const methods: EvalMethod[] = ['content_vector', 'summary_vector', 'inverted_index', 'rrf_fusion'];
+  const methods: EvalMethod[] = ['content_vector', 'inverted_index', 'rrf_fusion'];
   for (const method of methods) {
     const metrics = results[method];
     const avgPrecision = metrics.reduce((sum, item) => sum + item.precisionAtK, 0) / metrics.length;
@@ -179,7 +159,7 @@ async function evaluate(
   datasetPath: string,
   topK: number,
   minContentScore: number,
-  minSummaryScore: number
+  _minSummaryScore: number
 ): Promise<void> {
   const dataset = loadDataset(datasetPath);
   const dirIds = collectDirIds(dataset.projectPath);
@@ -198,7 +178,6 @@ async function evaluate(
 
   const results: Record<EvalMethod, EvalMetrics[]> = {
     content_vector: [],
-    summary_vector: [],
     inverted_index: [],
     rrf_fusion: [],
   };
@@ -223,16 +202,12 @@ async function evaluate(
       const contentHits = queryVector
         ? await searchContentVector(vectorStore, queryVector, dirIds, topK, minContentScore)
         : [];
-      const summaryHits = queryVector
-        ? await searchSummaryVector(vectorStore, queryVector, dirIds, topK, minSummaryScore)
-        : [];
       const keywordHits = keywordText || queryText
         ? await searchKeyword(invertedIndex, keywordText || queryText, dirIds, topK)
         : [];
 
       const rrfInput = [
         { name: 'content', items: contentHits.map((chunkId) => ({ chunkId })) },
-        { name: 'summary', items: summaryHits.map((chunkId) => ({ chunkId })) },
         { name: 'keyword', items: keywordHits.map((chunkId) => ({ chunkId })) },
       ].filter((list) => list.items.length > 0);
 
@@ -243,12 +218,10 @@ async function evaluate(
         : [];
 
       const contentMetric = computeMetrics(contentHits, query.expectedChunks, topK);
-      const summaryMetric = computeMetrics(summaryHits, query.expectedChunks, topK);
       const keywordMetric = computeMetrics(keywordHits, query.expectedChunks, topK);
       const fusedMetric = computeMetrics(fusedHits, query.expectedChunks, topK);
 
       results.content_vector.push({ ...contentMetric, queryId: query.id });
-      results.summary_vector.push({ ...summaryMetric, queryId: query.id });
       results.inverted_index.push({ ...keywordMetric, queryId: query.id });
       results.rrf_fusion.push({ ...fusedMetric, queryId: query.id });
     }
@@ -266,7 +239,7 @@ async function evaluate(
 const datasetPath = process.argv[2];
 if (!datasetPath) {
   console.error(
-    'Usage: pnpm exec tsx packages/e2e/src/retrieval-eval/retrieval-eval.ts <dataset.json> [topK] [minContentScore] [minSummaryScore]'
+    'Usage: pnpm exec tsx packages/e2e/src/retrieval-eval/retrieval-eval.ts <dataset.json> [topK] [minContentScore] [ignoredMinSummaryScore]'
   );
   process.exit(1);
 }

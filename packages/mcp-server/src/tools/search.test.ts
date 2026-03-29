@@ -7,7 +7,7 @@ const state = {
   homeDir: '',
   afdFiles: new Map<string, {
     content: string;
-    summaries: Record<string, string>;
+    summaries: { documentSummary: string };
     mapping?: Array<{ markdownRange: { startLine: number; endLine: number }; originalLocator: string }>;
   }>(),
 };
@@ -216,10 +216,7 @@ describe('search', () => {
     const documentsDir = join(projectDir, '.fs_index', 'documents');
     state.afdFiles.set(`${documentsDir}:a.md`, {
       content: '第一行\n第二行\n第三行',
-      summaries: {
-        'f1:0000': '摘要一',
-        'f1:0001': '摘要二',
-      },
+      summaries: { documentSummary: 'doc summary' },
     });
   });
 
@@ -283,7 +280,7 @@ describe('search', () => {
 
     expect(result.results).toHaveLength(1);
     expect(result.results[0].content).toBe('第二行');
-    expect(result.results[0].summary).toBe('摘要二');
+    expect(result.results[0].summary).toBe('doc summary');
     expect(result.results[0].chunk_hits).toBe(2);
     expect(result.results[0].aggregated_chunk_ids).toEqual(['f1:0000', 'f1:0001']);
 
@@ -296,10 +293,7 @@ describe('search', () => {
     const documentsDir = join(projectDir, '.fs_index', 'documents');
     state.afdFiles.set(`${documentsDir}:a.md`, {
       content: '向量命中的代表段落\n这是被聚合的关键词命中片段，前文后文都在这里\n结尾行',
-      summaries: {
-        'f1:0000': '摘要一',
-        'f1:0001': '摘要二',
-      },
+      summaries: { documentSummary: 'doc summary' },
     });
 
     __setSearchServicesForTest({
@@ -437,16 +431,12 @@ describe('search', () => {
     const documentsDir = join(projectDir, '.fs_index', 'documents');
     state.afdFiles.set(`${documentsDir}:guide.md`, {
       content: '# 应用指南\n借款费用资本化的说明性内容，主要讨论计算口径。',
-      summaries: {
-        'f1:0000': 'guide',
-      },
+      summaries: { documentSummary: 'guide' },
     });
     state.afdFiles.set(`${documentsDir}:standard.md`, {
       content:
         '# 第二章 确认和计量\n第五条 借款费用同时满足下列条件的，才能开始资本化：\n（一）资产支出已经发生；',
-      summaries: {
-        'f2:0000': 'standard',
-      },
+      summaries: { documentSummary: 'standard' },
     });
 
     __setSearchServicesForTest({
@@ -737,9 +727,7 @@ describe('search', () => {
     const documentsDir = join(projectDir, '.fs_index', 'documents');
     state.afdFiles.set(`${documentsDir}:report.xlsx`, {
       content: '标题\n第一行\n第二行',
-      summaries: {
-        'f1:0000': '摘要一',
-      },
+      summaries: { documentSummary: 'excel summary' },
       mapping: [
         {
           markdownRange: { startLine: 2, endLine: 3 },
@@ -837,16 +825,11 @@ describe('search', () => {
     const documentsDir = join(projectDir, '.fs_index', 'documents');
     state.afdFiles.set(`${documentsDir}:a.md`, {
       content: '第一行\n第二行\n第三行',
-      summaries: {
-        'f1:0000': '摘要一',
-        'f1:0001': '摘要二',
-      },
+      summaries: { documentSummary: 'doc summary' },
     });
     state.afdFiles.set(`${documentsDir}:b.md`, {
       content: '甲行\n乙行',
-      summaries: {
-        'f2:0000': '摘要三',
-      },
+      summaries: { documentSummary: 'doc summary b' },
     });
 
     __setSearchServicesForTest({

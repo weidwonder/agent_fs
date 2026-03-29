@@ -27,8 +27,6 @@ describe('IndexPipeline summary mode', () => {
     };
 
     const summaryService = {
-      generateChunkSummariesBatch: vi.fn(),
-      generateChunkSummary: vi.fn(),
       generateDocumentSummary: vi.fn(),
       generateDirectorySummary: vi.fn(),
     };
@@ -60,21 +58,18 @@ describe('IndexPipeline summary mode', () => {
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
-        tokenBudget: 10000,
       },
     });
 
     const metadata = await pipeline.run();
 
-    expect(summaryService.generateChunkSummariesBatch).not.toHaveBeenCalled();
-    expect(summaryService.generateChunkSummary).not.toHaveBeenCalled();
     expect(summaryService.generateDocumentSummary).not.toHaveBeenCalled();
     expect(summaryService.generateDirectorySummary).not.toHaveBeenCalled();
 
     expect(afdStorage.write).toHaveBeenCalledTimes(1);
     const afdPayload = afdStorage.write.mock.calls[0][1] as Record<string, string>;
-    const summaries = JSON.parse(afdPayload['summaries.json']) as Record<string, string>;
-    expect(Object.values(summaries).every((item) => item === '')).toBe(true);
+    const summaries = JSON.parse(afdPayload['summaries.json']) as { documentSummary: string };
+    expect(summaries.documentSummary).toBe('');
 
     expect(invertedIndex.addFile).toHaveBeenCalledTimes(1);
     const invertedEntries = invertedIndex.addFile.mock.calls[0][2] as Array<{
@@ -87,14 +82,11 @@ describe('IndexPipeline summary mode', () => {
 
     expect(vectorStore.addDocuments).toHaveBeenCalledTimes(1);
     const vectorDocs = vectorStore.addDocuments.mock.calls[0][0] as Array<{
-      content?: string;
-      summary?: string;
       chunk_line_start?: number;
       chunk_line_end?: number;
+      content_vector?: number[];
     }>;
     expect(vectorDocs.length).toBeGreaterThan(0);
-    expect(vectorDocs[0].content).toBeUndefined();
-    expect(vectorDocs[0].summary).toBeUndefined();
     expect(vectorDocs[0].chunk_line_start).toBeTypeOf('number');
     expect(vectorDocs[0].chunk_line_end).toBeTypeOf('number');
 
@@ -128,8 +120,6 @@ describe('IndexPipeline summary mode', () => {
     };
 
     const summaryService = {
-      generateChunkSummariesBatch: vi.fn(),
-      generateChunkSummary: vi.fn(),
       generateDocumentSummary: vi.fn(),
       generateDirectorySummary: vi.fn(),
     };
@@ -161,7 +151,6 @@ describe('IndexPipeline summary mode', () => {
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
-        tokenBudget: 10000,
       },
     });
 
@@ -198,8 +187,6 @@ describe('IndexPipeline summary mode', () => {
     };
 
     const summaryService = {
-      generateChunkSummariesBatch: vi.fn(),
-      generateChunkSummary: vi.fn(),
       generateDocumentSummary: vi.fn(),
       generateDirectorySummary: vi.fn(),
     };
@@ -231,7 +218,6 @@ describe('IndexPipeline summary mode', () => {
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
-        tokenBudget: 10000,
       },
     });
 
@@ -263,8 +249,6 @@ describe('IndexPipeline summary mode', () => {
     };
 
     const summaryService = {
-      generateChunkSummariesBatch: vi.fn(),
-      generateChunkSummary: vi.fn(),
       generateDocumentSummary: vi.fn(),
       generateDirectorySummary: vi.fn(),
     };
@@ -298,7 +282,6 @@ describe('IndexPipeline summary mode', () => {
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
-        tokenBudget: 10000,
       },
     });
 
@@ -346,8 +329,6 @@ describe('IndexPipeline summary mode', () => {
     };
 
     const summaryService = {
-      generateChunkSummariesBatch: vi.fn(),
-      generateChunkSummary: vi.fn(),
       generateDocumentSummary: vi.fn(),
       generateDirectorySummary: vi.fn(),
     };
@@ -379,7 +360,6 @@ describe('IndexPipeline summary mode', () => {
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
-        tokenBudget: 10000,
       },
       fileParallelism: 2,
     } as any);
@@ -409,8 +389,6 @@ describe('IndexPipeline summary mode', () => {
     };
 
     const summaryService = {
-      generateChunkSummariesBatch: vi.fn().mockResolvedValue([{ summary: '' }]),
-      generateChunkSummary: vi.fn(),
       generateDocumentSummary: vi.fn(),
       generateDirectorySummary: vi.fn().mockResolvedValue({ summary: '' }),
     };
@@ -442,7 +420,6 @@ describe('IndexPipeline summary mode', () => {
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
-        tokenBudget: 10000,
       },
     });
 
@@ -500,8 +477,6 @@ describe('IndexPipeline summary mode', () => {
     };
 
     const summaryService = {
-      generateChunkSummariesBatch: vi.fn().mockResolvedValue([{ summary: '' }]),
-      generateChunkSummary: vi.fn(),
       generateDocumentSummary: vi.fn(),
       generateDirectorySummary: vi.fn().mockResolvedValue({ summary: '' }),
     };
@@ -538,7 +513,6 @@ describe('IndexPipeline summary mode', () => {
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
-        tokenBudget: 10000,
       },
     });
     await firstPipeline.run();
@@ -559,7 +533,6 @@ describe('IndexPipeline summary mode', () => {
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
-        tokenBudget: 10000,
       },
     });
     await secondPipeline.run();
@@ -593,8 +566,6 @@ describe('IndexPipeline summary mode', () => {
     };
 
     const summaryService = {
-      generateChunkSummariesBatch: vi.fn().mockResolvedValue([{ summary: '' }]),
-      generateChunkSummary: vi.fn(),
       generateDocumentSummary: vi.fn(),
       generateDirectorySummary: vi.fn().mockResolvedValue({ summary: '' }),
     };
@@ -637,7 +608,6 @@ describe('IndexPipeline summary mode', () => {
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
-        tokenBudget: 10000,
       },
     });
     await expect(firstPipeline.run()).rejects.toThrow(/模拟中断/u);
@@ -661,7 +631,6 @@ describe('IndexPipeline summary mode', () => {
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
-        tokenBudget: 10000,
       },
     });
     const metadata = await secondPipeline.run();
@@ -688,8 +657,6 @@ describe('IndexPipeline summary mode', () => {
     };
 
     const summaryService = {
-      generateChunkSummariesBatch: vi.fn().mockResolvedValue([{ summary: '' }]),
-      generateChunkSummary: vi.fn(),
       generateDocumentSummary: vi.fn(),
       generateDirectorySummary: vi.fn().mockResolvedValue({ summary: '' }),
     };
@@ -726,7 +693,6 @@ describe('IndexPipeline summary mode', () => {
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
-        tokenBudget: 10000,
       },
     });
     await firstPipeline.run();
@@ -759,7 +725,6 @@ describe('IndexPipeline summary mode', () => {
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
-        tokenBudget: 10000,
       },
     });
     await secondPipeline.run();
@@ -790,8 +755,6 @@ describe('IndexPipeline summary mode', () => {
     };
 
     const summaryService = {
-      generateChunkSummariesBatch: vi.fn().mockResolvedValue([{ summary: '' }]),
-      generateChunkSummary: vi.fn(),
       generateDocumentSummary: vi.fn(),
       generateDirectorySummary: vi.fn().mockResolvedValue({ summary: '' }),
     };
@@ -828,7 +791,6 @@ describe('IndexPipeline summary mode', () => {
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
-        tokenBudget: 10000,
       },
     });
     await firstPipeline.run();
@@ -851,7 +813,6 @@ describe('IndexPipeline summary mode', () => {
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
-        tokenBudget: 10000,
       },
     });
     await secondPipeline.run();

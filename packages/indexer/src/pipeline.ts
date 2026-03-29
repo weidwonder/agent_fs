@@ -44,8 +44,6 @@ export interface IndexerOptions {
 
 export interface SummaryPipelineOptions {
   mode: SummaryMode;
-  tokenBudget: number;
-  parallelRequests?: number;
   maxRetries?: number;
   timeoutMs?: number;
 }
@@ -273,7 +271,6 @@ export class IndexPipeline {
   private async indexDirectoryTree(context: DirectoryContext): Promise<DirectoryRunResult> {
     const summaryOptions = this.options.summaryOptions ?? {
       mode: 'batch',
-      tokenBudget: 10000,
     };
 
     const previousMetadata = this.existingMetadataByRelativePath.get(context.relativePath);
@@ -1042,47 +1039,9 @@ export class IndexPipeline {
 
     const summaryOptions = this.options.summaryOptions ?? {
       mode: 'batch',
-      tokenBudget: 10000,
     };
 
-    onProgress?.({
-      phase: 'summary',
-      currentFile: relativeFilePath,
-      processed,
-      total,
-    });
-
     const chunkIds = chunks.map((_, index) => `${fileId}:${String(index).padStart(4, '0')}`);
-    const chunkSummaries = await this.runFileStage({
-      file: relativeFilePath,
-      stage: 'summary',
-      processed,
-      total,
-      details: {
-        mode: summaryOptions.mode,
-        chunkCount: chunks.length,
-      },
-      action: async () => {
-        if (summaryOptions.mode === 'skip') {
-          return chunks.map(() => '');
-        }
-
-        const batchResults = await summaryService.generateChunkSummariesBatch(
-          chunks.map((chunk, index) => ({
-            id: chunkIds[index],
-            content: chunk.content,
-          })),
-          {
-            maxRetries: summaryOptions.maxRetries,
-            timeoutMs: summaryOptions.timeoutMs,
-            tokenBudget: summaryOptions.tokenBudget,
-            parallelRequests: summaryOptions.parallelRequests,
-          }
-        );
-        return batchResults.map((result) => result.summary);
-      },
-    });
-
     onProgress?.({
       phase: 'embed',
       currentFile: relativeFilePath,
@@ -1116,25 +1075,9 @@ export class IndexPipeline {
             { batchSize: 8 }
           );
 
-          let summaryEmbeddings: number[][];
-          if (summaryOptions.mode === 'skip') {
-            const emptySummaryEmbedding = await embeddingService.embed('');
-            summaryEmbeddings = chunks.map(() => emptySummaryEmbedding);
-          } else {
-            const summaryBatch = await maybeEmbedBatch.call(embeddingService, chunkSummaries, {
-              batchSize: 8,
-            });
-            summaryEmbeddings = summaryBatch.embeddings;
-          }
-
           for (let i = 0; i < chunks.length; i += 1) {
             const chunk = chunks[i];
             const contentEmbed = contentBatch.embeddings[i];
-            const summaryEmbed = summaryEmbeddings[i] ?? [];
-            const hybridEmbed = contentEmbed.map(
-              (value, index) => (value + (summaryEmbed[index] ?? 0)) / 2
-            );
-
             const now = new Date().toISOString();
             docs.push({
               chunk_id: chunkIds[i],
@@ -1145,8 +1088,6 @@ export class IndexPipeline {
               chunk_line_start: chunk.lineStart,
               chunk_line_end: chunk.lineEnd,
               content_vector: contentEmbed,
-              summary_vector: summaryEmbed,
-              hybrid_vector: hybridEmbed,
               locator: chunk.locator,
               indexed_at: now,
               deleted_at: '',
@@ -1158,8 +1099,6 @@ export class IndexPipeline {
 
         for (let i = 0; i < chunks.length; i += 1) {
           const chunk = chunks[i];
-          const chunkSummary = chunkSummaries[i] ?? '';
-
           onProgress?.({
             phase: 'embed',
             currentFile: relativeFilePath,
@@ -1168,14 +1107,7 @@ export class IndexPipeline {
           });
 
           try {
-            const [contentEmbed, summaryEmbed] = await Promise.all([
-              embeddingService.embed(chunk.content),
-              embeddingService.embed(chunkSummary),
-            ]);
-            const hybridEmbed = contentEmbed.map(
-              (value, index) => (value + (summaryEmbed[index] ?? 0)) / 2
-            );
-
+            const contentEmbed = await embeddingService.embed(chunk.content);
             const now = new Date().toISOString();
             docs.push({
               chunk_id: chunkIds[i],
@@ -1186,8 +1118,6 @@ export class IndexPipeline {
               chunk_line_start: chunk.lineStart,
               chunk_line_end: chunk.lineEnd,
               content_vector: contentEmbed,
-              summary_vector: summaryEmbed,
-              hybrid_vector: hybridEmbed,
               locator: chunk.locator,
               indexed_at: now,
               deleted_at: '',
@@ -1235,7 +1165,7 @@ export class IndexPipeline {
           chunkCount: chunks.length,
         },
         action: async () =>
-          summaryService.generateDocumentSummary(relativeFilePath, chunkSummaries, {
+          summaryService.generateDocumentSummary(relativeFilePath, conversionResult.markdown, {
             maxRetries: summaryOptions.maxRetries,
             timeoutMs: summaryOptions.timeoutMs,
           }),
@@ -1249,9 +1179,9 @@ export class IndexPipeline {
       processed,
       total,
     });
-    const summaries = Object.fromEntries(
-      chunkIds.map((chunkId, index) => [chunkId, chunkSummaries[index] ?? ''])
-    );
+    const summaries = {
+      documentSummary,
+    };
     await this.runFileStage({
       file: relativeFilePath,
       stage: 'afd-write',

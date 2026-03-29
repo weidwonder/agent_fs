@@ -16,7 +16,7 @@ const state = {
       chunk_line_end: number;
     }
   >(),
-  afdFiles: new Map<string, { content: string; summaries: Record<string, string> }>(),
+  afdFiles: new Map<string, { content: string }>(),
 };
 
 vi.mock('node:os', async () => {
@@ -44,13 +44,6 @@ vi.mock('@agent-fs/storage', () => ({
         throw new Error(`missing AFD text: ${fileId}/${filePath}`);
       }
       return data.content;
-    },
-    read: async (fileId: string, filePath: string) => {
-      const data = state.afdFiles.get(`${documentsDir}:${fileId}`);
-      if (!data || filePath !== 'summaries.json') {
-        throw new Error(`missing AFD buffer: ${fileId}/${filePath}`);
-      }
-      return Buffer.from(JSON.stringify(data.summaries), 'utf-8');
     },
   }),
 }));
@@ -135,10 +128,6 @@ describe('getChunk', () => {
     const documentsDir = join(projectDir, '.fs_index', 'documents');
     state.afdFiles.set(`${documentsDir}:a.md`, {
       content: '第一行\n第二行\n第三行',
-      summaries: {
-        'f1:0000': '摘要一',
-        'f1:0001': '摘要二',
-      },
     });
 
     state.vectorDocs.set('f1:0000', {
@@ -160,7 +149,7 @@ describe('getChunk', () => {
     });
   });
 
-  it('优先从 AFD 读取 chunk 内容和 summary，并支持邻居读取', async () => {
+  it('优先从 AFD 读取 chunk 内容，并支持邻居读取', async () => {
     const result = await getChunk({
       chunk_id: 'f1:0000',
       include_neighbors: true,
@@ -168,12 +157,12 @@ describe('getChunk', () => {
     });
 
     expect(result.chunk.content).toBe('第一行');
-    expect(result.chunk.summary).toBe('摘要一');
+    expect(result.chunk.summary).toBe('');
 
     expect(result.neighbors?.after).toHaveLength(1);
     expect(result.neighbors?.after[0].id).toBe('f1:0001');
     expect(result.neighbors?.after[0].content).toBe('第二行');
-    expect(result.neighbors?.after[0].summary).toBe('摘要二');
+    expect(result.neighbors?.after[0].summary).toBe('');
   });
 
   it('chunk_id 非法时抛错', async () => {
@@ -288,9 +277,6 @@ describe('getChunk', () => {
     const subDirDocumentsDir = join(subDir, '.fs_index', 'documents');
     state.afdFiles.set(`${subDirDocumentsDir}:b.md`, {
       content: '子目录第一行\n子目录第二行',
-      summaries: {
-        'f-sub:0000': '子目录摘要',
-      },
     });
 
     state.vectorDocs.set('f-sub:0000', {
@@ -304,7 +290,7 @@ describe('getChunk', () => {
 
     const result = await getChunk({ chunk_id: 'f-sub:0000' });
     expect(result.chunk.content).toBe('子目录第一行');
-    expect(result.chunk.summary).toBe('子目录摘要');
+    expect(result.chunk.summary).toBe('');
   });
 
   afterEach(() => {

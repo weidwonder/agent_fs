@@ -71,16 +71,8 @@ describe('F-Post: Full Indexing Pipeline', () => {
         for (let i = 0; i < Math.min(chunks.length, 3); i++) {
           const chunk = chunks[i];
           const chunkId = `full-pipeline-${i}`;
-
-          const summaryResult = await summaryService.generateChunkSummary(chunk.content);
-          expect(summaryResult.summary).toBeDefined();
-          expect(summaryResult.summary.length).toBeGreaterThan(0);
-
           const contentVector = await embeddingService.embed(chunk.content);
-          const summaryVector = await embeddingService.embed(summaryResult.summary);
-
           expect(contentVector.length).toBe(dimension);
-          expect(summaryVector.length).toBe(dimension);
 
           vectorDocs.push({
             chunk_id: chunkId,
@@ -88,10 +80,9 @@ describe('F-Post: Full Indexing Pipeline', () => {
             dir_id: 'pipeline-dir-001',
             rel_path: TEST_FILES.markdown,
             file_path: filePath,
-            content: chunk.content,
-            summary: summaryResult.summary,
+            chunk_line_start: chunk.lineStart,
+            chunk_line_end: chunk.lineEnd,
             content_vector: contentVector,
-            summary_vector: summaryVector,
             locator: chunk.locator,
             indexed_at: new Date().toISOString(),
             deleted_at: '',
@@ -111,6 +102,12 @@ describe('F-Post: Full Indexing Pipeline', () => {
 
         await vectorStore.addDocuments(vectorDocs);
         bm25Index.addDocuments(bm25Docs);
+
+        const documentSummary = await summaryService.generateDocumentSummary(
+          TEST_FILES.markdown,
+          conversionResult.markdown
+        );
+        expect(documentSummary.summary).toBeDefined();
 
         const queryVector = await embeddingService.embed('INSPECTION REPORT RESULT');
 
