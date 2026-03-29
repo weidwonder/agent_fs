@@ -29,12 +29,6 @@ export interface VectorDocument {
   /** 内容向量 */
   content_vector: number[];
 
-  /** 摘要向量 */
-  summary_vector: number[];
-
-  /** 1:1 合并后的混合向量（content + summary） */
-  hybrid_vector?: number[];
-
   /** 原文定位符 */
   locator: string;
 

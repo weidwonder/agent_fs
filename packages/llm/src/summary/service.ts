@@ -1,21 +1,23 @@
 import type { LLMConfig } from '@agent-fs/core';
-import { countTokens } from '@agent-fs/core';
+import { countTokens, createTokenizer } from '@agent-fs/core';
+import { unified } from 'unified';
+import remarkParse from 'remark-parse';
+import { visit } from 'unist-util-visit';
+import type { Root, Heading } from 'mdast';
 import { SummaryCache } from './cache';
 import {
-  BATCH_CHUNK_SUMMARY_PROMPT,
-  CHUNK_SUMMARY_PROMPT,
   DOCUMENT_SUMMARY_PROMPT,
   DIRECTORY_SUMMARY_PROMPT,
   SUMMARY_SYSTEM_PROMPT,
 } from './prompts';
-import { groupByTokenBudget, type TokenItem } from './batch-utils';
 
 type ChatMessage = { role: 'user' | 'system'; content: string };
-const MAX_CHUNKS_PER_BATCH_REQUEST = 4;
 const DEFAULT_COMPLETION_MAX_TOKENS = 1024;
 const DEFAULT_RATE_LIMIT_DELAY_MS = 30000;
 const MAX_RATE_LIMIT_DELAY_MS = 120000;
 const DEFAULT_REQUEST_MIN_INTERVAL_MS = 1500;
+const DOCUMENT_SUMMARY_MAX_INPUT_TOKENS = 10000;
+const DOCUMENT_SUMMARY_PREFIX_TOKENS = 1000;
 
 class SummaryApiError extends Error {
   readonly status: number;
@@ -137,15 +139,6 @@ export interface SummaryResult {
   fallback: boolean;
 }
 
-export interface BatchChunkInput {
-  id: string;
-  content: string;
-}
-
-export interface BatchSummaryResult extends SummaryResult {
-  id: string;
-}
-
 interface LLMCallOptions {
   maxRetries: number;
   maxTokens?: number;
@@ -156,6 +149,48 @@ interface LLMCallOptions {
 export interface SummaryServiceRuntimeOptions {
   maxConcurrentRequests?: number;
   minRequestIntervalMs?: number;
+}
+
+export function extractMarkdownHeadings(markdown: string): string[] {
+  if (!markdown.trim()) {
+    return [];
+  }
+
+  const tree = unified().use(remarkParse).parse(markdown) as Root;
+  const headings: string[] = [];
+
+  visit(tree, 'heading', (node: Heading) => {
+    const text = node.children
+      .map((child) => ('value' in child && typeof child.value === 'string' ? child.value : ''))
+      .join('')
+      .trim();
+    if (text) {
+      headings.push(text);
+    }
+  });
+
+  return headings;
+}
+
+function sliceTextByTokens(text: string, maxTokens: number): string {
+  const tokenizer = createTokenizer();
+  const tokens = tokenizer.encode(text);
+  if (tokens.length <= maxTokens) {
+    return text;
+  }
+  return tokenizer.decode(tokens.slice(0, maxTokens)).trim();
+}
+
+export function buildDocumentSummaryInput(markdown: string): string {
+  if (countTokens(markdown) <= DOCUMENT_SUMMARY_MAX_INPUT_TOKENS) {
+    return markdown;
+  }
+
+  const prefix = sliceTextByTokens(markdown, DOCUMENT_SUMMARY_PREFIX_TOKENS);
+  const headings = extractMarkdownHeadings(markdown);
+  const headingLines = headings.length > 0 ? headings.map((item) => `- ${item}`).join('\n') : '- 无标题';
+
+  return `文档开头正文（前 1000 token）:\n${prefix}\n\n文档章节结构:\n${headingLines}`;
 }
 
 export class SummaryService {
@@ -173,225 +208,13 @@ export class SummaryService {
     }
   }
 
-  async generateChunkSummary(
-    content: string,
-    options: SummaryOptions = {}
-  ): Promise<SummaryResult> {
-    const { useCache = true, maxRetries = 3, timeoutMs } = options;
-
-    if (useCache) {
-      const cached = this.cache.get(content, 'chunk');
-      if (cached) {
-        return { summary: cached, fromCache: true, fallback: false };
-      }
-    }
-
-    try {
-      const prompt = CHUNK_SUMMARY_PROMPT.replace('{content}', content);
-      const summary = await this.callLLM(
-        this.buildMessages(prompt),
-        { maxRetries, timeoutMs }
-      );
-
-      if (useCache) {
-        this.cache.set(content, 'chunk', summary);
-      }
-
-      return { summary, fromCache: false, fallback: false };
-    } catch {
-      return { summary: '', fromCache: false, fallback: true };
-    }
-  }
-
-  async generateChunkSummariesBatch(
-    chunks: BatchChunkInput[],
-    options: SummaryOptions = {}
-  ): Promise<BatchSummaryResult[]> {
-    const { useCache = true, timeoutMs } = options;
-    const maxRetries = options.maxRetries ?? 2;
-    const tokenBudget = options.tokenBudget ?? 10000;
-    const parallelRequests = Math.max(1, Math.floor(options.parallelRequests ?? 1));
-
-    const results: BatchSummaryResult[] = chunks.map((chunk) => ({
-      id: chunk.id,
-      summary: '',
-      fromCache: false,
-      fallback: false,
-    }));
-
-    const pending: TokenItem<{ index: number; content: string }>[] = [];
-
-    chunks.forEach((chunk, index) => {
-      if (useCache) {
-        const cached = this.cache.get(chunk.content, 'chunk');
-        if (cached) {
-          results[index] = { id: chunk.id, summary: cached, fromCache: true, fallback: false };
-          return;
-        }
-      }
-
-      pending.push({
-        id: chunk.id,
-        tokens: countTokens(chunk.content),
-        payload: { index, content: chunk.content },
-      });
-    });
-
-    if (pending.length === 0) {
-      return results;
-    }
-
-    const batches = this.splitBatchesByMaxItems(
-      groupByTokenBudget(pending, tokenBudget),
-      MAX_CHUNKS_PER_BATCH_REQUEST
-    );
-    let nextBatchIndex = 0;
-    const workerCount = Math.min(parallelRequests, batches.length);
-    const workers = Array.from({ length: workerCount }).map(async () => {
-      while (nextBatchIndex < batches.length) {
-        const batchIndex = nextBatchIndex;
-        nextBatchIndex += 1;
-        const batch = batches[batchIndex];
-        if (!batch) {
-          continue;
-        }
-        await this.processChunkSummaryBatch(batch, {
-          useCache,
-          maxRetries,
-          timeoutMs,
-          results,
-        });
-      }
-    });
-
-    await Promise.all(workers);
-
-    return results;
-  }
-
-  private async processChunkSummaryBatch(
-    batch: TokenItem<{ index: number; content: string }>[],
-    context: {
-      useCache: boolean;
-      maxRetries: number;
-      timeoutMs?: number;
-      results: BatchSummaryResult[];
-    }
-  ): Promise<void> {
-    const expectedIds = batch.map((item) => item.id);
-    const payloadItems = batch.map((item) => ({ id: item.id, text: item.payload.content }));
-    const messages: ChatMessage[] = [
-      {
-        role: 'system',
-        content: SUMMARY_SYSTEM_PROMPT,
-      },
-      {
-        role: 'user',
-        content: BATCH_CHUNK_SUMMARY_PROMPT.replace('{items}', JSON.stringify(payloadItems)),
-      },
-    ];
-
-    let parsed: Map<string, string> | null = null;
-    let lastError: Error | null = null;
-
-    for (let attempt = 0; attempt <= context.maxRetries; attempt++) {
-      try {
-        const raw = await this.callLLM(messages, {
-          maxRetries: 1,
-          maxTokens: DEFAULT_COMPLETION_MAX_TOKENS,
-          responseFormat: { type: 'json_object' },
-          timeoutMs: context.timeoutMs,
-        });
-        parsed = this.parseBatchResponse(raw, expectedIds);
-        if (parsed) {
-          break;
-        }
-        throw new Error('invalid_json');
-      } catch (error) {
-        lastError = error as Error;
-        if (attempt < context.maxRetries && lastError.message === 'invalid_json') {
-          messages.push({
-            role: 'user',
-            content: `上次输出无法解析为 JSON，错误信息：${lastError.message}。请仅输出 JSON 对象，格式为 {"items":[{"id":"...","summary":"..."}]}，不要添加任何额外文字。`,
-          });
-        }
-        if (attempt < context.maxRetries && isRateLimitError(lastError)) {
-          await sleep(this.getRetryDelayMs(lastError, attempt));
-        }
-      }
-    }
-
-    if (!parsed) {
-      if (lastError && isRateLimitError(lastError)) {
-        globalRequestLimiter.setCooldown(this.getRetryDelayMs(lastError, context.maxRetries));
-        for (const item of batch) {
-          const index = item.payload.index;
-          context.results[index] = {
-            id: item.id,
-            summary: '',
-            fromCache: false,
-            fallback: true,
-          };
-        }
-        return;
-      }
-
-      for (const item of batch) {
-        const index = item.payload.index;
-        const single = await this.generateChunkSummary(item.payload.content, {
-          useCache: context.useCache,
-          maxRetries: context.maxRetries,
-          timeoutMs: context.timeoutMs,
-        });
-        context.results[index] = {
-          id: item.id,
-          summary: single.summary,
-          fromCache: single.fromCache,
-          fallback: single.fallback,
-        };
-      }
-      return;
-    }
-
-    for (const item of batch) {
-      const index = item.payload.index;
-      const summary = parsed.get(item.id) ?? '';
-
-      if (context.useCache) {
-        this.cache.set(item.payload.content, 'chunk', summary);
-      }
-
-      context.results[index] = { id: item.id, summary, fromCache: false, fallback: false };
-    }
-  }
-
-  private splitBatchesByMaxItems<T>(
-    batches: TokenItem<T>[][],
-    maxItems: number
-  ): TokenItem<T>[][] {
-    const normalizedMaxItems = Math.max(1, Math.floor(maxItems));
-    const result: TokenItem<T>[][] = [];
-
-    for (const batch of batches) {
-      if (batch.length <= normalizedMaxItems) {
-        result.push(batch);
-        continue;
-      }
-
-      for (let offset = 0; offset < batch.length; offset += normalizedMaxItems) {
-        result.push(batch.slice(offset, offset + normalizedMaxItems));
-      }
-    }
-
-    return result;
-  }
-
   async generateDocumentSummary(
     filename: string,
-    chunkSummaries: string[],
+    markdown: string,
     options: SummaryOptions = {}
   ): Promise<SummaryResult> {
-    const content = `${filename}\n${chunkSummaries.join('\n')}`;
+    const documentContent = buildDocumentSummaryInput(markdown);
+    const content = `${filename}\n${markdown}`;
 
     if (options.useCache !== false) {
       const cached = this.cache.get(content, 'document');
@@ -403,7 +226,7 @@ export class SummaryService {
     try {
       const prompt = DOCUMENT_SUMMARY_PROMPT
         .replace('{filename}', filename)
-        .replace('{chunk_summaries}', chunkSummaries.join('\n'));
+        .replace('{document_content}', documentContent);
 
       const summary = await this.callLLM(
         this.buildMessages(prompt),
@@ -449,49 +272,6 @@ export class SummaryService {
       return { summary: '', fromCache: false, fallback: true };
     }
   }
-
-  private parseBatchResponse(raw: string, expectedIds: string[]): Map<string, string> | null {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      return null;
-    }
-
-    const items = Array.isArray(parsed)
-      ? parsed
-      : parsed &&
-          typeof parsed === 'object' &&
-          Array.isArray((parsed as { items?: unknown }).items)
-        ? (parsed as { items: unknown[] }).items
-        : null;
-
-    if (!items) {
-      return null;
-    }
-
-    const map = new Map<string, string>();
-    for (const item of items) {
-      if (!item || typeof item !== 'object') {
-        return null;
-      }
-      const id = (item as { id?: unknown }).id;
-      const summary = (item as { summary?: unknown }).summary;
-      if (typeof id !== 'string' || typeof summary !== 'string') {
-        return null;
-      }
-      map.set(id, summary);
-    }
-
-    for (const id of expectedIds) {
-      if (!map.has(id)) {
-        return null;
-      }
-    }
-
-    return map;
-  }
-
   private buildMessages(prompt: string): ChatMessage[] {
     return [
       {

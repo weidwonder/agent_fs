@@ -19,8 +19,8 @@ describe('configSchema', () => {
     },
     indexing: {
       chunk_size: {
-        min_tokens: 600,
-        max_tokens: 1200,
+        min_tokens: 400,
+        max_tokens: 800,
       },
     },
     search: {
@@ -66,8 +66,8 @@ describe('configSchema', () => {
       search: { fusion: { method: 'rrf' } },
     };
     const result = validateConfig(minConfig);
-    expect(result.indexing.chunk_size.min_tokens).toBe(600);
-    expect(result.indexing.chunk_size.max_tokens).toBe(1200);
+    expect(result.indexing.chunk_size.min_tokens).toBe(400);
+    expect(result.indexing.chunk_size.max_tokens).toBe(800);
     expect(result.indexing.file_parallelism).toBe(2);
     expect(result.search.default_top_k).toBe(10);
   });

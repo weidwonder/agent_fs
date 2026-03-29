@@ -44,8 +44,8 @@ describe('Config Types', () => {
       },
       indexing: {
         chunk_size: {
-          min_tokens: 600,
-          max_tokens: 1200,
+          min_tokens: 400,
+          max_tokens: 800,
         },
       },
       search: {

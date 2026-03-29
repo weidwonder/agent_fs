@@ -63,8 +63,8 @@ const summaryConfigSchema = z.object({
  */
 const indexingConfigSchema = z.object({
   chunk_size: z.object({
-    min_tokens: z.number().int().positive().default(600),
-    max_tokens: z.number().int().positive().default(1200),
+    min_tokens: z.number().int().positive().default(400),
+    max_tokens: z.number().int().positive().default(800),
   }),
   file_parallelism: z.number().int().positive().max(8).default(2),
 });

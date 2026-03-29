@@ -11,4 +11,10 @@ describe('Storage Types', () => {
     expectTypeOf<VectorDocument>().not.toHaveProperty('content');
     expectTypeOf<VectorDocument>().not.toHaveProperty('summary');
   });
+
+  it('VectorDocument should only keep content vector fields', () => {
+    expectTypeOf<VectorDocument>().toHaveProperty('content_vector');
+    expectTypeOf<VectorDocument>().not.toHaveProperty('summary_vector');
+    expectTypeOf<VectorDocument>().not.toHaveProperty('hybrid_vector');
+  });
 });
