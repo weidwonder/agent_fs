@@ -40,6 +40,15 @@
 
 云端部署指南
 └─> docs/guides/cloud-deployment.md
+
+快速上手（用户使用流程）
+└─> docs/guides/getting-started.md
+
+MCP 客户端接入（Claude Desktop / Cursor 等）
+└─> docs/guides/mcp-client-integration.md
+
+运维手册（备份、扩容、监控）
+└─> docs/guides/operations.md
 ```
 
 ## 项目概述
@@ -96,3 +105,6 @@ agent_fs/
 - [架构文档](docs/architecture.md) - 系统架构与模块说明
 - [代码规范](docs/guides/code-standards.md) - 编码与验证要求
 - [插件开发指南](docs/guides/plugin-development.md) - 创建自定义文档处理插件
+- [快速上手指南](docs/guides/getting-started.md) - 注册、建库、上传、搜索完整流程
+- [MCP 客户端接入](docs/guides/mcp-client-integration.md) - 配置 AI 工具连接知识库
+- [运维手册](docs/guides/operations.md) - 备份恢复、扩容、监控、安全加固
