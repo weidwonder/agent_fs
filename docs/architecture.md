@@ -347,5 +347,114 @@ interface DocumentConversionResult {
 
 ---
 
-*文档版本：2.2*  
-*更新日期：2026-02-09*
+## 11. 云端架构（SaaS 模式）
+
+> 详细设计：`docs/specs/2026-03-30-cloud-knowledge-base-design.md`
+> 实施计划：`docs/plans/2026-03-30-cloud-knowledge-base/plan.md`
+
+### 11.1 双模式架构
+
+Agent FS 同时支持本地和云端两种部署模式，通过 `StorageAdapter` 抽象层共享核心逻辑：
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ 应用层                                                               │
+│ ┌─本地─────────────────────┐  ┌─云端───────────────────────────────┐ │
+│ │ @agent-fs/electron-app   │  │ @agent-fs/server (Fastify)        │ │
+│ │ @agent-fs/mcp-server     │  │   - HTTP API + MCP Streamable HTTP│ │
+│ │   (stdio)                │  │   - pg-boss Worker                │ │
+│ └──────────────────────────┘  │ @agent-fs/web-app (React SPA)     │ │
+│                               └────────────────────────────────────┘ │
+├──────────────────────────────────────────────────────────────────────┤
+│ 核心逻辑层（共享）                                                    │
+│ - @agent-fs/indexer（切分、向量化、写入）                              │
+│ - @agent-fs/search（RRF 融合、scope 解析）                           │
+│ - @agent-fs/llm（Embedding / Summary）                              │
+│ - @agent-fs/core（类型、chunker）                                    │
+├──────────────────────────────────────────────────────────────────────┤
+│ 存储抽象层                                                           │
+│ - @agent-fs/storage-adapter（接口定义 + conformance tests）          │
+│   ├─ VectorStoreAdapter                                             │
+│   ├─ InvertedIndexAdapter                                           │
+│   ├─ DocumentArchiveAdapter                                         │
+│   └─ MetadataAdapter                                                │
+├──────────────────────────────────────────────────────────────────────┤
+│ 存储实现层                                                           │
+│ ┌─本地─────────────────────┐  ┌─云端───────────────────────────────┐ │
+│ │ LocalAdapter             │  │ CloudAdapter                      │ │
+│ │ - LanceDB（向量）         │  │ - PostgreSQL + pgvector（向量）    │ │
+│ │ - SQLite（倒排）          │  │ - PostgreSQL + 应用层BM25（倒排）  │ │
+│ │ - AFD / Rust N-API（归档）│  │ - S3 / MinIO（归档）              │ │
+│ │ - 文件系统（元数据）      │  │ - PostgreSQL（元数据）             │ │
+│ └──────────────────────────┘  └────────────────────────────────────┘ │
+├──────────────────────────────────────────────────────────────────────┤
+│ 插件层（共享）                                                       │
+│ plugin-markdown / plugin-pdf / plugin-docx / plugin-excel           │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### 11.2 新增包
+
+| 包 | 说明 |
+|-----|------|
+| `@agent-fs/storage-adapter` | 存储抽象层（接口定义 + LocalAdapter） |
+| `@agent-fs/storage-cloud` | CloudAdapter（pgvector + PG BM25 + S3） |
+| `@agent-fs/server` | Fastify HTTP Server + MCP Streamable HTTP + pg-boss Worker |
+| `@agent-fs/web-app` | React Web UI（管理面板 + 文档上传 + 搜索） |
+
+### 11.3 云端部署拓扑
+
+```
+              ┌─────────────┐
+              │   Nginx     │
+              │  (反向代理)  │
+              └──────┬──────┘
+                     │
+        ┌────────────┼────────────┐
+        ▼            ▼            ▼
+  ┌──────────┐ ┌──────────┐ ┌──────────┐
+  │  Server  │ │  Server  │ │  Worker  │
+  │ (API +   │ │ (API +   │ │ (索引任务 │
+  │  MCP)    │ │  MCP)    │ │  消费者)  │
+  └────┬─────┘ └────┬─────┘ └────┬─────┘
+       │             │            │
+       └──────┬──────┘            │
+              ▼                   ▼
+        ┌──────────┐        ┌──────────┐
+        │PostgreSQL│        │ MinIO/S3 │
+        │(pgvector)│        │          │
+        └──────────┘        └──────────┘
+```
+
+- **Server 进程**：无状态，可水平扩展，处理 HTTP API + MCP Streamable HTTP
+- **Worker 进程**：同一份代码 `--mode=worker` 启动，消费 pg-boss 队列执行索引
+- **Docker Compose**：一键启动全部组件
+
+### 11.4 多租户数据模型
+
+```
+users ─┬─> tenant_members ─> tenants
+       │                       │
+       │                       ├─> projects ─> directories ─> files
+       │                       │                    │           │
+       │                       │                    ▼           ▼
+       │                       │              chunks (pgvector)
+       │                       │              inverted_terms
+       │                       │
+       │                       └─> api_keys
+       └─> (OAuth 预留)
+```
+
+所有查询通过 `tenant_id` 隔离，服务层强制注入。
+
+### 11.5 StorageAdapter 生命周期
+
+- `createLocalAdapter()` / `createCloudAdapter()`：只组装对象，不做 I/O
+- 调用方必须显式调用 `adapter.init()` 和 `adapter.close()`
+- Server 模式下 DB pool 和 S3 client 是全局单例
+- `CloudAdapter` 按 tenant 创建（轻量操作），共享底层连接池
+
+---
+
+*文档版本：3.0*
+*更新日期：2026-03-30*

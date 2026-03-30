@@ -31,6 +31,12 @@
 
 设计历史
 └─> docs/plans/2025-02-02-agent-fs-design.md（原始设计文档）
+
+云端知识库重构设计
+└─> docs/specs/2026-03-30-cloud-knowledge-base-design.md
+
+云端知识库实施计划
+└─> docs/plans/2026-03-30-cloud-knowledge-base/plan.md
 ```
 
 ## 项目概述

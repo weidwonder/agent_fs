@@ -278,8 +278,73 @@
 | AFD 压缩率 | 60-80% 空间节省 |
 | 向量库体积优化 | 相比原方案减少 70-80% |
 
+## 13. 云端知识库（SaaS 模式）
+
+> 详细设计：`docs/specs/2026-03-30-cloud-knowledge-base-design.md`
+> 实施计划：`docs/plans/2026-03-30-cloud-knowledge-base/plan.md`
+
+### 13.1 目标
+
+在保留 Electron 本地版的同时，支持云端多租户 SaaS 部署：
+- 纯后台运行在 Linux 服务器上
+- 通过 Web UI 管理知识库、上传文档
+- 通过 MCP Streamable HTTP 供 AI Agent 查询
+
+### 13.2 部署模式
+
+| 模式 | 说明 |
+|------|------|
+| 本地模式 | Electron + MCP stdio，存储为 LanceDB + SQLite + AFD（保持不变） |
+| 云端模式 | Fastify HTTP Server + MCP Streamable HTTP + React Web UI |
+
+### 13.3 云端存储
+
+| 组件 | 本地 | 云端 |
+|------|------|------|
+| 向量索引 | LanceDB（文件型） | PostgreSQL + pgvector |
+| 倒排索引 | SQLite + nodejieba | PostgreSQL + 应用层 BM25 + nodejieba |
+| 文档归档 | AFD（Rust N-API） | S3 / MinIO |
+| 索引元数据 | `.fs_index/index.json` | PostgreSQL `directories` / `files` 表 |
+| 全局注册表 | `~/.agent_fs/registry.json` | PostgreSQL `tenants` / `projects` 表 |
+
+### 13.4 多租户
+
+| 要求 | 说明 |
+|------|------|
+| 认证 | 自建用户系统（邮箱/密码，JWT），预留 OAuth / API Key |
+| 租户隔离 | 所有表带 `tenant_id`，应用层强制过滤 |
+| 配额 | 租户级存储配额（`storage_quota_bytes`） |
+
+### 13.5 云端 MCP 工具
+
+| Tool | 说明 |
+|------|------|
+| `list_indexes` | 列出当前租户所有已索引项目及统计 |
+| `dir_tree` | 展示目录结构（基于 `directories` 表递归） |
+| `search` | 多路召回搜索（语义 + 关键词），租户隔离 |
+| `get_chunk` | 获取 chunk 详情（从 S3 读取归档） |
+| `get_project_memory` | 获取项目 memory |
+| `index_documents` | 🆕 从 URL 下载并触发索引 |
+
+### 13.6 架构抽象
+
+通过 `StorageAdapter` 接口解耦核心逻辑与存储后端：
+- `VectorStoreAdapter` / `InvertedIndexAdapter` / `DocumentArchiveAdapter` / `MetadataAdapter`
+- `LocalAdapter`：包装现有 LanceDB / SQLite / AFD（Electron 用）
+- `CloudAdapter`：实现 pgvector / PG BM25 / S3（云端用）
+- 核心包（indexer / search）只依赖接口，不直接依赖具体后端
+
+### 13.7 部署基础设施
+
+| 组件 | 技术 |
+|------|------|
+| HTTP 框架 | Fastify |
+| 任务队列 | pg-boss（基于 PostgreSQL） |
+| 容器化 | Docker Compose（Server × N + Worker × N + PostgreSQL + MinIO） |
+| Web UI | React + Vite + TailwindCSS |
+
 ---
 
-*文档版本: 2.1*
+*文档版本: 3.0*
 *创建日期: 2025-02-02*
-*更新日期: 2026-02-08*
+*更新日期: 2026-03-30*
