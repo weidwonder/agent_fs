@@ -1,6 +1,8 @@
 // packages/server/src/services/auth-service.ts
 
 import { getPool } from '@agent-fs/storage-cloud';
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 import { hashPassword, verifyPassword } from '../auth/password.js';
 import { signAccessToken, signRefreshToken, verifyToken } from '../auth/jwt.js';
 
@@ -19,6 +21,10 @@ export class AuthService {
   ) {}
 
   async register(email: string, password: string, tenantName: string): Promise<AuthResult> {
+    if (!EMAIL_REGEX.test(email)) throw new Error('INVALID_EMAIL');
+    if (password.length < 8) throw new Error('PASSWORD_TOO_SHORT');
+    if (!tenantName.trim()) throw new Error('TENANT_NAME_REQUIRED');
+
     const pool = getPool();
     const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
     if (existing.rows.length > 0) throw new Error('EMAIL_TAKEN');
@@ -62,6 +68,9 @@ export class AuthService {
   }
 
   async login(email: string, password: string): Promise<AuthResult> {
+    if (!EMAIL_REGEX.test(email)) throw new Error('INVALID_EMAIL');
+    if (!password) throw new Error('PASSWORD_REQUIRED');
+
     const pool = getPool();
     const userResult = await pool.query(
       'SELECT id, password_hash FROM users WHERE email = $1',

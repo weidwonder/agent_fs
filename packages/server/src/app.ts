@@ -23,6 +23,7 @@ import { mcpRoutes } from './mcp/streamable.js';
 import { errorHandler } from './middleware/error-handler.js';
 import PgBoss from 'pg-boss';
 import { EmbeddingService } from '@agent-fs/llm';
+import { buildEmbeddingConfig } from './services/embedding-config.js';
 
 export async function createApp(config: ServerConfig) {
   const app = Fastify({ logger: true });
@@ -90,33 +91,3 @@ export async function createApp(config: ServerConfig) {
   return app;
 }
 
-// ---------------------------------------------------------------------------
-// Config helpers
-// ---------------------------------------------------------------------------
-
-function buildEmbeddingConfig() {
-  const apiKey = process.env['EMBEDDING_API_KEY'];
-  const baseUrl = process.env['EMBEDDING_BASE_URL'];
-  const model = process.env['EMBEDDING_MODEL'] ?? 'text-embedding-3-small';
-
-  if (apiKey && baseUrl) {
-    return {
-      default: 'api' as const,
-      api: {
-        provider: 'openai-compatible' as const,
-        base_url: baseUrl,
-        api_key: apiKey,
-        model,
-        timeout_ms: 30000,
-        max_retries: 3,
-      },
-    };
-  }
-
-  const localModel =
-    process.env['EMBEDDING_LOCAL_MODEL'] ?? 'BAAI/bge-small-zh-v1.5';
-  return {
-    default: 'local' as const,
-    local: { model: localModel, device: 'cpu' as const },
-  };
-}

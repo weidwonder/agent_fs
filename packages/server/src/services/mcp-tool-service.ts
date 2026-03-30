@@ -77,8 +77,13 @@ export class McpToolService {
   }
 
   async getChunk(tenantId: string, chunkId: string, adapter: StorageAdapter) {
+    // adapter is tenant-scoped (created with tenantId); getByChunkIds enforces
+    // AND tenant_id = $2 in the SQL query — cross-tenant access is prevented.
     const docs = await adapter.vector.getByChunkIds([chunkId]);
-    if (docs.length === 0) return { error: 'Chunk not found' };
+    if (docs.length === 0) {
+      // Either the chunk does not exist or belongs to a different tenant
+      return { error: `Chunk not found or access denied for tenant ${tenantId}` };
+    }
 
     const doc = docs[0];
     let content = '';
@@ -91,9 +96,6 @@ export class McpToolService {
     } catch {
       content = '(archive not available)';
     }
-
-    // Silence tenantId unused warning — kept for future tenant-scoped access checks
-    void tenantId;
 
     return {
       chunkId,
@@ -110,7 +112,7 @@ export class McpToolService {
     projectId: string,
     adapter: StorageAdapter,
   ) {
-    void tenantId;
+    // adapter is tenant-scoped; S3 keys are prefixed with tenantId in CloudMetadataAdapter
     return adapter.metadata.readProjectMemory(projectId);
   }
 

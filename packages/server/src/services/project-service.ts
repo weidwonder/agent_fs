@@ -30,8 +30,8 @@ export class ProjectService {
       );
       const project = projResult.rows[0] as Project;
       await client.query(
-        `INSERT INTO directories (project_id, relative_path) VALUES ($1, '.')`,
-        [project.id],
+        `INSERT INTO directories (project_id, tenant_id, relative_path) VALUES ($1, $2, '.')`,
+        [project.id, tenantId],
       );
       await client.query('COMMIT');
       return project;

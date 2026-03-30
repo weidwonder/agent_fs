@@ -54,6 +54,7 @@ CREATE INDEX IF NOT EXISTS idx_projects_tenant ON projects(tenant_id);
 CREATE TABLE IF NOT EXISTS directories (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   parent_dir_id UUID REFERENCES directories(id) ON DELETE CASCADE,
   relative_path TEXT NOT NULL,
   summary TEXT,
@@ -61,6 +62,7 @@ CREATE TABLE IF NOT EXISTS directories (
   UNIQUE (project_id, relative_path)
 );
 CREATE INDEX IF NOT EXISTS idx_directories_project ON directories(project_id);
+CREATE INDEX IF NOT EXISTS idx_directories_tenant ON directories(tenant_id);
 
 CREATE TABLE IF NOT EXISTS files (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

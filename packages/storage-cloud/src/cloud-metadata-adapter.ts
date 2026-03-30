@@ -13,8 +13,8 @@ export class CloudMetadataAdapter implements MetadataAdapter {
   async readIndexMetadata(dirId: string): Promise<IndexMetadata | null> {
     const pool = getPool();
     const result = await pool.query(
-      `SELECT metadata FROM directories WHERE id = $1`,
-      [dirId],
+      `SELECT metadata FROM directories WHERE id = $1 AND tenant_id = $2`,
+      [dirId, this.tenantId],
     );
     if (result.rows.length === 0) return null;
     const meta = result.rows[0].metadata as Record<string, unknown>;
@@ -24,15 +24,15 @@ export class CloudMetadataAdapter implements MetadataAdapter {
 
   async writeIndexMetadata(dirId: string, metadata: IndexMetadata): Promise<void> {
     await getPool().query(
-      `UPDATE directories SET metadata = $1 WHERE id = $2`,
-      [JSON.stringify(metadata), dirId],
+      `UPDATE directories SET metadata = $1 WHERE id = $2 AND tenant_id = $3`,
+      [JSON.stringify(metadata), dirId, this.tenantId],
     );
   }
 
   async deleteIndexMetadata(dirId: string): Promise<void> {
     await getPool().query(
-      `UPDATE directories SET metadata = '{}' WHERE id = $1`,
-      [dirId],
+      `UPDATE directories SET metadata = '{}' WHERE id = $1 AND tenant_id = $2`,
+      [dirId, this.tenantId],
     );
   }
 
@@ -40,8 +40,8 @@ export class CloudMetadataAdapter implements MetadataAdapter {
     dirId: string,
   ): Promise<{ dirId: string; relativePath: string; summary?: string }[]> {
     const result = await getPool().query(
-      `SELECT id, relative_path, summary FROM directories WHERE parent_dir_id = $1`,
-      [dirId],
+      `SELECT id, relative_path, summary FROM directories WHERE parent_dir_id = $1 AND tenant_id = $2`,
+      [dirId, this.tenantId],
     );
     return result.rows.map((row) => ({
       dirId: row.id as string,
