@@ -14,7 +14,7 @@ export async function authRoutes(
   if (jwtSecret) {
     const auth = createAuthMiddleware(jwtSecret);
     app.post('/auth/sse-ticket', { preHandler: auth }, async (request, reply) => {
-      const ticket = createTicket(request.user!);
+      const ticket = await createTicket(request.user!);
       return reply.send({ ticket });
     });
   }

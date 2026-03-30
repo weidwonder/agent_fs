@@ -1,37 +1,53 @@
 // packages/server/src/auth/sse-ticket.ts
-// In-memory short-lived ticket store for SSE authentication.
+// Short-lived ticket store for SSE authentication.
+// Uses PostgreSQL for multi-instance compatibility.
 // Tickets are one-time use with a 60s TTL.
 
 import { randomUUID } from 'node:crypto';
+import { getPool } from '@agent-fs/storage-cloud';
 import type { AuthUser } from '../middleware/auth.js';
 
-interface Ticket {
-  user: AuthUser;
-  expiresAt: number;
-}
-
-const tickets = new Map<string, Ticket>();
 const TICKET_TTL_MS = 60_000;
 
-// Periodically clean expired tickets
-setInterval(() => {
-  const now = Date.now();
-  for (const [id, ticket] of tickets) {
-    if (ticket.expiresAt < now) tickets.delete(id);
-  }
-}, 30_000).unref();
+/** Ensure the sse_tickets table exists (called once at startup). */
+export async function initTicketStore(): Promise<void> {
+  const pool = getPool();
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sse_tickets (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      tenant_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL
+    )
+  `);
+}
 
-export function createTicket(user: AuthUser): string {
+export async function createTicket(user: AuthUser): Promise<string> {
   const id = randomUUID();
-  tickets.set(id, { user, expiresAt: Date.now() + TICKET_TTL_MS });
+  const expiresAt = new Date(Date.now() + TICKET_TTL_MS);
+  const pool = getPool();
+  await pool.query(
+    'INSERT INTO sse_tickets (id, user_id, tenant_id, role, expires_at) VALUES ($1, $2, $3, $4, $5)',
+    [id, user.userId, user.tenantId, user.role, expiresAt],
+  );
   return id;
 }
 
 /** Validate and consume a ticket. Returns user or null if invalid/expired. */
-export function consumeTicket(id: string): AuthUser | null {
-  const ticket = tickets.get(id);
-  if (!ticket) return null;
-  tickets.delete(id);
-  if (ticket.expiresAt < Date.now()) return null;
-  return ticket.user;
+export async function consumeTicket(id: string): Promise<AuthUser | null> {
+  const pool = getPool();
+  const result = await pool.query(
+    'DELETE FROM sse_tickets WHERE id = $1 AND expires_at > now() RETURNING user_id, tenant_id, role',
+    [id],
+  );
+  if (result.rows.length === 0) return null;
+  const row = result.rows[0];
+  return { userId: row.user_id, tenantId: row.tenant_id, role: row.role };
+}
+
+/** Cleanup expired tickets (call periodically or via pg_cron). */
+export async function cleanExpiredTickets(): Promise<void> {
+  const pool = getPool();
+  await pool.query('DELETE FROM sse_tickets WHERE expires_at < now()');
 }

@@ -26,7 +26,7 @@ export function createAuthMiddleware(jwtSecret: string): preHandlerHookHandler {
     // SSE ticket auth — one-time ticket via ?ticket= query param (avoids JWT in URL logs)
     const ticketId = query?.ticket;
     if (ticketId) {
-      const user = consumeTicket(ticketId);
+      const user = await consumeTicket(ticketId);
       if (!user) {
         await reply.status(401).send({ error: 'Invalid or expired SSE ticket' });
         return;
@@ -36,13 +36,10 @@ export function createAuthMiddleware(jwtSecret: string): preHandlerHookHandler {
     }
 
     const authHeader = request.headers.authorization;
-    const queryToken = query?.token;
 
     let token: string;
     if (authHeader?.startsWith('Bearer ')) {
       token = authHeader.slice(7);
-    } else if (queryToken) {
-      token = queryToken;
     } else {
       await reply.status(401).send({ error: 'Missing or invalid Authorization header' });
       return;

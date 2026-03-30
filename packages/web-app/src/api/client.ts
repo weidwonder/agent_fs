@@ -81,13 +81,8 @@ export async function uploadFiles(projectId: string, files: File[]): Promise<unk
 export async function createEventSource(path: string): Promise<EventSource> {
   let ticketParam = '';
   if (accessToken) {
-    try {
-      const data = await api<{ ticket: string }>('/auth/sse-ticket', { method: 'POST' });
-      ticketParam = `?ticket=${encodeURIComponent(data.ticket)}`;
-    } catch {
-      // Fallback: use token in query (less secure but functional)
-      ticketParam = `?token=${encodeURIComponent(accessToken)}`;
-    }
+    const data = await api<{ ticket: string }>('/auth/sse-ticket', { method: 'POST' });
+    ticketParam = `?ticket=${encodeURIComponent(data.ticket)}`;
   }
   return new EventSource(`${BASE_URL}${path}${ticketParam}`);
 }

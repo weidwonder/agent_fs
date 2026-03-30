@@ -24,9 +24,12 @@ COPY packages/plugins/plugin-pdf/package.json packages/plugins/plugin-pdf/
 COPY packages/plugins/plugin-docx/package.json packages/plugins/plugin-docx/
 COPY packages/plugins/plugin-excel/package.json packages/plugins/plugin-excel/
 
-# Install dependencies (including build tools for native modules like nodejieba)
+# Install build tools for native modules (nodejieba) and .NET SDK for DOCX/XLSX plugins
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 make g++ \
+    python3 make g++ wget apt-transport-https ca-certificates \
+    && wget https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb -O /tmp/ms.deb \
+    && dpkg -i /tmp/ms.deb && rm /tmp/ms.deb \
+    && apt-get update && apt-get install -y --no-install-recommends dotnet-sdk-8.0 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pnpm install --frozen-lockfile

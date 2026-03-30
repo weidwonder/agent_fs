@@ -9,6 +9,7 @@ import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import type { ServerConfig } from './config.js';
 import { initDependencies, disposeDependencies } from './di.js';
+import { initTicketStore } from './auth/sse-ticket.js';
 import { AuthService } from './services/auth-service.js';
 import { ProjectService } from './services/project-service.js';
 import { IndexingService } from './services/indexing-service.js';
@@ -32,6 +33,7 @@ export async function createApp(config: ServerConfig) {
   await app.register(multipart);
 
   await initDependencies(config);
+  await initTicketStore();
 
   // Embedding service — global singleton
   const embeddingConfig = buildEmbeddingConfig();
