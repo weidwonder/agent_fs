@@ -55,7 +55,7 @@ export async function createApp(config: ServerConfig) {
   // Register all API routes under /api prefix
   await app.register(
     async (api) => {
-      await authRoutes(api, authService);
+      await authRoutes(api, authService, config.jwtSecret);
       await projectRoutes(api, projectService, config.jwtSecret);
       await documentRoutes(api, indexingService, config.jwtSecret);
       await indexingEventRoutes(api, config.jwtSecret);

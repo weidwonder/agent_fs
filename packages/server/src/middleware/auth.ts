@@ -2,6 +2,7 @@
 
 import type { FastifyRequest, FastifyReply, preHandlerHookHandler } from 'fastify';
 import { verifyToken } from '../auth/jwt.js';
+import { consumeTicket } from '../auth/sse-ticket.js';
 
 export interface AuthUser {
   userId: string;
@@ -20,9 +21,22 @@ export function createAuthMiddleware(jwtSecret: string): preHandlerHookHandler {
     request: FastifyRequest,
     reply: FastifyReply,
   ): Promise<void> {
+    const query = request.query as Record<string, string>;
+
+    // SSE ticket auth — one-time ticket via ?ticket= query param (avoids JWT in URL logs)
+    const ticketId = query?.ticket;
+    if (ticketId) {
+      const user = consumeTicket(ticketId);
+      if (!user) {
+        await reply.status(401).send({ error: 'Invalid or expired SSE ticket' });
+        return;
+      }
+      request.user = user;
+      return;
+    }
+
     const authHeader = request.headers.authorization;
-    // Allow token via query param as fallback for SSE connections
-    const queryToken = (request.query as Record<string, string>)?.token;
+    const queryToken = query?.token;
 
     let token: string;
     if (authHeader?.startsWith('Bearer ')) {

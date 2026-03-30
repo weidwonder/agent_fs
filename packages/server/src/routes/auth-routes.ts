@@ -2,8 +2,22 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { AuthService } from '../services/auth-service.js';
+import { createAuthMiddleware } from '../middleware/auth.js';
+import { createTicket } from '../auth/sse-ticket.js';
 
-export async function authRoutes(app: FastifyInstance, authService: AuthService): Promise<void> {
+export async function authRoutes(
+  app: FastifyInstance,
+  authService: AuthService,
+  jwtSecret?: string,
+): Promise<void> {
+  // POST /auth/sse-ticket — exchange a Bearer JWT for a short-lived one-time SSE ticket
+  if (jwtSecret) {
+    const auth = createAuthMiddleware(jwtSecret);
+    app.post('/auth/sse-ticket', { preHandler: auth }, async (request, reply) => {
+      const ticket = createTicket(request.user!);
+      return reply.send({ ticket });
+    });
+  }
   app.post('/auth/register', async (request, reply) => {
     const { email, password, tenantName } = request.body as {
       email: string;

@@ -67,29 +67,30 @@ export function ProjectDetailPage() {
     loadFiles().finally(() => setLoading(false));
 
     if (id) {
-      const es = createEventSource(`/projects/${id}/indexing-events`);
-      eventSourceRef.current = es;
-      es.onmessage = (e) => {
-        try {
-          const event = JSON.parse(e.data as string) as IndexingEvent;
-          if (!Array.isArray(event.files)) return;
-          const updatedMap = new Map(event.files.map((f) => [f.id, f]));
-          setFiles((prev) =>
-            prev.map((f) => {
-              const updated = updatedMap.get(f.id);
-              if (!updated) return f;
-              return {
-                ...f,
-                status: updated.status as ProjectFile['status'],
-                chunk_count: updated.chunk_count ?? f.chunk_count,
-                indexed_at: updated.indexed_at ?? f.indexed_at,
-              };
-            }),
-          );
-        } catch {
-          // ignore parse errors
-        }
-      };
+      void createEventSource(`/projects/${id}/indexing-events`).then((es) => {
+        eventSourceRef.current = es;
+        es.onmessage = (e) => {
+          try {
+            const event = JSON.parse(e.data as string) as IndexingEvent;
+            if (!Array.isArray(event.files)) return;
+            const updatedMap = new Map(event.files.map((f) => [f.id, f]));
+            setFiles((prev) =>
+              prev.map((f) => {
+                const updated = updatedMap.get(f.id);
+                if (!updated) return f;
+                return {
+                  ...f,
+                  status: updated.status as ProjectFile['status'],
+                  chunk_count: updated.chunk_count ?? f.chunk_count,
+                  indexed_at: updated.indexed_at ?? f.indexed_at,
+                };
+              }),
+            );
+          } catch {
+            // ignore parse errors
+          }
+        };
+      });
     }
 
     return () => {
