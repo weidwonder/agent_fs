@@ -72,15 +72,14 @@ COPY --from=builder /app/packages/plugins packages/plugins
 # Copy migration SQL
 COPY --from=builder /app/packages/storage-cloud/src/migrations packages/storage-cloud/migrations
 
-# NOTE: DOCX/XLSX plugin support requires .NET 8 runtime.
-# To enable, install via Microsoft package feed:
-#   RUN apt-get update && apt-get install -y --no-install-recommends \
-#       wget apt-transport-https && \
-#       wget https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb -O /tmp/ms.deb && \
-#       dpkg -i /tmp/ms.deb && apt-get update && \
-#       apt-get install -y --no-install-recommends dotnet-runtime-8.0 && \
-#       rm -rf /var/lib/apt/lists/* /tmp/ms.deb
-# Without .NET, only Markdown/plain-text files are indexed.
+# Install .NET 8 runtime for DOCX/XLSX plugin support
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget apt-transport-https ca-certificates && \
+    wget https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb -O /tmp/ms.deb && \
+    dpkg -i /tmp/ms.deb && rm /tmp/ms.deb && \
+    apt-get update && apt-get install -y --no-install-recommends dotnet-runtime-8.0 && \
+    rm -rf /var/lib/apt/lists/*
+# Without .NET, DOCX/XLSX plugins are skipped (worker logs a warning); Markdown/PDF still work.
 
 ENV NODE_ENV=production
 EXPOSE 3000
