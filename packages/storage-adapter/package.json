@@ -27,7 +27,21 @@
     "@agent-fs/core": "workspace:*"
   },
   "devDependencies": {
+    "@agent-fs/search": "workspace:*",
+    "@agent-fs/storage": "workspace:*",
     "typescript": "^5.3.0",
     "vitest": "^2.0.0"
+  },
+  "peerDependencies": {
+    "@agent-fs/search": "workspace:*",
+    "@agent-fs/storage": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "@agent-fs/search": {
+      "optional": true
+    },
+    "@agent-fs/storage": {
+      "optional": true
+    }
   }
 }

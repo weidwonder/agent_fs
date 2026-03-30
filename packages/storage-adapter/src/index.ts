@@ -11,3 +11,12 @@ export type {
   MetadataAdapter,
   StorageAdapter,
 } from './types.js';
+
+export {
+  LocalVectorStoreAdapter,
+  LocalInvertedIndexAdapter,
+  LocalArchiveAdapter,
+  LocalMetadataAdapter,
+  createLocalAdapter,
+  type LocalAdapterOptions,
+} from './local/index.js';
