@@ -343,6 +343,33 @@
 | 容器化 | Docker Compose（Server × N + Worker × N + PostgreSQL + MinIO） |
 | Web UI | React + Vite + TailwindCSS |
 
+### 13.8 安全要求
+
+| 要求 | 说明 |
+|------|------|
+| SSRF 防护 | `index_documents` 工具从 URL 下载文档时，必须拦截私有/内网地址（`127.x`、`10.x`、`172.16-31.x`、`192.168.x`、`localhost` 等），协议仅允许 `http:` / `https:`，且对重定向目标同样校验 |
+| 重定向限制 | URL 下载最多允许 3 次重定向，超过时中止请求 |
+| 下载大小限制 | 单文件下载默认上限 100MB，超出时拒绝 |
+| 下载超时 | 单次 HTTP 请求默认超时 30s |
+| 租户隔离强制 | 所有存储查询（向量、倒排、元数据、S3）必须在服务层注入 `tenant_id` 过滤，不得依赖调用方传入 |
+| 输入校验 | 上传文件须校验文件名非空；搜索请求须校验 `query` 非空 |
+
+### 13.9 文档上传
+
+| 要求 | 说明 |
+|------|------|
+| 多文件上传 | `POST /api/projects/:projectId/upload` 支持单次请求上传多个文件（multipart/form-data），每个文件独立排队索引 |
+| 异步索引 | 上传立即返回 202，索引在 Worker 后台执行，通过 SSE `/api/projects/:projectId/indexing-events` 获取进度 |
+| 文件状态流转 | `pending` → `indexing` → `indexed` / `failed`，失败记录 `error_message` 与 `retry_count` |
+
+### 13.10 中文分词
+
+云端倒排索引与本地版一致，使用 `nodejieba` 中文分词（应用层 BM25）。Docker 镜像构建时需安装 `python3 make g++` 以编译 `nodejieba` 原生模块。
+
+### 13.11 向量维度动态适配
+
+`chunks.content_vector` 列的维度在首次批量插入时由 `CloudVectorStoreAdapter.ensureVectorIndex()` 懒加载确定，HNSW 索引随之创建。切换 Embedding 模型导致维度变化时，需清空 `chunks` 表并重新索引。
+
 ---
 
 *文档版本: 3.0*

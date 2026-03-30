@@ -37,6 +37,9 @@
 
 云端知识库实施计划
 └─> docs/plans/2026-03-30-cloud-knowledge-base/plan.md
+
+云端部署指南
+└─> docs/guides/cloud-deployment.md
 ```
 
 ## 项目概述
