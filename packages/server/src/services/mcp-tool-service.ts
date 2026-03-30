@@ -31,18 +31,26 @@ export class McpToolService {
 
   async dirTree(tenantId: string, scope: string, depth: number = 2) {
     const pool = getPool();
+    // scope can be a project_id or a directory id.
+    // Base case: start from the matching directory, or from all root dirs of the project.
     const result = await pool.query(
       `WITH RECURSIVE tree AS (
-         SELECT id, relative_path, summary, parent_dir_id, 0 AS level
-         FROM directories
-         WHERE (id = $1 OR project_id = $1)
-           AND project_id IN (SELECT id FROM projects WHERE tenant_id = $2)
-           AND parent_dir_id IS NULL
+         SELECT d.id, d.relative_path, d.summary, d.parent_dir_id, 0 AS level
+         FROM directories d
+         WHERE d.tenant_id = $2
+           AND (
+             d.id = $1::uuid
+             OR (
+               d.project_id = $1::uuid
+               AND d.parent_dir_id IS NULL
+             )
+           )
          UNION ALL
          SELECT d.id, d.relative_path, d.summary, d.parent_dir_id, t.level + 1
          FROM directories d
          JOIN tree t ON d.parent_dir_id = t.id
-         WHERE t.level < $3
+         WHERE d.tenant_id = $2
+           AND t.level < $3
        )
        SELECT t.id, t.relative_path, t.summary, t.parent_dir_id, t.level,
               COALESCE(
