@@ -395,6 +395,18 @@ importers:
       '@agent-fs/llm':
         specifier: workspace:*
         version: link:../llm
+      '@agent-fs/plugin-docx':
+        specifier: workspace:*
+        version: link:../plugins/plugin-docx
+      '@agent-fs/plugin-excel':
+        specifier: workspace:*
+        version: link:../plugins/plugin-excel
+      '@agent-fs/plugin-markdown':
+        specifier: workspace:*
+        version: link:../plugins/plugin-markdown
+      '@agent-fs/plugin-pdf':
+        specifier: workspace:*
+        version: link:../plugins/plugin-pdf
       '@agent-fs/storage-adapter':
         specifier: workspace:*
         version: link:../storage-adapter
@@ -410,6 +422,9 @@ importers:
       '@fastify/static':
         specifier: ^8.0.0
         version: 8.3.0
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.26.0
+        version: 1.26.0(zod@4.3.6)
       bcrypt:
         specifier: ^5.1.0
         version: 5.1.1(encoding@0.1.13)

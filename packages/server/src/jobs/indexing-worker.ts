@@ -4,7 +4,6 @@ import PgBoss from 'pg-boss';
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import { tmpdir } from 'node:os';
-import { randomUUID } from 'node:crypto';
 import {
   initDb,
   initS3,
@@ -17,6 +16,10 @@ import { EmbeddingService } from '@agent-fs/llm';
 import { SummaryService } from '@agent-fs/llm';
 import { PluginManager } from '@agent-fs/indexer';
 import { MarkdownChunker } from '@agent-fs/core';
+import { createMarkdownPlugin } from '@agent-fs/plugin-markdown';
+import { createPDFPlugin } from '@agent-fs/plugin-pdf';
+import { createDocxPlugin } from '@agent-fs/plugin-docx';
+import { createExcelPlugin } from '@agent-fs/plugin-excel';
 import type { VectorDocument } from '@agent-fs/core';
 import type { InvertedIndexEntry } from '@agent-fs/storage-adapter';
 import { JOB_INDEX_FILE, type IndexFileJob } from './queue.js';
@@ -40,7 +43,7 @@ export async function startWorker(config: ServerConfig): Promise<void> {
   const summaryConfig = buildLLMConfig();
   const summaryService = summaryConfig ? new SummaryService(summaryConfig) : null;
 
-  const pluginManager = buildPluginManager();
+  const pluginManager = await buildPluginManager();
 
   const chunker = new MarkdownChunker({ minTokens: 200, maxTokens: 800 });
 
@@ -221,41 +224,29 @@ function buildLLMConfig() {
   return { provider: 'openai-compatible' as const, base_url: baseUrl, api_key: apiKey, model };
 }
 
-function buildPluginManager(): PluginManager {
-  // PluginManager with no plugins registered — plugins must be loaded dynamically
-  // In production, load plugins from @agent-fs/plugins package
+async function buildPluginManager(): Promise<PluginManager> {
   const manager = new PluginManager();
-  tryLoadPlugins(manager);
+
+  // Register markdown plugin (always available)
+  manager.register(createMarkdownPlugin());
+
+  // Register PDF plugin (always available)
+  manager.register(createPDFPlugin());
+
+  // Register DOCX and Excel plugins (require .NET runtime — skip if unavailable)
+  try {
+    manager.register(createDocxPlugin());
+  } catch (err) {
+    console.warn('DOCX plugin unavailable (requires .NET runtime):', (err as Error).message);
+  }
+
+  try {
+    manager.register(createExcelPlugin());
+  } catch (err) {
+    console.warn('Excel plugin unavailable (requires .NET runtime):', (err as Error).message);
+  }
+
+  await manager.initAll();
   return manager;
 }
 
-function tryLoadPlugins(manager: PluginManager): void {
-  // Attempt to load plugins package if available
-  try {
-    // Dynamic require to avoid hard dependency at compile time
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const plugins = require('@agent-fs/plugins');
-    if (Array.isArray(plugins.default)) {
-      for (const plugin of plugins.default) {
-        manager.register(plugin);
-      }
-    } else if (plugins.registerPlugins) {
-      plugins.registerPlugins(manager);
-    }
-  } catch {
-    console.warn('No @agent-fs/plugins found — only plain text files will be indexed');
-    // Register a simple plain-text fallback
-    manager.register({
-      name: 'plain-text',
-      supportedExtensions: ['txt', 'md', 'markdown'],
-      async toMarkdown(filePath: string) {
-        const { readFileSync } = await import('node:fs');
-        const content = readFileSync(filePath, 'utf-8');
-        return { markdown: content, mapping: [] };
-      },
-    });
-  }
-}
-
-// Suppress unused import warning
-void randomUUID;
