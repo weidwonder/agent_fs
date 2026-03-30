@@ -118,22 +118,22 @@ export class CloudInvertedIndexAdapter implements InvertedIndexAdapter {
 
     const { terms, dirIds, topK } = params;
 
-    // Get BM25 stats for scoped directories
+    // Get BM25 stats for scoped directories (tenant-isolated)
     let statsRows: { total: string; avg_len: string }[];
     if (dirIds.length > 0) {
       const r = await pool.query(
         `SELECT SUM(total_docs) AS total,
                 SUM(total_docs * avg_doc_length) / NULLIF(SUM(total_docs), 0) AS avg_len
-         FROM inverted_stats WHERE dir_id = ANY($1)`,
-        [dirIds],
+         FROM inverted_stats WHERE dir_id = ANY($1) AND tenant_id = $2`,
+        [dirIds, this.tenantId],
       );
       statsRows = r.rows;
     } else {
       const r = await pool.query(
         `SELECT SUM(total_docs) AS total,
                 SUM(total_docs * avg_doc_length) / NULLIF(SUM(total_docs), 0) AS avg_len
-         FROM inverted_stats`,
-        [],
+         FROM inverted_stats WHERE tenant_id = $1`,
+        [this.tenantId],
       );
       statsRows = r.rows;
     }
@@ -234,25 +234,28 @@ export class CloudInvertedIndexAdapter implements InvertedIndexAdapter {
               COALESCE(AVG(doc_length), 0) AS avg_doc_length
        FROM (
          SELECT file_id, SUM(tf) AS doc_length
-         FROM inverted_terms WHERE dir_id = $1
+         FROM inverted_terms WHERE dir_id = $1 AND tenant_id = $2
          GROUP BY file_id
        ) sub`,
-      [dirId],
+      [dirId, this.tenantId],
     );
     const { total_docs, avg_doc_length } = result.rows[0] as {
       total_docs: string;
       avg_doc_length: string;
     };
     if (parseInt(total_docs) === 0) {
-      await pool.query('DELETE FROM inverted_stats WHERE dir_id = $1', [dirId]);
+      await pool.query(
+        'DELETE FROM inverted_stats WHERE dir_id = $1 AND tenant_id = $2',
+        [dirId, this.tenantId],
+      );
     } else {
       await pool.query(
-        `INSERT INTO inverted_stats (dir_id, total_docs, avg_doc_length)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (dir_id) DO UPDATE SET
+        `INSERT INTO inverted_stats (dir_id, tenant_id, total_docs, avg_doc_length)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (dir_id, tenant_id) DO UPDATE SET
            total_docs = EXCLUDED.total_docs,
            avg_doc_length = EXCLUDED.avg_doc_length`,
-        [dirId, total_docs, avg_doc_length],
+        [dirId, this.tenantId, total_docs, avg_doc_length],
       );
     }
   }

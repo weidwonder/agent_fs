@@ -16,10 +16,17 @@ interface FilesResponse {
   files: ProjectFile[];
 }
 
-interface IndexingEvent {
-  fileId: string;
+interface IndexingEventFile {
+  id: string;
+  name: string;
   status: string;
-  progress?: number;
+  chunk_count: number;
+  error_message: string | null;
+  indexed_at: string | null;
+}
+
+interface IndexingEvent {
+  files: IndexingEventFile[];
 }
 
 const STATUS_CONFIG: Record<string, { label: string; className: string }> = {
@@ -65,12 +72,19 @@ export function ProjectDetailPage() {
       es.onmessage = (e) => {
         try {
           const event = JSON.parse(e.data as string) as IndexingEvent;
+          if (!Array.isArray(event.files)) return;
+          const updatedMap = new Map(event.files.map((f) => [f.id, f]));
           setFiles((prev) =>
-            prev.map((f) =>
-              f.id === event.fileId
-                ? { ...f, status: event.status as ProjectFile['status'] }
-                : f,
-            ),
+            prev.map((f) => {
+              const updated = updatedMap.get(f.id);
+              if (!updated) return f;
+              return {
+                ...f,
+                status: updated.status as ProjectFile['status'],
+                chunk_count: updated.chunk_count ?? f.chunk_count,
+                indexed_at: updated.indexed_at ?? f.indexed_at,
+              };
+            }),
           );
         } catch {
           // ignore parse errors

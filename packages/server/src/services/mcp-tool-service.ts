@@ -4,6 +4,7 @@ import type { StorageAdapter } from '@agent-fs/storage-adapter';
 import { getPool } from '@agent-fs/storage-cloud';
 import type { SearchService } from './search-service.js';
 import type { IndexingService } from './indexing-service.js';
+import { safeFetch } from '../utils/safe-fetch.js';
 
 export class McpToolService {
   constructor(
@@ -125,7 +126,7 @@ export class McpToolService {
 
     for (const url of urls) {
       try {
-        const response = await fetch(url);
+        const response = await safeFetch(url);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const buffer = Buffer.from(await response.arrayBuffer());
         const fileName =

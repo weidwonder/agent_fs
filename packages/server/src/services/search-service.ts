@@ -106,7 +106,7 @@ export class SearchService {
         : [];
     const docMap = new Map(extraDocs.map((d) => [d.chunk_id, d]));
 
-    const results: SearchResult[] = fused.map((f) => {
+    const rawResults: SearchResult[] = fused.map((f) => {
       const doc = f.vectorDoc ?? docMap.get(f.chunkId);
       return {
         chunkId: f.chunkId,
@@ -119,6 +119,19 @@ export class SearchService {
         lineEnd: doc?.chunk_line_end,
       };
     });
+
+    // Filter out chunks from files that are not fully indexed
+    const pool = getPool();
+    const fileIds = [...new Set(rawResults.map((r) => r.fileId).filter(Boolean))] as string[];
+    let validFileIdSet = new Set<string>();
+    if (fileIds.length > 0) {
+      const validFiles = await pool.query(
+        `SELECT id FROM files WHERE id = ANY($1) AND status = 'indexed' AND tenant_id = $2`,
+        [fileIds, tenantId],
+      );
+      validFileIdSet = new Set(validFiles.rows.map((r: { id: string }) => r.id));
+    }
+    const results = rawResults.filter((r) => r.fileId && validFileIdSet.has(r.fileId));
 
     return { results };
   }

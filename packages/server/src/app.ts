@@ -52,11 +52,18 @@ export async function createApp(config: ServerConfig) {
   const searchService = new SearchService(embeddingService);
   const mcpToolService = new McpToolService(searchService, indexingService);
 
-  await authRoutes(app, authService);
-  await projectRoutes(app, projectService, config.jwtSecret);
-  await documentRoutes(app, indexingService, config.jwtSecret);
-  await indexingEventRoutes(app, config.jwtSecret);
-  await searchRoutes(app, searchService, config.jwtSecret);
+  // Register all API routes under /api prefix
+  await app.register(
+    async (api) => {
+      await authRoutes(api, authService);
+      await projectRoutes(api, projectService, config.jwtSecret);
+      await documentRoutes(api, indexingService, config.jwtSecret);
+      await indexingEventRoutes(api, config.jwtSecret);
+      await searchRoutes(api, searchService, config.jwtSecret);
+    },
+    { prefix: '/api' },
+  );
+
   await mcpRoutes(app, config, mcpToolService);
 
   app.get('/health', async () => ({ status: 'ok' }));
@@ -67,11 +74,9 @@ export async function createApp(config: ServerConfig) {
     await app.register(fastifyStatic, { root: webAppDist, prefix: '/' });
     app.setNotFoundHandler((request, reply) => {
       if (
-        request.url.startsWith('/auth') ||
-        request.url.startsWith('/projects') ||
-        request.url.startsWith('/search') ||
+        request.url.startsWith('/api/') ||
         request.url.startsWith('/mcp') ||
-        request.url.startsWith('/health')
+        request.url === '/health'
       ) {
         reply.status(404).send({ error: 'Not found' });
       } else {

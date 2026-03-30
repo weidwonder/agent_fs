@@ -186,6 +186,22 @@ async function processJob(
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Failed to index ${fileName}:`, error);
+
+    // Cleanup partial writes so dirty data is not searchable
+    try {
+      const cleanupAdapter = createCloudAdapter({ tenantId });
+      await cleanupAdapter.init();
+      try {
+        await cleanupAdapter.vector.deleteByFileId(fileId);
+        await cleanupAdapter.invertedIndex.removeFile(fileId);
+        await cleanupAdapter.archive.delete(fileId);
+      } finally {
+        await cleanupAdapter.close();
+      }
+    } catch {
+      // Best-effort cleanup — do not mask original error
+    }
+
     await pool.query(
       "UPDATE files SET status = 'failed', error_message = $2, updated_at = now() WHERE id = $1",
       [fileId, message.slice(0, 500)],

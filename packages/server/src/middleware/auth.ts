@@ -21,12 +21,18 @@ export function createAuthMiddleware(jwtSecret: string): preHandlerHookHandler {
     reply: FastifyReply,
   ): Promise<void> {
     const authHeader = request.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
+    // Allow token via query param as fallback for SSE connections
+    const queryToken = (request.query as Record<string, string>)?.token;
+
+    let token: string;
+    if (authHeader?.startsWith('Bearer ')) {
+      token = authHeader.slice(7);
+    } else if (queryToken) {
+      token = queryToken;
+    } else {
       await reply.status(401).send({ error: 'Missing or invalid Authorization header' });
       return;
     }
-
-    const token = authHeader.slice(7);
     try {
       const payload = verifyToken(token, jwtSecret) as any;
       if (payload.type !== 'access') {

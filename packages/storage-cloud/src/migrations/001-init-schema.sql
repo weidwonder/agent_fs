@@ -126,7 +126,10 @@ CREATE INDEX IF NOT EXISTS idx_inverted_tenant ON inverted_terms(tenant_id);
 
 -- Per-directory stats for BM25 normalization
 CREATE TABLE IF NOT EXISTS inverted_stats (
-  dir_id UUID PRIMARY KEY REFERENCES directories(id) ON DELETE CASCADE,
+  dir_id UUID NOT NULL REFERENCES directories(id) ON DELETE CASCADE,
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   total_docs INT NOT NULL DEFAULT 0,
-  avg_doc_length REAL NOT NULL DEFAULT 0
+  avg_doc_length REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY (dir_id, tenant_id)
 );
+CREATE INDEX IF NOT EXISTS idx_inverted_stats_tenant ON inverted_stats(tenant_id);

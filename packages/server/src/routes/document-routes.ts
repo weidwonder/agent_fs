@@ -11,7 +11,7 @@ export async function documentRoutes(
 ): Promise<void> {
   const auth = createAuthMiddleware(jwtSecret);
 
-  // POST /projects/:projectId/upload — multipart file upload
+  // POST /projects/:projectId/upload — multipart file upload (multiple files)
   app.post(
     '/projects/:projectId/upload',
     { preHandler: auth },
@@ -19,25 +19,27 @@ export async function documentRoutes(
       const { projectId } = request.params as { projectId: string };
       const tenantId = request.user!.tenantId;
 
-      const data = await request.file();
-      if (!data) {
-        return reply.status(400).send({ error: 'No file provided' });
+      const results: { fileId: string; fileName: string }[] = [];
+      for await (const part of request.files()) {
+        const fileChunks: Buffer[] = [];
+        for await (const chunk of part.file) {
+          fileChunks.push(chunk);
+        }
+        const fileBuffer = Buffer.concat(fileChunks);
+        const result = await indexingService.uploadAndEnqueue(
+          tenantId,
+          projectId,
+          part.filename,
+          fileBuffer,
+        );
+        results.push({ fileId: result.fileId, fileName: part.filename });
       }
 
-      const chunks: Buffer[] = [];
-      for await (const chunk of data.file) {
-        chunks.push(chunk);
+      if (results.length === 0) {
+        return reply.status(400).send({ error: 'No files provided' });
       }
-      const fileBuffer = Buffer.concat(chunks);
 
-      const result = await indexingService.uploadAndEnqueue(
-        tenantId,
-        projectId,
-        data.filename,
-        fileBuffer,
-      );
-
-      return reply.status(202).send(result);
+      return reply.status(202).send({ files: results });
     },
   );
 
