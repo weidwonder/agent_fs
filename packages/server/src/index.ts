@@ -19,9 +19,8 @@ if (mode === 'server') {
     process.exit(1);
   }
 } else if (mode === 'worker') {
-  // Placeholder for Phase 4B worker
-  console.log('Worker mode: not yet implemented');
-  process.exit(0);
+  const { startWorker } = await import('./jobs/indexing-worker.js');
+  await startWorker(config);
 } else {
   console.error(`Unknown mode: ${mode}`);
   process.exit(1);
