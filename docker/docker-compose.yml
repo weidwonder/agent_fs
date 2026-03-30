@@ -1,0 +1,115 @@
+# docker/docker-compose.yml
+# Production-like: server, worker, PostgreSQL, MinIO
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-agentfs}
+      POSTGRES_USER: ${POSTGRES_USER:-agentfs}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "${PG_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER:-agentfs}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
+    volumes:
+      - miniodata:/data
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Create default bucket on startup
+  minio-init:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 ${S3_ACCESS_KEY:-minioadmin} ${S3_SECRET_KEY:-minioadmin};
+        mc mb local/${S3_BUCKET:-agentfs} --ignore-existing;
+        echo 'MinIO bucket ready.';
+      "
+
+  # Run database migration
+  migrate:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-agentfs}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-agentfs}
+    command: >
+      node -e "
+        const { readFileSync } = require('fs');
+        const { Pool } = require('pg');
+        const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+        const sql = readFileSync('packages/storage-cloud/migrations/001-init-schema.sql', 'utf-8');
+        pool.query(sql)
+          .then(() => { console.log('Migration complete'); return pool.end(); })
+          .catch(e => { console.error('Migration failed:', e.message); process.exit(1); });
+      "
+
+  server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      PORT: "3000"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-agentfs}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-agentfs}
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: ${S3_BUCKET:-agentfs}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-15m}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+    command: ["node", "packages/server/dist/index.js", "--mode=worker"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-agentfs}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-agentfs}
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: ${S3_BUCKET:-agentfs}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  miniodata:
