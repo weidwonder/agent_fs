@@ -1,0 +1,35 @@
+{
+  "name": "@agent-fs/storage-cloud",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src/migrations"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@agent-fs/core": "workspace:*",
+    "@agent-fs/storage-adapter": "workspace:*",
+    "@aws-sdk/client-s3": "^3.500.0",
+    "nodejieba": "^2.6.0",
+    "pg": "^8.13.0",
+    "pgvector": "^0.2.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.0",
+    "typescript": "^5.3.0",
+    "vitest": "^4.0.0"
+  }
+}
