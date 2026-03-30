@@ -20,6 +20,7 @@
     "@agent-fs/core": "workspace:*",
     "@agent-fs/storage": "workspace:*",
     "@agent-fs/search": "workspace:*",
+    "@agent-fs/storage-adapter": "workspace:*",
     "@agent-fs/llm": "workspace:*",
     "@agent-fs/plugin-markdown": "workspace:*",
     "@agent-fs/plugin-pdf": "workspace:*",

@@ -4,7 +4,7 @@ import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync } fr
 import type { Registry, IndexMetadata, Config, FileMetadata } from '@agent-fs/core';
 import { loadConfig, MarkdownChunker } from '@agent-fs/core';
 import { createEmbeddingService, createSummaryService } from '@agent-fs/llm';
-import { createVectorStore, InvertedIndex } from '@agent-fs/search';
+import { createLocalAdapter, LocalArchiveAdapter } from '@agent-fs/storage-adapter';
 import { createAFDStorage } from '@agent-fs/storage';
 import { MarkdownPlugin } from '@agent-fs/plugin-markdown';
 import { PDFPlugin } from '@agent-fs/plugin-pdf';
@@ -67,32 +67,25 @@ export class Indexer {
       maxConcurrentRequests: this.config.summary?.parallel_requests,
     });
 
-    const vectorStore = createVectorStore({
-      storagePath: join(storagePath, 'vectors'),
+    const storage = createLocalAdapter({
+      storagePath,
       dimension: embeddingService.getDimension(),
     });
-    await vectorStore.init();
+    await storage.init();
 
-    const invertedIndex = new InvertedIndex({
-      dbPath: join(storagePath, 'inverted-index', 'inverted-index.db'),
-    });
-    await invertedIndex.init();
-
-    const afdStorage = createAFDStorage({
-      documentsDir: join(dirPath, '.fs_index', 'documents'),
-    });
-    const afdStorageByDir = new Map<string, ReturnType<typeof createAFDStorage>>();
-    const afdStorageResolver = (targetDirPath: string) => {
-      const cached = afdStorageByDir.get(targetDirPath);
+    const archiveByDir = new Map<string, LocalArchiveAdapter>();
+    const archiveResolver = (targetDirPath: string): LocalArchiveAdapter => {
+      const cached = archiveByDir.get(targetDirPath);
       if (cached) {
         return cached;
       }
 
-      const storage = createAFDStorage({
+      const afdStorage = createAFDStorage({
         documentsDir: join(targetDirPath, '.fs_index', 'documents'),
       });
-      afdStorageByDir.set(targetDirPath, storage);
-      return storage;
+      const adapter = new LocalArchiveAdapter(afdStorage);
+      archiveByDir.set(targetDirPath, adapter);
+      return adapter;
     };
 
     // 运行流水线
@@ -103,10 +96,8 @@ export class Indexer {
       pluginManager: this.pluginManager,
       embeddingService,
       summaryService,
-      vectorStore,
-      invertedIndex,
-      afdStorage,
-      afdStorageResolver,
+      storage,
+      archiveResolver,
       chunkOptions: {
         minTokens: chunkSize.min_tokens,
         maxTokens: chunkSize.max_tokens,
@@ -140,8 +131,7 @@ export class Indexer {
     this.updateRegistry(metadata);
 
     // 清理
-    await invertedIndex.close();
-    await vectorStore.close();
+    await storage.close();
     await embeddingService.dispose();
 
     return metadata;

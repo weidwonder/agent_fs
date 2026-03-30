@@ -5,6 +5,11 @@ import { join } from 'node:path';
 import type { IndexMetadata } from '@agent-fs/core';
 import { createVectorStore, InvertedIndex } from '@agent-fs/search';
 import { createAFDStorage } from '@agent-fs/storage';
+import {
+  LocalVectorStoreAdapter,
+  LocalInvertedIndexAdapter,
+  LocalArchiveAdapter,
+} from '@agent-fs/storage-adapter';
 import { MarkdownPlugin } from '@agent-fs/plugin-markdown';
 import { PluginManager } from './plugin-manager';
 import { IndexPipeline } from './pipeline';
@@ -22,7 +27,6 @@ interface IntegrationContext {
   };
   vectorStore: ReturnType<typeof createVectorStore>;
   invertedIndex: InvertedIndex;
-  afdStorage: ReturnType<typeof createAFDStorage>;
 }
 
 function readIndexMetadata(dirPath: string): IndexMetadata {
@@ -81,10 +85,6 @@ async function createContext(): Promise<IntegrationContext> {
   });
   await invertedIndex.init();
 
-  const afdStorage = createAFDStorage({
-    documentsDir: join(projectDir, '.fs_index', 'documents'),
-  });
-
   return {
     projectDir,
     storageDir,
@@ -93,23 +93,32 @@ async function createContext(): Promise<IntegrationContext> {
     summaryService,
     vectorStore,
     invertedIndex,
-    afdStorage,
   };
 }
 
 function createPipeline(context: IntegrationContext): IndexPipeline {
-  const storageCache = new Map<string, ReturnType<typeof createAFDStorage>>();
-  const getStorage = (dirPath: string) => {
-    const cached = storageCache.get(dirPath);
+  const archiveCache = new Map<string, LocalArchiveAdapter>();
+  const archiveResolver = (dirPath: string): LocalArchiveAdapter => {
+    const cached = archiveCache.get(dirPath);
     if (cached) {
       return cached;
     }
 
-    const storage = createAFDStorage({
+    const afdStorage = createAFDStorage({
       documentsDir: join(dirPath, '.fs_index', 'documents'),
     });
-    storageCache.set(dirPath, storage);
-    return storage;
+    const adapter = new LocalArchiveAdapter(afdStorage);
+    archiveCache.set(dirPath, adapter);
+    return adapter;
+  };
+
+  const storage = {
+    vector: new LocalVectorStoreAdapter(context.vectorStore),
+    invertedIndex: new LocalInvertedIndexAdapter(context.invertedIndex),
+    archive: archiveResolver(context.projectDir),
+    metadata: {} as any,
+    init: async () => {},
+    close: async () => {},
   };
 
   return new IndexPipeline({
@@ -117,10 +126,8 @@ function createPipeline(context: IntegrationContext): IndexPipeline {
     pluginManager: context.pluginManager,
     embeddingService: context.embeddingService as any,
     summaryService: context.summaryService as any,
-    vectorStore: context.vectorStore,
-    invertedIndex: context.invertedIndex,
-    afdStorage: context.afdStorage,
-    afdStorageResolver: getStorage,
+    storage,
+    archiveResolver,
     chunkOptions: { minTokens: 1, maxTokens: 200 },
     summaryOptions: {
       mode: 'skip',

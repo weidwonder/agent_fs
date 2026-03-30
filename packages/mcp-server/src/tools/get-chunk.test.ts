@@ -28,22 +28,23 @@ vi.mock('node:os', async () => {
 });
 
 vi.mock('./search.js', () => ({
-  getVectorStore: () => ({
-    getByChunkIds: async (chunkIds: string[]) =>
-      chunkIds
-        .map((chunkId) => state.vectorDocs.get(chunkId))
-        .filter((item): item is NonNullable<typeof item> => Boolean(item)),
-  }),
-}));
-
-vi.mock('@agent-fs/storage', () => ({
-  createAFDStorage: ({ documentsDir }: { documentsDir: string }) => ({
-    readText: async (fileId: string, filePath: string) => {
-      const data = state.afdFiles.get(`${documentsDir}:${fileId}`);
-      if (!data || filePath !== 'content.md') {
-        throw new Error(`missing AFD text: ${fileId}/${filePath}`);
-      }
-      return data.content;
+  getStorageAdapter: () => ({
+    vector: {
+      getByChunkIds: async (chunkIds: string[]) =>
+        chunkIds
+          .map((chunkId) => state.vectorDocs.get(chunkId))
+          .filter((item): item is NonNullable<typeof item> => Boolean(item)),
+    },
+    archive: {
+      read: async (fileId: string, fileName: string) => {
+        // fileId here is afdName (e.g. 'a.md'), find matching entry in afdFiles
+        for (const [key, value] of state.afdFiles.entries()) {
+          if (key.endsWith(`:${fileId}`) && fileName === 'content.md') {
+            return value.content;
+          }
+        }
+        throw new Error(`missing AFD: ${fileId}/${fileName}`);
+      },
     },
   }),
 }));

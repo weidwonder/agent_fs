@@ -20,33 +20,6 @@ vi.mock('node:os', async () => {
   };
 });
 
-vi.mock('@agent-fs/storage', () => ({
-  createAFDStorage: ({ documentsDir }: { documentsDir: string }) => ({
-    readText: async (fileId: string, filePath: string) => {
-      const data = state.afdFiles.get(`${documentsDir}:${fileId}`);
-      if (!data || filePath !== 'content.md') {
-        throw new Error(`missing AFD text: ${fileId}/${filePath}`);
-      }
-      return data.content;
-    },
-    read: async (fileId: string, filePath: string) => {
-      const data = state.afdFiles.get(`${documentsDir}:${fileId}`);
-      if (!data || (filePath !== 'summaries.json' && filePath !== 'metadata.json')) {
-        throw new Error(`missing AFD buffer: ${fileId}/${filePath}`);
-      }
-      if (filePath === 'summaries.json') {
-        return Buffer.from(JSON.stringify(data.summaries), 'utf-8');
-      }
-      return Buffer.from(
-        JSON.stringify({
-          mapping: data.mapping ?? [],
-        }),
-        'utf-8'
-      );
-    },
-  }),
-}));
-
 vi.mock('@agent-fs/search', () => ({
   createVectorStore: vi.fn(),
   InvertedIndex: class {},
@@ -133,11 +106,61 @@ vi.mock('@agent-fs/search', () => ({
   },
 }));
 
+vi.mock('@agent-fs/storage-adapter', () => ({
+  createLocalAdapter: vi.fn().mockReturnValue(null),
+}));
+
 import {
   search,
   __resetSearchServicesForTest,
   __setSearchServicesForTest,
 } from './search';
+
+// Helper to build a storageAdapter mock from old-style vectorStore+invertedIndex mocks
+function makeAdapterMock(opts: {
+  vectorResults?: Array<{ chunk_id: string; score: number; document: Record<string, unknown> }>;
+  invertedResults?: Array<{ chunkId: string; fileId: string; dirId?: string; locator: string; score: number }>;
+  getByChunkIdsResult?: Array<Record<string, unknown>>;
+  searchByVector?: ReturnType<typeof vi.fn>;
+  getByChunkIds?: ReturnType<typeof vi.fn>;
+  invertedSearch?: ReturnType<typeof vi.fn>;
+}) {
+  const vectorResults = opts.vectorResults ?? [];
+  const invertedResults = opts.invertedResults ?? [];
+
+  return {
+    vector: {
+      searchByVector: opts.searchByVector ?? vi.fn().mockResolvedValue(
+        vectorResults.map((r) => ({
+          chunkId: r.chunk_id,
+          score: r.score,
+          document: r.document,
+        }))
+      ),
+      getByChunkIds: opts.getByChunkIds ?? vi.fn().mockResolvedValue(opts.getByChunkIdsResult ?? []),
+    },
+    invertedIndex: {
+      search: opts.invertedSearch ?? vi.fn().mockResolvedValue(invertedResults),
+    },
+    archive: {
+      read: vi.fn().mockImplementation(async (fileId: string, filePath: string) => {
+        // Look up from state using any documentsDir key that matches this fileId
+        for (const [key, data] of state.afdFiles) {
+          const keyFileId = key.split(':').pop();
+          if (keyFileId === fileId) {
+            if (filePath === 'content.md') return data.content;
+            if (filePath === 'summaries.json') return JSON.stringify(data.summaries);
+            if (filePath === 'metadata.json') return JSON.stringify({ mapping: data.mapping ?? [] });
+          }
+        }
+        throw new Error(`missing AFD: ${fileId}/${filePath}`);
+      }),
+    },
+    init: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn().mockResolvedValue(undefined),
+    metadata: {} as any,
+  };
+}
 
 describe('search', () => {
   let baseDir: string;
@@ -213,8 +236,7 @@ describe('search', () => {
       )
     );
 
-    const documentsDir = join(projectDir, '.fs_index', 'documents');
-    state.afdFiles.set(`${documentsDir}:a.md`, {
+    state.afdFiles.set(`${join(projectDir, '.fs_index', 'documents')}:a.md`, {
       content: '第一行\n第二行\n第三行',
       summaries: { documentSummary: 'doc summary' },
     });
@@ -226,10 +248,10 @@ describe('search', () => {
   });
 
   it('融合结果会从 AFD 补全文本和摘要', async () => {
-    const invertedCalls: Array<{ query: string; options: { dirIds?: string[]; topK?: number } }> = [];
-    const searchByContent = vi.fn().mockResolvedValue([
+    const invertedCalls: Array<{ terms: string[]; dirIds: string[]; topK: number }> = [];
+    const searchByVector = vi.fn().mockResolvedValue([
       {
-        chunk_id: 'f1:0000',
+        chunkId: 'f1:0000',
         score: 0.9,
         document: {
           chunk_id: 'f1:0000',
@@ -251,22 +273,21 @@ describe('search', () => {
       embeddingService: {
         embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
       } as any,
-      vectorStore: {
-        searchByContent,
-        getByChunkIds: vi.fn().mockResolvedValue([]),
-      } as any,
-      invertedIndex: {
-        search: vi.fn().mockImplementation(async (query: string, options: { dirIds?: string[]; topK?: number }) => {
-          invertedCalls.push({ query, options });
-          return [
-            {
-              chunkId: 'f1:0001',
-              fileId: 'f1',
-              dirId: 'd1',
-              locator: 'line:2-2',
-              score: 1.1,
-            },
-          ];
+      storageAdapter: {
+        ...makeAdapterMock({
+          searchByVector,
+          invertedSearch: vi.fn().mockImplementation(async (params: { terms: string[]; dirIds: string[]; topK: number }) => {
+            invertedCalls.push(params);
+            return [
+              {
+                chunkId: 'f1:0001',
+                fileId: 'f1',
+                dirId: 'd1',
+                locator: 'line:2-2',
+                score: 1.1,
+              },
+            ];
+          }),
         }),
       } as any,
     });
@@ -285,8 +306,8 @@ describe('search', () => {
     expect(result.results[0].aggregated_chunk_ids).toEqual(['f1:0000', 'f1:0001']);
 
     expect(invertedCalls).toHaveLength(1);
-    expect(invertedCalls[0].options.dirIds).toEqual(['d1']);
-    expect(searchByContent).toHaveBeenCalledTimes(1);
+    expect(invertedCalls[0].dirIds).toEqual(['d1']);
+    expect(searchByVector).toHaveBeenCalledTimes(1);
   });
 
   it('同文件关键词命中被聚合后，应优先选中关键词快照对应的 chunk 作为代表结果', async () => {
@@ -300,8 +321,8 @@ describe('search', () => {
       embeddingService: {
         embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
       } as any,
-      vectorStore: {
-        searchByContent: vi.fn().mockResolvedValue([
+      storageAdapter: makeAdapterMock({
+        vectorResults: [
           {
             chunk_id: 'f1:0000',
             score: 0.9,
@@ -319,11 +340,8 @@ describe('search', () => {
               deleted_at: '',
             },
           },
-        ]),
-        getByChunkIds: vi.fn().mockResolvedValue([]),
-      } as any,
-      invertedIndex: {
-        search: vi.fn().mockResolvedValue([
+        ],
+        invertedResults: [
           {
             chunkId: 'f1:0001',
             fileId: 'f1',
@@ -331,8 +349,8 @@ describe('search', () => {
             locator: 'line:2-2',
             score: 1.1,
           },
-        ]),
-      } as any,
+        ],
+      }) as any,
     });
 
     const result = await search({
@@ -443,8 +461,8 @@ describe('search', () => {
       embeddingService: {
         embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
       } as any,
-      vectorStore: {
-        searchByContent: vi.fn().mockResolvedValue([
+      storageAdapter: makeAdapterMock({
+        vectorResults: [
           {
             chunk_id: 'f1:0000',
             score: 0.91,
@@ -473,11 +491,8 @@ describe('search', () => {
               locator: 'line:1-3',
             },
           },
-        ]),
-        getByChunkIds: vi.fn().mockResolvedValue([]),
-      } as any,
-      invertedIndex: {
-        search: vi.fn().mockResolvedValue([
+        ],
+        invertedResults: [
           {
             chunkId: 'f1:0000',
             fileId: 'f1',
@@ -492,8 +507,8 @@ describe('search', () => {
             locator: 'line:1-3',
             score: 1.0,
           },
-        ]),
-      } as any,
+        ],
+      }) as any,
     });
 
     const result = await search({
@@ -551,9 +566,9 @@ describe('search', () => {
       )
     );
 
-    const searchByContent = vi.fn().mockResolvedValue([
+    const searchByVector = vi.fn().mockResolvedValue([
       {
-        chunk_id: 'f1:0000',
+        chunkId: 'f1:0000',
         score: 0.8,
         document: {
           chunk_id: 'f1:0000',
@@ -575,13 +590,10 @@ describe('search', () => {
       embeddingService: {
         embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
       } as any,
-      vectorStore: {
-        searchByContent,
-        getByChunkIds: vi.fn().mockResolvedValue([]),
-      } as any,
-      invertedIndex: {
-        search: vi.fn().mockResolvedValue([]),
-      } as any,
+      storageAdapter: makeAdapterMock({
+        searchByVector,
+        invertedResults: [],
+      }) as any,
     });
 
     await search({
@@ -590,10 +602,12 @@ describe('search', () => {
       top_k: 5,
     });
 
-    expect(searchByContent).toHaveBeenCalledTimes(1);
-    expect(searchByContent).toHaveBeenCalledWith([0.1, 0.2, 0.3], {
+    expect(searchByVector).toHaveBeenCalledTimes(1);
+    expect(searchByVector).toHaveBeenCalledWith({
+      vector: [0.1, 0.2, 0.3],
       dirIds: ['d1-sub-a', 'd1-sub-b'],
       topK: 15,
+      mode: 'postfilter',
       minResultsBeforeFallback: 5,
     });
   });
@@ -603,8 +617,8 @@ describe('search', () => {
       embeddingService: {
         embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
       } as any,
-      vectorStore: {
-        searchByContent: vi.fn().mockResolvedValue([
+      storageAdapter: makeAdapterMock({
+        vectorResults: [
           {
             chunk_id: 'f1:0001',
             score: 0.9,
@@ -622,12 +636,9 @@ describe('search', () => {
               deleted_at: '',
             },
           },
-        ]),
-        getByChunkIds: vi.fn().mockResolvedValue([]),
-      } as any,
-      invertedIndex: {
-        search: vi.fn().mockResolvedValue([]),
-      } as any,
+        ],
+        invertedResults: [],
+      }) as any,
     });
 
     const result = await search({
@@ -659,12 +670,10 @@ describe('search', () => {
       embeddingService: {
         embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
       } as any,
-      vectorStore: {
-        searchByContent: vi.fn().mockResolvedValue([]),
+      storageAdapter: makeAdapterMock({
+        vectorResults: [],
         getByChunkIds,
-      } as any,
-      invertedIndex: {
-        search: vi.fn().mockResolvedValue([
+        invertedResults: [
           {
             chunkId: 'f1:0001',
             fileId: 'f1',
@@ -672,8 +681,8 @@ describe('search', () => {
             locator: 'sheet:销售数据/range:A1:B10',
             score: 1.1,
           },
-        ]),
-      } as any,
+        ],
+      }) as any,
     });
 
     const result = await search({
@@ -740,8 +749,8 @@ describe('search', () => {
       embeddingService: {
         embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
       } as any,
-      vectorStore: {
-        searchByContent: vi.fn().mockResolvedValue([
+      storageAdapter: makeAdapterMock({
+        vectorResults: [
           {
             chunk_id: 'f1:0000',
             score: 0.9,
@@ -759,12 +768,9 @@ describe('search', () => {
               deleted_at: '',
             },
           },
-        ]),
-        getByChunkIds: vi.fn().mockResolvedValue([]),
-      } as any,
-      invertedIndex: {
-        search: vi.fn().mockResolvedValue([]),
-      } as any,
+        ],
+        invertedResults: [],
+      }) as any,
     });
 
     const result = await search({
@@ -836,8 +842,8 @@ describe('search', () => {
       embeddingService: {
         embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
       } as any,
-      vectorStore: {
-        searchByContent: vi.fn().mockResolvedValue([
+      storageAdapter: makeAdapterMock({
+        vectorResults: [
           {
             chunk_id: 'f1:0000',
             score: 0.95,
@@ -880,12 +886,9 @@ describe('search', () => {
               locator: 'line:1-1',
             },
           },
-        ]),
-        getByChunkIds: vi.fn().mockResolvedValue([]),
-      } as any,
-      invertedIndex: {
-        search: vi.fn().mockResolvedValue([]),
-      } as any,
+        ],
+        invertedResults: [],
+      }) as any,
     });
 
     const result = await search({

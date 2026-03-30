@@ -12,6 +12,36 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { IndexPipeline } from './pipeline';
 
+function makeStorage(overrides?: {
+  vector?: Record<string, unknown>;
+  archive?: Record<string, unknown>;
+  invertedIndex?: Record<string, unknown>;
+}) {
+  return {
+    vector: {
+      addDocuments: vi.fn().mockResolvedValue(undefined),
+      deleteByFileId: vi.fn().mockResolvedValue(undefined),
+      deleteByDirId: vi.fn().mockResolvedValue(undefined),
+      ...overrides?.vector,
+    },
+    archive: {
+      write: vi.fn().mockResolvedValue(undefined),
+      exists: vi.fn().mockResolvedValue(false),
+      delete: vi.fn().mockResolvedValue(undefined),
+      ...overrides?.archive,
+    },
+    invertedIndex: {
+      addFile: vi.fn().mockResolvedValue(undefined),
+      removeFile: vi.fn().mockResolvedValue(undefined),
+      removeDirectory: vi.fn().mockResolvedValue(undefined),
+      ...overrides?.invertedIndex,
+    },
+    init: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn().mockResolvedValue(undefined),
+    metadata: {} as any,
+  };
+}
+
 describe('IndexPipeline summary mode', () => {
   it('skip 模式不应调用 summaryService 且摘要为空', async () => {
     const dirPath = mkdtempSync(join(tmpdir(), 'agent-fs-'));
@@ -35,26 +65,14 @@ describe('IndexPipeline summary mode', () => {
       embed: vi.fn().mockResolvedValue([0, 0, 0]),
     };
 
-    const vectorStore = {
-      addDocuments: vi.fn().mockResolvedValue(undefined),
-    };
-
-    const afdStorage = {
-      write: vi.fn().mockResolvedValue(undefined),
-    };
-
-    const invertedIndex = {
-      addFile: vi.fn().mockResolvedValue(undefined),
-    };
+    const storage = makeStorage();
 
     const pipeline = new IndexPipeline({
       dirPath,
       pluginManager: pluginManager as any,
       embeddingService: embeddingService as any,
       summaryService: summaryService as any,
-      vectorStore: vectorStore as any,
-      afdStorage: afdStorage as any,
-      invertedIndex: invertedIndex as any,
+      storage: storage as any,
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
@@ -66,13 +84,13 @@ describe('IndexPipeline summary mode', () => {
     expect(summaryService.generateDocumentSummary).not.toHaveBeenCalled();
     expect(summaryService.generateDirectorySummary).not.toHaveBeenCalled();
 
-    expect(afdStorage.write).toHaveBeenCalledTimes(1);
-    const afdPayload = afdStorage.write.mock.calls[0][1] as Record<string, string>;
+    expect(storage.archive.write).toHaveBeenCalledTimes(1);
+    const afdPayload = (storage.archive.write.mock.calls[0][1] as { files: Record<string, string> }).files;
     const summaries = JSON.parse(afdPayload['summaries.json']) as { documentSummary: string };
     expect(summaries.documentSummary).toBe('');
 
-    expect(invertedIndex.addFile).toHaveBeenCalledTimes(1);
-    const invertedEntries = invertedIndex.addFile.mock.calls[0][2] as Array<{
+    expect(storage.invertedIndex.addFile).toHaveBeenCalledTimes(1);
+    const invertedEntries = storage.invertedIndex.addFile.mock.calls[0][2] as Array<{
       text: string;
       chunkId: string;
       locator: string;
@@ -80,8 +98,8 @@ describe('IndexPipeline summary mode', () => {
     expect(invertedEntries.length).toBeGreaterThan(0);
     expect(invertedEntries[0].text).toContain('标题');
 
-    expect(vectorStore.addDocuments).toHaveBeenCalledTimes(1);
-    const vectorDocs = vectorStore.addDocuments.mock.calls[0][0] as Array<{
+    expect(storage.vector.addDocuments).toHaveBeenCalledTimes(1);
+    const vectorDocs = storage.vector.addDocuments.mock.calls[0][0] as Array<{
       chunk_line_start?: number;
       chunk_line_end?: number;
       content_vector?: number[];
@@ -128,26 +146,14 @@ describe('IndexPipeline summary mode', () => {
       embed: vi.fn().mockResolvedValue([0, 0, 0]),
     };
 
-    const vectorStore = {
-      addDocuments: vi.fn().mockResolvedValue(undefined),
-    };
-
-    const afdStorage = {
-      write: vi.fn().mockResolvedValue(undefined),
-    };
-
-    const invertedIndex = {
-      addFile: vi.fn().mockResolvedValue(undefined),
-    };
+    const storage = makeStorage();
 
     const pipeline = new IndexPipeline({
       dirPath,
       pluginManager: pluginManager as any,
       embeddingService: embeddingService as any,
       summaryService: summaryService as any,
-      vectorStore: vectorStore as any,
-      afdStorage: afdStorage as any,
-      invertedIndex: invertedIndex as any,
+      storage: storage as any,
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
@@ -156,8 +162,8 @@ describe('IndexPipeline summary mode', () => {
 
     await pipeline.run();
 
-    expect(invertedIndex.addFile).toHaveBeenCalledTimes(1);
-    const invertedEntries = invertedIndex.addFile.mock.calls[0][2] as Array<{
+    expect(storage.invertedIndex.addFile).toHaveBeenCalledTimes(1);
+    const invertedEntries = storage.invertedIndex.addFile.mock.calls[0][2] as Array<{
       text: string;
       locator: string;
       chunkId: string;
@@ -195,26 +201,14 @@ describe('IndexPipeline summary mode', () => {
       embed: vi.fn().mockResolvedValue([0, 0, 0]),
     };
 
-    const vectorStore = {
-      addDocuments: vi.fn().mockResolvedValue(undefined),
-    };
-
-    const afdStorage = {
-      write: vi.fn().mockResolvedValue(undefined),
-    };
-
-    const invertedIndex = {
-      addFile: vi.fn().mockResolvedValue(undefined),
-    };
+    const storage = makeStorage();
 
     const pipeline = new IndexPipeline({
       dirPath,
       pluginManager: pluginManager as any,
       embeddingService: embeddingService as any,
       summaryService: summaryService as any,
-      vectorStore: vectorStore as any,
-      afdStorage: afdStorage as any,
-      invertedIndex: invertedIndex as any,
+      storage: storage as any,
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
@@ -259,26 +253,14 @@ describe('IndexPipeline summary mode', () => {
         .mockRejectedValueOnce(new Error('The operation was aborted due to timeout')),
     };
 
-    const vectorStore = {
-      addDocuments: vi.fn().mockResolvedValue(undefined),
-    };
-
-    const afdStorage = {
-      write: vi.fn().mockResolvedValue(undefined),
-    };
-
-    const invertedIndex = {
-      addFile: vi.fn().mockResolvedValue(undefined),
-    };
+    const storage = makeStorage();
 
     const pipeline = new IndexPipeline({
       dirPath,
       pluginManager: pluginManager as any,
       embeddingService: embeddingService as any,
       summaryService: summaryService as any,
-      vectorStore: vectorStore as any,
-      afdStorage: afdStorage as any,
-      invertedIndex: invertedIndex as any,
+      storage: storage as any,
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
@@ -337,26 +319,14 @@ describe('IndexPipeline summary mode', () => {
       embed: vi.fn().mockResolvedValue([0, 0, 0]),
     };
 
-    const vectorStore = {
-      addDocuments: vi.fn().mockResolvedValue(undefined),
-    };
-
-    const afdStorage = {
-      write: vi.fn().mockResolvedValue(undefined),
-    };
-
-    const invertedIndex = {
-      addFile: vi.fn().mockResolvedValue(undefined),
-    };
+    const storage = makeStorage();
 
     const pipeline = new IndexPipeline({
       dirPath,
       pluginManager: pluginManager as any,
       embeddingService: embeddingService as any,
       summaryService: summaryService as any,
-      vectorStore: vectorStore as any,
-      afdStorage: afdStorage as any,
-      invertedIndex: invertedIndex as any,
+      storage: storage as any,
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
@@ -397,26 +367,14 @@ describe('IndexPipeline summary mode', () => {
       embed: vi.fn().mockResolvedValue([0, 0, 0]),
     };
 
-    const vectorStore = {
-      addDocuments: vi.fn().mockResolvedValue(undefined),
-    };
-
-    const afdStorage = {
-      write: vi.fn().mockResolvedValue(undefined),
-    };
-
-    const invertedIndex = {
-      addFile: vi.fn().mockResolvedValue(undefined),
-    };
+    const storage = makeStorage();
 
     const pipeline = new IndexPipeline({
       dirPath,
       pluginManager: pluginManager as any,
       embeddingService: embeddingService as any,
       summaryService: summaryService as any,
-      vectorStore: vectorStore as any,
-      afdStorage: afdStorage as any,
-      invertedIndex: invertedIndex as any,
+      storage: storage as any,
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
@@ -485,31 +443,14 @@ describe('IndexPipeline summary mode', () => {
       embed: vi.fn().mockResolvedValue([0, 0, 0]),
     };
 
-    const vectorStore = {
-      addDocuments: vi.fn().mockResolvedValue(undefined),
-      deleteByFileId: vi.fn().mockResolvedValue(undefined),
-      deleteByDirId: vi.fn().mockResolvedValue(undefined),
-    };
-
-    const afdStorage = {
-      write: vi.fn().mockResolvedValue(undefined),
-      delete: vi.fn().mockResolvedValue(undefined),
-    };
-
-    const invertedIndex = {
-      addFile: vi.fn().mockResolvedValue(undefined),
-      removeFile: vi.fn().mockResolvedValue(undefined),
-      removeDirectory: vi.fn().mockResolvedValue(undefined),
-    };
+    const storage = makeStorage();
 
     const firstPipeline = new IndexPipeline({
       dirPath,
       pluginManager: pluginManager as any,
       embeddingService: embeddingService as any,
       summaryService: summaryService as any,
-      vectorStore: vectorStore as any,
-      afdStorage: afdStorage as any,
-      invertedIndex: invertedIndex as any,
+      storage: storage as any,
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
@@ -518,18 +459,18 @@ describe('IndexPipeline summary mode', () => {
     await firstPipeline.run();
 
     toMarkdown.mockClear();
-    vectorStore.addDocuments.mockClear();
-    afdStorage.write.mockClear();
-    invertedIndex.addFile.mockClear();
+    storage.vector.addDocuments.mockClear();
+    storage.archive.write.mockClear();
+    storage.invertedIndex.addFile.mockClear();
+    // Simulate that the archive was written during the first run
+    storage.archive.exists.mockResolvedValue(true);
 
     const secondPipeline = new IndexPipeline({
       dirPath,
       pluginManager: pluginManager as any,
       embeddingService: embeddingService as any,
       summaryService: summaryService as any,
-      vectorStore: vectorStore as any,
-      afdStorage: afdStorage as any,
-      invertedIndex: invertedIndex as any,
+      storage: storage as any,
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
@@ -538,9 +479,9 @@ describe('IndexPipeline summary mode', () => {
     await secondPipeline.run();
 
     expect(toMarkdown).not.toHaveBeenCalled();
-    expect(vectorStore.addDocuments).not.toHaveBeenCalled();
-    expect(afdStorage.write).not.toHaveBeenCalled();
-    expect(invertedIndex.addFile).not.toHaveBeenCalled();
+    expect(storage.vector.addDocuments).not.toHaveBeenCalled();
+    expect(storage.archive.write).not.toHaveBeenCalled();
+    expect(storage.invertedIndex.addFile).not.toHaveBeenCalled();
 
     rmSync(dirPath, { recursive: true, force: true });
   });
@@ -574,37 +515,25 @@ describe('IndexPipeline summary mode', () => {
       embed: vi.fn().mockResolvedValue([0, 0, 0]),
     };
 
-    const vectorStore = {
-      addDocuments: vi.fn().mockResolvedValue(undefined),
-      deleteByFileId: vi.fn().mockResolvedValue(undefined),
-      deleteByDirId: vi.fn().mockResolvedValue(undefined),
-    };
-
     const archivedNames = new Set<string>();
-    const afdStorage = {
-      write: vi.fn().mockImplementation(async (archiveName: string) => {
-        archivedNames.add(archiveName);
-      }),
-      exists: vi.fn().mockImplementation(async (archiveName: string) => archivedNames.has(archiveName)),
-      delete: vi.fn().mockImplementation(async (archiveName: string) => {
-        archivedNames.delete(archiveName);
-      }),
-    };
-
-    const invertedIndex = {
-      addFile: vi.fn().mockResolvedValue(undefined),
-      removeFile: vi.fn().mockResolvedValue(undefined),
-      removeDirectory: vi.fn().mockResolvedValue(undefined),
-    };
+    const storage = makeStorage({
+      archive: {
+        write: vi.fn().mockImplementation(async (archiveName: string) => {
+          archivedNames.add(archiveName);
+        }),
+        exists: vi.fn().mockImplementation(async (archiveName: string) => archivedNames.has(archiveName)),
+        delete: vi.fn().mockImplementation(async (archiveName: string) => {
+          archivedNames.delete(archiveName);
+        }),
+      },
+    });
 
     const firstPipeline = new IndexPipeline({
       dirPath,
       pluginManager: pluginManager as any,
       embeddingService: embeddingService as any,
       summaryService: summaryService as any,
-      vectorStore: vectorStore as any,
-      afdStorage: afdStorage as any,
-      invertedIndex: invertedIndex as any,
+      storage: storage as any,
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
@@ -616,18 +545,16 @@ describe('IndexPipeline summary mode', () => {
 
     failOnSecondCall = false;
     toMarkdown.mockClear();
-    vectorStore.addDocuments.mockClear();
-    afdStorage.write.mockClear();
-    invertedIndex.addFile.mockClear();
+    storage.vector.addDocuments.mockClear();
+    storage.archive.write.mockClear();
+    storage.invertedIndex.addFile.mockClear();
 
     const secondPipeline = new IndexPipeline({
       dirPath,
       pluginManager: pluginManager as any,
       embeddingService: embeddingService as any,
       summaryService: summaryService as any,
-      vectorStore: vectorStore as any,
-      afdStorage: afdStorage as any,
-      invertedIndex: invertedIndex as any,
+      storage: storage as any,
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
@@ -636,9 +563,9 @@ describe('IndexPipeline summary mode', () => {
     const metadata = await secondPipeline.run();
 
     expect(toMarkdown).toHaveBeenCalledTimes(1);
-    expect(vectorStore.addDocuments).toHaveBeenCalledTimes(1);
-    expect(afdStorage.write).toHaveBeenCalledTimes(1);
-    expect(invertedIndex.addFile).toHaveBeenCalledTimes(1);
+    expect(storage.vector.addDocuments).toHaveBeenCalledTimes(1);
+    expect(storage.archive.write).toHaveBeenCalledTimes(1);
+    expect(storage.invertedIndex.addFile).toHaveBeenCalledTimes(1);
     expect(metadata.files).toHaveLength(2);
 
     rmSync(dirPath, { recursive: true, force: true });
@@ -665,31 +592,14 @@ describe('IndexPipeline summary mode', () => {
       embed: vi.fn().mockResolvedValue([0, 0, 0]),
     };
 
-    const vectorStore = {
-      addDocuments: vi.fn().mockResolvedValue(undefined),
-      deleteByFileId: vi.fn().mockResolvedValue(undefined),
-      deleteByDirId: vi.fn().mockResolvedValue(undefined),
-    };
-
-    const afdStorage = {
-      write: vi.fn().mockResolvedValue(undefined),
-      delete: vi.fn().mockResolvedValue(undefined),
-    };
-
-    const invertedIndex = {
-      addFile: vi.fn().mockResolvedValue(undefined),
-      removeFile: vi.fn().mockResolvedValue(undefined),
-      removeDirectory: vi.fn().mockResolvedValue(undefined),
-    };
+    const storage = makeStorage();
 
     const firstPipeline = new IndexPipeline({
       dirPath,
       pluginManager: pluginManager as any,
       embeddingService: embeddingService as any,
       summaryService: summaryService as any,
-      vectorStore: vectorStore as any,
-      afdStorage: afdStorage as any,
-      invertedIndex: invertedIndex as any,
+      storage: storage as any,
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
@@ -705,12 +615,12 @@ describe('IndexPipeline summary mode', () => {
     const oldFileId = firstMetadata.files[0].fileId;
 
     toMarkdown.mockClear();
-    vectorStore.addDocuments.mockClear();
-    vectorStore.deleteByFileId.mockClear();
-    afdStorage.write.mockClear();
-    afdStorage.delete.mockClear();
-    invertedIndex.addFile.mockClear();
-    invertedIndex.removeFile.mockClear();
+    storage.vector.addDocuments.mockClear();
+    storage.vector.deleteByFileId.mockClear();
+    storage.archive.write.mockClear();
+    storage.archive.delete.mockClear();
+    storage.invertedIndex.addFile.mockClear();
+    storage.invertedIndex.removeFile.mockClear();
 
     writeFileSync(filePath, '# V2\n\ncontent changed');
 
@@ -719,9 +629,7 @@ describe('IndexPipeline summary mode', () => {
       pluginManager: pluginManager as any,
       embeddingService: embeddingService as any,
       summaryService: summaryService as any,
-      vectorStore: vectorStore as any,
-      afdStorage: afdStorage as any,
-      invertedIndex: invertedIndex as any,
+      storage: storage as any,
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
@@ -730,12 +638,12 @@ describe('IndexPipeline summary mode', () => {
     await secondPipeline.run();
 
     expect(toMarkdown).toHaveBeenCalledTimes(1);
-    expect(vectorStore.addDocuments).toHaveBeenCalledTimes(1);
-    expect(afdStorage.write).toHaveBeenCalledTimes(1);
-    expect(vectorStore.deleteByFileId).toHaveBeenCalledWith(oldFileId);
-    expect(afdStorage.delete).toHaveBeenCalledWith('update.md');
-    expect(invertedIndex.removeFile).toHaveBeenCalledWith(oldFileId);
-    expect(invertedIndex.addFile).toHaveBeenCalledTimes(1);
+    expect(storage.vector.addDocuments).toHaveBeenCalledTimes(1);
+    expect(storage.archive.write).toHaveBeenCalledTimes(1);
+    expect(storage.vector.deleteByFileId).toHaveBeenCalledWith(oldFileId);
+    expect(storage.archive.delete).toHaveBeenCalledWith('update.md');
+    expect(storage.invertedIndex.removeFile).toHaveBeenCalledWith(oldFileId);
+    expect(storage.invertedIndex.addFile).toHaveBeenCalledTimes(1);
 
     rmSync(dirPath, { recursive: true, force: true });
   });
@@ -763,31 +671,14 @@ describe('IndexPipeline summary mode', () => {
       embed: vi.fn().mockResolvedValue([0, 0, 0]),
     };
 
-    const vectorStore = {
-      addDocuments: vi.fn().mockResolvedValue(undefined),
-      deleteByFileId: vi.fn().mockResolvedValue(undefined),
-      deleteByDirId: vi.fn().mockResolvedValue(undefined),
-    };
-
-    const afdStorage = {
-      write: vi.fn().mockResolvedValue(undefined),
-      delete: vi.fn().mockResolvedValue(undefined),
-    };
-
-    const invertedIndex = {
-      addFile: vi.fn().mockResolvedValue(undefined),
-      removeFile: vi.fn().mockResolvedValue(undefined),
-      removeDirectory: vi.fn().mockResolvedValue(undefined),
-    };
+    const storage = makeStorage();
 
     const firstPipeline = new IndexPipeline({
       dirPath,
       pluginManager: pluginManager as any,
       embeddingService: embeddingService as any,
       summaryService: summaryService as any,
-      vectorStore: vectorStore as any,
-      afdStorage: afdStorage as any,
-      invertedIndex: invertedIndex as any,
+      storage: storage as any,
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
@@ -807,9 +698,7 @@ describe('IndexPipeline summary mode', () => {
       pluginManager: pluginManager as any,
       embeddingService: embeddingService as any,
       summaryService: summaryService as any,
-      vectorStore: vectorStore as any,
-      afdStorage: afdStorage as any,
-      invertedIndex: invertedIndex as any,
+      storage: storage as any,
       chunkOptions: { minTokens: 1, maxTokens: 200 },
       summaryOptions: {
         mode: 'skip',
@@ -817,7 +706,7 @@ describe('IndexPipeline summary mode', () => {
     });
     await secondPipeline.run();
 
-    expect(afdStorage.delete).toHaveBeenCalledWith('a.md');
+    expect(storage.archive.delete).toHaveBeenCalledWith('a.md');
 
     if (existsSync(staleAfdPath)) {
       unlinkSync(staleAfdPath);

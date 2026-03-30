@@ -184,7 +184,7 @@ export class CloudInvertedIndexAdapter implements InvertedIndexAdapter {
       if (existing) {
         existing.score += delta;
       } else {
-        scores.set(key, { chunkId: row.chunk_id, score: delta, locator: row.locator });
+        scores.set(key, { chunkId: row.chunk_id, fileId: row.file_id, dirId: row.dir_id, score: delta, locator: row.locator });
       }
     }
 

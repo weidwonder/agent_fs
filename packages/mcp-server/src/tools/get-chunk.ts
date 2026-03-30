@@ -2,8 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { IndexMetadata, Registry } from '@agent-fs/core';
-import { createAFDStorage } from '@agent-fs/storage';
-import { getVectorStore } from './search.js';
+import { getStorageAdapter } from './search.js';
 
 interface GetChunkInput {
   chunk_id: string;
@@ -207,18 +206,15 @@ export async function getChunk(input: GetChunkInput) {
   }
 
   const filePath = join(fileInfo.dirPath, fileInfo.fileName);
-  const storage = createAFDStorage({
-    documentsDir: join(fileInfo.dirPath, '.fs_index', 'documents'),
-  });
+  const adapter = getStorageAdapter();
 
-  const markdown = await storage.readText(fileInfo.afdName, 'content.md');
+  const markdown = await adapter.archive.read(fileInfo.afdName, 'content.md');
 
   const idsToLoad = include_neighbors
     ? [chunk_id, ...buildNeighborIds(fileId, chunkIndex, neighbor_count)]
     : [chunk_id];
 
-  const vectorStore = getVectorStore();
-  const docs = (await vectorStore.getByChunkIds(idsToLoad)) as VectorChunkDoc[];
+  const docs = (await adapter.vector.getByChunkIds(idsToLoad)) as VectorChunkDoc[];
   const docMap = new Map(docs.map((doc) => [doc.chunk_id, doc]));
 
   const mainDoc = docMap.get(chunk_id);

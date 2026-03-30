@@ -314,65 +314,25 @@ async function cleanupRemovedProjectData(input: {
     rmSync(fsIndexPath, { recursive: true, force: true });
   }
 
-  const storagePath = join(homedir(), '.agent_fs', 'storage');
-  const vectorsPath = join(storagePath, 'vectors');
-  const invertedDbPath = join(storagePath, 'inverted-index', 'inverted-index.db');
-
   if (searchServices) {
-    await deleteDirIdsFromVectorStore(searchServices.vectorStore, input.dirIds);
-    await deleteDirIdsFromInvertedIndex(searchServices.invertedIndex, input.dirIds);
+    await searchServices.storageAdapter.vector.deleteByDirIds(input.dirIds);
+    await searchServices.storageAdapter.invertedIndex.removeDirectories(input.dirIds);
     return;
   }
 
-  const { createVectorStore, InvertedIndex } = await import('@agent-fs/search');
+  const { createLocalAdapter } = await import('@agent-fs/storage-adapter');
 
-  if (existsSync(vectorsPath)) {
-    const vectorStore = createVectorStore({
-      storagePath: vectorsPath,
-      dimension: 1,
-    });
-    await vectorStore.init();
-    await deleteDirIdsFromVectorStore(vectorStore as any, input.dirIds);
-    await vectorStore.close();
-  }
-
-  if (existsSync(invertedDbPath)) {
-    const invertedIndex = new InvertedIndex({
-      dbPath: invertedDbPath,
-    });
-    await invertedIndex.init();
-    await deleteDirIdsFromInvertedIndex(invertedIndex as any, input.dirIds);
-    await invertedIndex.close();
+  const storagePath = join(homedir(), '.agent_fs', 'storage');
+  const adapter = createLocalAdapter({ storagePath, dimension: 1 });
+  await adapter.init();
+  try {
+    await adapter.vector.deleteByDirIds(input.dirIds);
+    await adapter.invertedIndex.removeDirectories(input.dirIds);
+  } finally {
+    await adapter.close();
   }
 }
 
-async function deleteDirIdsFromVectorStore(
-  vectorStore: any,
-  dirIds: string[]
-): Promise<void> {
-  if (typeof vectorStore?.deleteByDirIds === 'function') {
-    await vectorStore.deleteByDirIds(dirIds);
-    return;
-  }
-
-  for (const dirId of dirIds) {
-    await vectorStore.deleteByDirId(dirId);
-  }
-}
-
-async function deleteDirIdsFromInvertedIndex(
-  invertedIndex: any,
-  dirIds: string[]
-): Promise<void> {
-  if (typeof invertedIndex?.removeDirectories === 'function') {
-    await invertedIndex.removeDirectories(dirIds);
-    return;
-  }
-
-  for (const dirId of dirIds) {
-    await invertedIndex.removeDirectory(dirId);
-  }
-}
 
 // --- IPC: Directory Selection ---
 
@@ -597,8 +557,7 @@ ipcMain.handle('save-config', async (_event, updates: Record<string, unknown>) =
 // 搜索服务单例（懒加载）
 let searchServices: {
   embeddingService: any;
-  vectorStore: any;
-  invertedIndex: any;
+  storageAdapter: import('@agent-fs/storage-adapter').StorageAdapter;
 } | null = null;
 
 async function initSearchServices() {
@@ -606,33 +565,23 @@ async function initSearchServices() {
 
   const { loadConfig } = await import('@agent-fs/core');
   const { createEmbeddingService } = await import('@agent-fs/llm');
-  const { createVectorStore, InvertedIndex } = await import('@agent-fs/search');
+  const { createLocalAdapter } = await import('@agent-fs/storage-adapter');
 
   const config = loadConfig();
   console.log('[search-init] embedding config:', JSON.stringify(sanitizeForLog(config.embedding)));
   const storagePath = join(homedir(), '.agent_fs', 'storage');
 
-  const vectorsPath = join(storagePath, 'vectors');
-  const invertedDbPath = join(storagePath, 'inverted-index', 'inverted-index.db');
-  console.log('[search-init] vectorsPath:', vectorsPath, 'exists:', existsSync(vectorsPath));
-  console.log('[search-init] invertedDbPath:', invertedDbPath, 'exists:', existsSync(invertedDbPath));
-
   const embeddingService = createEmbeddingService(config.embedding);
   await embeddingService.init();
   console.log('[search-init] embedding dimension:', embeddingService.getDimension());
 
-  const vectorStore = createVectorStore({
-    storagePath: vectorsPath,
+  const storageAdapter = createLocalAdapter({
+    storagePath,
     dimension: embeddingService.getDimension(),
   });
-  await vectorStore.init();
+  await storageAdapter.init();
 
-  const invertedIndex = new InvertedIndex({
-    dbPath: invertedDbPath,
-  });
-  await invertedIndex.init();
-
-  searchServices = { embeddingService, vectorStore, invertedIndex };
+  searchServices = { embeddingService, storageAdapter };
   console.log('[search-init] all services initialized');
   return searchServices;
 }
@@ -704,7 +653,7 @@ interface LocatorMappingItem {
 }
 
 async function readLocatorMappings(
-  storage: any,
+  archive: import('@agent-fs/storage-adapter').DocumentArchiveAdapter,
   archiveName: string,
   cacheKey: string,
   cache: Map<string, LocatorMappingItem[]>
@@ -715,8 +664,8 @@ async function readLocatorMappings(
   }
 
   try {
-    const buffer = await storage.read(archiveName, 'metadata.json');
-    const parsed = JSON.parse(buffer.toString('utf-8')) as { mapping?: LocatorMappingItem[] };
+    const text = await archive.read(archiveName, 'metadata.json');
+    const parsed = JSON.parse(text) as { mapping?: LocatorMappingItem[] };
     const mapping = Array.isArray(parsed.mapping) ? parsed.mapping : [];
     cache.set(cacheKey, mapping);
     return mapping;
@@ -736,7 +685,6 @@ ipcMain.handle('search', async (_event, input: {
   try {
     const services = await initSearchServices();
     const { fusionRRF, aggregateTopByFile } = await import('@agent-fs/search');
-    const { createAFDStorage } = await import('@agent-fs/storage');
 
     const startTime = Date.now();
     const topK = input.top_k ?? 10;
@@ -758,10 +706,13 @@ ipcMain.handle('search', async (_event, input: {
       const queryVector = await services.embeddingService.embed(input.query);
       console.log('[search] queryVector length:', queryVector.length);
 
-      const searchOptions = dirIds.length > 0
-        ? { dirIds, topK: topK * 3, minResultsBeforeFallback: topK }
-        : { topK: topK * 3, minResultsBeforeFallback: topK };
-      const results = await services.vectorStore.searchByVector(queryVector, searchOptions);
+      const results = await services.storageAdapter.vector.searchByVector({
+        vector: queryVector,
+        dirIds: dirIds.length > 0 ? dirIds : [],
+        topK: topK * 3,
+        mode: 'postfilter',
+        minResultsBeforeFallback: topK,
+      });
       vectorResults.push(...results);
     }
 
@@ -770,10 +721,11 @@ ipcMain.handle('search', async (_event, input: {
     // 关键词搜索（query 或 keyword 任一存在即可）
     const keywordText = input.keyword?.trim() || input.query?.trim() || '';
     const keywordResults = keywordText
-      ? await services.invertedIndex.search(
-          keywordText,
-          { dirIds: dirIds.length > 0 ? dirIds : undefined, topK: topK * 3 },
-        )
+      ? await services.storageAdapter.invertedIndex.search({
+          terms: [keywordText],
+          dirIds: dirIds.length > 0 ? dirIds : [],
+          topK: topK * 3,
+        })
       : [];
 
     console.log('[search] keywordResults:', keywordResults.length);
@@ -790,7 +742,7 @@ ipcMain.handle('search', async (_event, input: {
     const mapVectorItem = (item: any): FusionItem => {
       const fileId = String(item.document?.file_id ?? '');
       return {
-        chunkId: item.chunk_id,
+        chunkId: item.chunkId,
         fileId,
         chunkLineStart: toPositiveInt(item.document?.chunk_line_start),
         chunkLineEnd: toPositiveInt(item.document?.chunk_line_end),
@@ -840,56 +792,55 @@ ipcMain.handle('search', async (_event, input: {
     );
 
     const topItems = diversified.map((item: any) => item.item as FusionItem);
-    const getByChunkIds = (services.vectorStore as any).getByChunkIds;
-    if (typeof getByChunkIds === 'function') {
-      const missingChunkIds = Array.from(
-        new Set(
-          topItems
-            .filter((item) => !hasLineRange(item))
-            .map((item) => item.chunkId)
-            .filter((chunkId) => chunkId.length > 0)
-        )
-      );
+    const missingChunkIds = Array.from(
+      new Set(
+        topItems
+          .filter((item) => !hasLineRange(item))
+          .map((item) => item.chunkId)
+          .filter((chunkId) => chunkId.length > 0)
+      )
+    );
 
-      if (missingChunkIds.length > 0) {
-        try {
-          const docs = await getByChunkIds.call(services.vectorStore, missingChunkIds);
-          const lineRangeByChunkId = new Map<string, { start: number; end: number }>();
-          for (const doc of docs || []) {
-            const chunkId = String(doc.chunk_id ?? '');
-            if (!chunkId) continue;
-            const start = toPositiveInt(doc.chunk_line_start);
-            const end = toPositiveInt(doc.chunk_line_end);
-            if (start === undefined || end === undefined) continue;
-            lineRangeByChunkId.set(chunkId, { start, end });
-          }
-
-          for (const item of topItems) {
-            if (hasLineRange(item)) continue;
-            const lineRange = lineRangeByChunkId.get(item.chunkId);
-            if (!lineRange) continue;
-            item.chunkLineStart = lineRange.start;
-            item.chunkLineEnd = lineRange.end;
-          }
-        } catch {
-          // 忽略行号补全失败，后续仍可返回路径与定位符
+    if (missingChunkIds.length > 0) {
+      try {
+        const docs = await services.storageAdapter.vector.getByChunkIds(missingChunkIds);
+        const lineRangeByChunkId = new Map<string, { start: number; end: number }>();
+        for (const doc of docs || []) {
+          const chunkId = String((doc as any).chunk_id ?? '');
+          if (!chunkId) continue;
+          const start = toPositiveInt((doc as any).chunk_line_start);
+          const end = toPositiveInt((doc as any).chunk_line_end);
+          if (start === undefined || end === undefined) continue;
+          lineRangeByChunkId.set(chunkId, { start, end });
         }
+
+        for (const item of topItems) {
+          if (hasLineRange(item)) continue;
+          const lineRange = lineRangeByChunkId.get(item.chunkId);
+          if (!lineRange) continue;
+          item.chunkLineStart = lineRange.start;
+          item.chunkLineEnd = lineRange.end;
+        }
+      } catch {
+        // 忽略行号补全失败，后续仍可返回路径与定位符
       }
     }
 
     // 内容回填
-    const afdCache = new Map<string, any>();
+    const archiveAdapterCache = new Map<string, import('@agent-fs/storage-adapter').DocumentArchiveAdapter>();
     const markdownCache = new Map<string, string>();
     const summariesCache = new Map<string, { documentSummary: string }>();
     const locatorMappingCache = new Map<string, LocatorMappingItem[]>();
 
-    const getStorage = (dirPath: string) => {
-      if (!afdCache.has(dirPath)) {
-        afdCache.set(dirPath, createAFDStorage({
-          documentsDir: join(dirPath, '.fs_index', 'documents'),
-        }));
-      }
-      return afdCache.get(dirPath)!;
+    const getArchiveAdapter = async (dirPath: string): Promise<import('@agent-fs/storage-adapter').DocumentArchiveAdapter> => {
+      const cached = archiveAdapterCache.get(dirPath);
+      if (cached) return cached;
+      const { createAFDStorage } = await import('@agent-fs/storage');
+      const { LocalArchiveAdapter } = await import('@agent-fs/storage-adapter');
+      const afdStorage = createAFDStorage({ documentsDir: join(dirPath, '.fs_index', 'documents') });
+      const adapter = new LocalArchiveAdapter(afdStorage);
+      archiveAdapterCache.set(dirPath, adapter);
+      return adapter;
     };
 
     const hydratedResults = await Promise.all(
@@ -901,14 +852,14 @@ ipcMain.handle('search', async (_event, input: {
         let summary = '';
 
         if (fileInfo) {
-          const storage = getStorage(fileInfo.dirPath);
+          const archive = await getArchiveAdapter(fileInfo.dirPath);
           const archiveName = fileInfo.afdName || item.fileId;
           const archiveCacheKey = `${fileInfo.dirPath}/${archiveName}`;
 
           // 读取 markdown
           if (!markdownCache.has(archiveCacheKey)) {
             try {
-              const md = await storage.readText(archiveName, 'content.md');
+              const md = await archive.read(archiveName, 'content.md');
               markdownCache.set(archiveCacheKey, md);
             } catch {
               markdownCache.set(archiveCacheKey, '');
@@ -923,8 +874,8 @@ ipcMain.handle('search', async (_event, input: {
           // 读取摘要
           if (!summariesCache.has(archiveCacheKey)) {
             try {
-              const buf = await storage.read(archiveName, 'summaries.json');
-              const parsed = JSON.parse(buf.toString('utf-8')) as { documentSummary?: unknown };
+              const text = await archive.read(archiveName, 'summaries.json');
+              const parsed = JSON.parse(text) as { documentSummary?: unknown };
               summariesCache.set(archiveCacheKey, {
                 documentSummary:
                   typeof parsed.documentSummary === 'string' ? parsed.documentSummary : '',
@@ -936,7 +887,7 @@ ipcMain.handle('search', async (_event, input: {
           summary = summariesCache.get(archiveCacheKey)?.documentSummary || '';
 
           const locatorMappings = await readLocatorMappings(
-            storage,
+            archive,
             archiveName,
             archiveCacheKey,
             locatorMappingCache,
@@ -982,8 +933,7 @@ ipcMain.handle('search', async (_event, input: {
 app.on('before-quit', async () => {
   if (searchServices) {
     try {
-      await searchServices.vectorStore?.close();
-      await searchServices.invertedIndex?.close();
+      await searchServices.storageAdapter.close();
       await searchServices.embeddingService?.dispose();
     } catch { /* ignore */ }
     searchServices = null;

@@ -44,6 +44,8 @@ export interface InvertedIndexEntry {
 
 export interface InvertedSearchResult {
   chunkId: string;
+  fileId: string;
+  dirId: string;
   score: number;
   locator: string;
 }

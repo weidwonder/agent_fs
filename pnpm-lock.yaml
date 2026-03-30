@@ -131,6 +131,9 @@ importers:
       '@agent-fs/storage':
         specifier: workspace:*
         version: link:../storage
+      '@agent-fs/storage-adapter':
+        specifier: workspace:*
+        version: link:../storage-adapter
       '@radix-ui/react-alert-dialog':
         specifier: ^1.1.15
         version: 1.1.15(@types/react-dom@18.3.7(@types/react@18.3.27))(@types/react@18.3.27)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -287,6 +290,9 @@ importers:
       '@agent-fs/storage':
         specifier: workspace:*
         version: link:../storage
+      '@agent-fs/storage-adapter':
+        specifier: workspace:*
+        version: link:../storage-adapter
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.0
         version: 1.26.0(zod@4.3.6)

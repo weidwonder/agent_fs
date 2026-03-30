@@ -13,8 +13,8 @@ import type {
 } from '@agent-fs/core';
 import { MarkdownChunker } from '@agent-fs/core';
 import type { EmbeddingService, SummaryService } from '@agent-fs/llm';
-import type { IndexEntry, InvertedIndex, VectorStore } from '@agent-fs/search';
-import type { AFDStorage } from '@agent-fs/storage';
+import type { IndexEntry } from '@agent-fs/search';
+import type { DocumentArchiveAdapter, StorageAdapter } from '@agent-fs/storage-adapter';
 import { FileChecker } from './file-checker';
 import type { PluginManager } from './plugin-manager';
 import { scanDirectory, type ScanResult } from './scanner';
@@ -31,10 +31,8 @@ export interface IndexerOptions {
   pluginManager: PluginManager;
   embeddingService: EmbeddingService;
   summaryService: SummaryService;
-  vectorStore: VectorStore;
-  invertedIndex: InvertedIndex;
-  afdStorage: AFDStorage;
-  afdStorageResolver?: (dirPath: string) => AFDStorage;
+  storage: StorageAdapter;
+  archiveResolver?: (dirPath: string) => DocumentArchiveAdapter;
   fileParallelism?: number;
   chunkOptions: { minTokens: number; maxTokens: number };
   summaryOptions: SummaryPipelineOptions;
@@ -499,8 +497,8 @@ export class IndexPipeline {
     dirPath: string,
     archiveName: string
   ): Promise<void> {
-    await this.options.vectorStore.deleteByFileId(fileId);
-    await this.options.invertedIndex.removeFile(fileId);
+    await this.options.storage.vector.deleteByFileId(fileId);
+    await this.options.storage.invertedIndex.removeFile(fileId);
     await this.deleteAfdFile(dirPath, archiveName);
   }
 
@@ -543,30 +541,23 @@ export class IndexPipeline {
       }
     }
 
-    await this.options.vectorStore.deleteByDirId(subdirectory.dirId);
-    await this.options.invertedIndex.removeDirectory(subdirectory.dirId);
+    await this.options.storage.vector.deleteByDirId(subdirectory.dirId);
+    await this.options.storage.invertedIndex.removeDirectory(subdirectory.dirId);
   }
 
   private async deleteAfdFile(dirPath: string, archiveName: string): Promise<void> {
     try {
-      const storage = this.getAfdStorage(dirPath);
-      await storage.delete(archiveName);
+      const archive = this.getArchive(dirPath);
+      await archive.delete(archiveName);
     } catch {
       // 文件可能已不存在，忽略
     }
   }
 
   private async checkAfdExists(dirPath: string, archiveName: string): Promise<boolean> {
-    const storage = this.getAfdStorage(dirPath) as unknown as {
-      exists?: (fileId: string) => Promise<boolean>;
-    };
-
-    if (typeof storage.exists !== 'function') {
-      return true;
-    }
-
+    const archive = this.getArchive(dirPath);
     try {
-      return await storage.exists(archiveName);
+      return await archive.exists(archiveName);
     } catch {
       return false;
     }
@@ -965,11 +956,9 @@ export class IndexPipeline {
       pluginManager,
       embeddingService,
       summaryService,
-      vectorStore,
-      invertedIndex,
       onProgress,
     } = this.options;
-    const afdStorage = this.getAfdStorage(dirPath);
+    const archive = this.getArchive(dirPath);
 
     this.writeLog({
       level: 'info',
@@ -1141,9 +1130,9 @@ export class IndexPipeline {
         chunkCount: chunks.length,
       },
       action: async () => {
-        await vectorStore.addDocuments(vectorDocs);
+        await this.options.storage.vector.addDocuments(vectorDocs);
         const indexEntries = this.buildIndexEntries(conversionResult, chunks, chunkIds);
-        await invertedIndex.addFile(fileId, dirId, indexEntries);
+        await this.options.storage.invertedIndex.addFile(fileId, dirId, indexEntries);
       },
     });
 
@@ -1191,20 +1180,22 @@ export class IndexPipeline {
         archive: afdName,
       },
       action: async () =>
-        afdStorage.write(afdName, {
-          'content.md': conversionResult.markdown,
-          'metadata.json': JSON.stringify(
-            {
-              sourceFile: relativeFilePath,
-              sourceHash: `sha256:${sourceSha256}`,
-              plugin: ext,
-              createdAt: new Date().toISOString(),
-              mapping: conversionResult.mapping,
-            },
-            null,
-            2
-          ),
-          'summaries.json': JSON.stringify(summaries, null, 2),
+        archive.write(afdName, {
+          files: {
+            'content.md': conversionResult.markdown,
+            'metadata.json': JSON.stringify(
+              {
+                sourceFile: relativeFilePath,
+                sourceHash: `sha256:${sourceSha256}`,
+                plugin: ext,
+                createdAt: new Date().toISOString(),
+                mapping: conversionResult.mapping,
+              },
+              null,
+              2
+            ),
+            'summaries.json': JSON.stringify(summaries, null, 2),
+          },
         }),
     });
 
@@ -1231,12 +1222,12 @@ export class IndexPipeline {
     };
   }
 
-  private getAfdStorage(dirPath: string): AFDStorage {
-    if (this.options.afdStorageResolver) {
-      return this.options.afdStorageResolver(dirPath);
+  private getArchive(dirPath: string): DocumentArchiveAdapter {
+    if (this.options.archiveResolver) {
+      return this.options.archiveResolver(dirPath);
     }
 
-    return this.options.afdStorage;
+    return this.options.storage.archive;
   }
 
   private getFileParallelism(): number {

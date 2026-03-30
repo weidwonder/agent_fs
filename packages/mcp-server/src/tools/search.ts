@@ -5,16 +5,15 @@ import type { IndexMetadata, Registry } from '@agent-fs/core';
 import { loadConfig } from '@agent-fs/core';
 import type { EmbeddingService } from '@agent-fs/llm';
 import { createEmbeddingService } from '@agent-fs/llm';
-import type { InvertedIndex, InvertedSearchResult, VectorStore } from '@agent-fs/search';
+import type { InvertedSearchResult } from '@agent-fs/search';
 import {
-  InvertedIndex as InvertedIndexClass,
-  createVectorStore,
   fusionRRF,
   aggregateTopByFile,
   DirectoryResolver,
   type RegistryProject as ResolverProject,
 } from '@agent-fs/search';
-import { createAFDStorage, type AFDStorage } from '@agent-fs/storage';
+import type { StorageAdapter } from '@agent-fs/storage-adapter';
+import { createLocalAdapter } from '@agent-fs/storage-adapter';
 import { resolveDisplayLocator } from './locator-display';
 
 interface SearchInput {
@@ -73,12 +72,14 @@ interface RuntimeProject {
 }
 
 let embeddingService: EmbeddingService | null = null;
-let vectorStore: VectorStore | null = null;
-let invertedIndex: InvertedIndex | null = null;
-const afdStorageCache = new Map<string, AFDStorage>();
+let storageAdapter: StorageAdapter | null = null;
+
+export function setStorageAdapter(adapter: StorageAdapter): void {
+  storageAdapter = adapter;
+}
 
 export async function initSearchService(): Promise<void> {
-  if (embeddingService && vectorStore && invertedIndex) {
+  if (embeddingService && storageAdapter) {
     return;
   }
 
@@ -93,70 +94,52 @@ export async function initSearchService(): Promise<void> {
   embeddingService = createEmbeddingService(config.embedding);
   await embeddingService.init();
 
-  vectorStore = createVectorStore({
-    storagePath: join(storagePath, 'vectors'),
+  storageAdapter = createLocalAdapter({
+    storagePath,
     dimension: embeddingService.getDimension(),
   });
-  await vectorStore.init();
-
-  invertedIndex = new InvertedIndexClass({
-    dbPath: join(storagePath, 'inverted-index', 'inverted-index.db'),
-  });
-  await invertedIndex.init();
+  await storageAdapter.init();
 }
 
 export async function disposeSearchService(): Promise<void> {
-  if (vectorStore) {
-    await vectorStore.close();
-    vectorStore = null;
-  }
-
-  if (invertedIndex) {
-    await invertedIndex.close();
-    invertedIndex = null;
+  if (storageAdapter) {
+    await storageAdapter.close();
+    storageAdapter = null;
   }
 
   if (embeddingService) {
     await embeddingService.dispose();
     embeddingService = null;
   }
-
-  afdStorageCache.clear();
 }
 
-export function getVectorStore(): VectorStore {
-  if (!vectorStore) {
+export function getStorageAdapter(): StorageAdapter {
+  if (!storageAdapter) {
     throw new Error('Search service not initialized. No indexes available.');
   }
 
-  return vectorStore;
+  return storageAdapter;
 }
 
 export function __setSearchServicesForTest(services: {
   embeddingService?: EmbeddingService;
-  vectorStore?: VectorStore;
-  invertedIndex?: InvertedIndex;
+  storageAdapter?: StorageAdapter;
 }): void {
   if (services.embeddingService) {
     embeddingService = services.embeddingService;
   }
-  if (services.vectorStore) {
-    vectorStore = services.vectorStore;
-  }
-  if (services.invertedIndex) {
-    invertedIndex = services.invertedIndex;
+  if (services.storageAdapter) {
+    storageAdapter = services.storageAdapter;
   }
 }
 
 export function __resetSearchServicesForTest(): void {
   embeddingService = null;
-  vectorStore = null;
-  invertedIndex = null;
-  afdStorageCache.clear();
+  storageAdapter = null;
 }
 
 export async function search(input: SearchInput) {
-  if (!embeddingService || !vectorStore || !invertedIndex) {
+  if (!embeddingService || !storageAdapter) {
     throw new Error('Search service not initialized. Please index some directories first.');
   }
 
@@ -168,15 +151,17 @@ export async function search(input: SearchInput) {
   const queryVector = await embeddingService.embed(input.query);
 
   const hybridVectorResults = await searchVector(
-    vectorStore,
+    storageAdapter,
     queryVector,
     topK,
     scopes,
     scopedContext.dirIds
   );
 
-  const keywordResults = await invertedIndex.search(input.keyword || input.query, {
-    dirIds: scopedContext.dirIds.length > 0 ? scopedContext.dirIds : undefined,
+  const keywordText = input.keyword || input.query;
+  const keywordResults = await storageAdapter.invertedIndex.search({
+    terms: [keywordText],
+    dirIds: scopedContext.dirIds,
     topK: topK * 3,
   });
 
@@ -224,7 +209,7 @@ export async function search(input: SearchInput) {
     keywordResults,
     scopedContext.fileLookup,
     new Set(diversified.map((item) => item.item.fileId).filter((fileId) => fileId.length > 0)),
-    vectorStore,
+    storageAdapter,
     markdownCache,
     summariesCache,
     locatorMappingCache
@@ -238,7 +223,7 @@ export async function search(input: SearchInput) {
       keyword: input.keyword,
     },
     scopedContext.fileLookup,
-    vectorStore,
+    storageAdapter,
     keywordSnippetsByFile,
     markdownCache,
     summariesCache,
@@ -443,7 +428,7 @@ function readIndexMetadata(dirPath: string): IndexMetadata | null {
 }
 
 async function searchVector(
-  store: VectorStore,
+  adapter: StorageAdapter,
   queryVector: number[],
   topK: number,
   scopes: string[],
@@ -451,29 +436,24 @@ async function searchVector(
 ) {
   const merged = new Map<string, { chunk_id: string; score: number; document: Record<string, unknown> }>();
 
-  const requests =
-    dirIds.length > 0
-      ? [{ dirIds }]
-      : scopes.length > 0
-        ? scopes.map((scope) => ({ filePathPrefix: scope }))
-        : [{}];
+  const searchDirIds = dirIds.length > 0 ? dirIds : [];
 
-  for (const request of requests) {
-    const results = await store.searchByContent(queryVector, {
-      ...request,
-      topK: topK * 3,
-      minResultsBeforeFallback: topK,
-    });
+  const results = await adapter.vector.searchByVector({
+    vector: queryVector,
+    dirIds: searchDirIds,
+    topK: topK * 3,
+    mode: 'postfilter',
+    minResultsBeforeFallback: topK,
+  });
 
-    for (const result of results) {
-      const existing = merged.get(result.chunk_id);
-      if (!existing || existing.score < result.score) {
-        merged.set(result.chunk_id, {
-          chunk_id: result.chunk_id,
-          score: result.score,
-          document: result.document as unknown as Record<string, unknown>,
-        });
-      }
+  for (const result of results) {
+    const existing = merged.get(result.chunkId);
+    if (!existing || existing.score < result.score) {
+      merged.set(result.chunkId, {
+        chunk_id: result.chunkId,
+        score: result.score,
+        document: result.document as unknown as Record<string, unknown>,
+      });
     }
   }
 
@@ -521,7 +501,7 @@ async function buildKeywordSnippetsByFile(
   keywordResults: InvertedSearchResult[],
   fileLookup: Map<string, FileLookup>,
   topFileIds: Set<string>,
-  store: VectorStore,
+  adapter: StorageAdapter,
   markdownCache: Map<string, string>,
   summariesCache: Map<string, { documentSummary: string }>,
   locatorMappingCache: Map<string, LocatorMappingItem[]>
@@ -547,7 +527,7 @@ async function buildKeywordSnippetsByFile(
     runtimeItems.push(mapKeywordItem(item, fileLookup));
   }
 
-  await enrichChunkRangesFromVectorStore(runtimeItems, store);
+  await enrichChunkRangesFromVectorStore(runtimeItems, adapter);
 
   const snippetsByFile = new Map<string, KeywordSnippet[]>();
   for (const item of runtimeItems) {
@@ -587,7 +567,7 @@ async function reselectionAggregatedResults(
     keyword?: string;
   },
   fileLookup: Map<string, FileLookup>,
-  store: VectorStore,
+  adapter: StorageAdapter,
   keywordSnippetsByFile: Map<string, KeywordSnippet[]>,
   markdownCache: Map<string, string>,
   summariesCache: Map<string, { documentSummary: string }>,
@@ -614,7 +594,7 @@ async function reselectionAggregatedResults(
     }
   }
 
-  await enrichChunkRangesFromVectorStore([...candidateItems.values()], store);
+  await enrichChunkRangesFromVectorStore([...candidateItems.values()], adapter);
 
   const hydratedCache = new Map<
     string,
@@ -721,12 +701,10 @@ async function hydrateResult(
     };
   }
 
-  const storage = getAfdStorage(fileInfo.dirPath);
   const archiveCacheKey = `${normalizePath(fileInfo.dirPath)}/${fileInfo.afdName}`;
-  const markdown = await readMarkdown(storage, fileInfo.afdName, archiveCacheKey, markdownCache);
-  const summaries = await readSummaries(storage, fileInfo.afdName, archiveCacheKey, summariesCache);
+  const markdown = await readMarkdown(fileInfo.afdName, archiveCacheKey, markdownCache);
+  const summaries = await readSummaries(fileInfo.afdName, archiveCacheKey, summariesCache);
   const locatorMappings = await readLocatorMappings(
-    storage,
     fileInfo.afdName,
     archiveCacheKey,
     locatorMappingCache
@@ -756,7 +734,7 @@ async function hydrateResult(
 
 async function enrichChunkRangesFromVectorStore(
   items: RuntimeSearchItem[],
-  store: VectorStore
+  adapter: StorageAdapter
 ): Promise<void> {
   const missingChunkIds = Array.from(
     new Set(
@@ -771,17 +749,10 @@ async function enrichChunkRangesFromVectorStore(
     return;
   }
 
-  const getByChunkIds = (store as unknown as {
-    getByChunkIds?: (chunkIds: string[]) => Promise<Array<Record<string, unknown>>>;
-  }).getByChunkIds;
-
-  if (typeof getByChunkIds !== 'function') {
-    return;
-  }
-
-  let docs: Array<Record<string, unknown>>;
+  let docs: Array<{ chunk_id?: unknown; chunk_line_start?: unknown; chunk_line_end?: unknown }>;
   try {
-    docs = await getByChunkIds(missingChunkIds);
+    const results = await adapter.vector.getByChunkIds(missingChunkIds);
+    docs = results as typeof docs;
   } catch {
     return;
   }
@@ -818,22 +789,7 @@ function hasLineRange(item: RuntimeSearchItem): boolean {
   );
 }
 
-function getAfdStorage(dirPath: string): AFDStorage {
-  const key = normalizePath(dirPath);
-  const cached = afdStorageCache.get(key);
-  if (cached) {
-    return cached;
-  }
-
-  const storage = createAFDStorage({
-    documentsDir: join(dirPath, '.fs_index', 'documents'),
-  });
-  afdStorageCache.set(key, storage);
-  return storage;
-}
-
 async function readMarkdown(
-  storage: AFDStorage,
   archiveName: string,
   cacheKey: string,
   cache: Map<string, string>
@@ -843,8 +799,13 @@ async function readMarkdown(
     return cached;
   }
 
+  if (!storageAdapter) {
+    cache.set(cacheKey, '');
+    return '';
+  }
+
   try {
-    const value = await storage.readText(archiveName, 'content.md');
+    const value = await storageAdapter.archive.read(archiveName, 'content.md');
     cache.set(cacheKey, value);
     return value;
   } catch {
@@ -854,7 +815,6 @@ async function readMarkdown(
 }
 
 async function readSummaries(
-  storage: AFDStorage,
   archiveName: string,
   cacheKey: string,
   cache: Map<string, { documentSummary: string }>
@@ -864,9 +824,15 @@ async function readSummaries(
     return cached;
   }
 
+  if (!storageAdapter) {
+    const empty = { documentSummary: '' };
+    cache.set(cacheKey, empty);
+    return empty;
+  }
+
   try {
-    const buffer = await storage.read(archiveName, 'summaries.json');
-    const parsed = JSON.parse(buffer.toString('utf-8')) as { documentSummary?: unknown };
+    const text = await storageAdapter.archive.read(archiveName, 'summaries.json');
+    const parsed = JSON.parse(text) as { documentSummary?: unknown };
     const normalized = {
       documentSummary:
         typeof parsed.documentSummary === 'string' ? parsed.documentSummary : '',
@@ -889,7 +855,6 @@ interface LocatorMappingItem {
 }
 
 async function readLocatorMappings(
-  storage: AFDStorage,
   archiveName: string,
   cacheKey: string,
   cache: Map<string, LocatorMappingItem[]>
@@ -899,9 +864,15 @@ async function readLocatorMappings(
     return cached;
   }
 
+  if (!storageAdapter) {
+    const empty: LocatorMappingItem[] = [];
+    cache.set(cacheKey, empty);
+    return empty;
+  }
+
   try {
-    const buffer = await storage.read(archiveName, 'metadata.json');
-    const parsed = JSON.parse(buffer.toString('utf-8')) as { mapping?: LocatorMappingItem[] };
+    const text = await storageAdapter.archive.read(archiveName, 'metadata.json');
+    const parsed = JSON.parse(text) as { mapping?: LocatorMappingItem[] };
     const mapping = Array.isArray(parsed.mapping) ? parsed.mapping : [];
     cache.set(cacheKey, mapping);
     return mapping;
