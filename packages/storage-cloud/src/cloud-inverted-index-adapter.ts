@@ -20,7 +20,7 @@ async function loadJieba(): Promise<{ cut: (text: string) => string[] }> {
   return jieba;
 }
 
-async function tokenize(text: string): Promise<string[]> {
+export async function tokenize(text: string): Promise<string[]> {
   const j = await loadJieba();
   return j
     .cut(text)

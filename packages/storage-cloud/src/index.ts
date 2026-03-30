@@ -16,7 +16,7 @@ export {
 export type { S3Config } from './s3.js';
 
 export { CloudVectorStoreAdapter } from './cloud-vector-store-adapter.js';
-export { CloudInvertedIndexAdapter } from './cloud-inverted-index-adapter.js';
+export { CloudInvertedIndexAdapter, tokenize } from './cloud-inverted-index-adapter.js';
 export { CloudArchiveAdapter } from './cloud-archive-adapter.js';
 export { CloudMetadataAdapter } from './cloud-metadata-adapter.js';
 

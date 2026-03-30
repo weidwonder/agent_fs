@@ -25,9 +25,30 @@ export class CloudVectorStoreAdapter implements VectorStoreAdapter {
     // Pool already initialised globally; pgvector extension enabled in initDb
   }
 
+  /** Create HNSW index for the given dimension if it doesn't already exist. */
+  async ensureVectorIndex(dim: number): Promise<void> {
+    const pool = getPool();
+    // Check if index exists
+    const check = await pool.query(
+      `SELECT 1 FROM pg_indexes WHERE tablename = 'chunks' AND indexname = 'idx_chunks_hnsw'`,
+    );
+    if (check.rowCount && check.rowCount > 0) return;
+    await pool.query(
+      `CREATE INDEX idx_chunks_hnsw ON chunks
+       USING hnsw ((content_vector::vector(${dim})) vector_cosine_ops)
+       WITH (m = 16, ef_construction = 64)`,
+    );
+  }
+
   async addDocuments(docs: VectorDocument[]): Promise<void> {
     if (docs.length === 0) return;
     const pool = getPool();
+
+    // Ensure HNSW index exists with correct dimension (lazy creation)
+    const firstVec = docs[0].content_vector;
+    if (firstVec && firstVec.length > 0) {
+      await this.ensureVectorIndex(firstVec.length);
+    }
 
     const values: unknown[] = [];
     const placeholders: string[] = [];

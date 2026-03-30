@@ -96,13 +96,14 @@ CREATE TABLE IF NOT EXISTS chunks (
   chunk_line_start INT NOT NULL DEFAULT 0,
   chunk_line_end INT NOT NULL DEFAULT 0,
   locator TEXT NOT NULL DEFAULT '',
-  content_vector vector(1024),
+  -- Dimension set at first-use via ensureVectorIndex(); default 1536 covers most models
+  content_vector vector,
   indexed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   deleted_at TIMESTAMPTZ
 );
-CREATE INDEX IF NOT EXISTS idx_chunks_hnsw ON chunks
-  USING hnsw (content_vector vector_cosine_ops)
-  WITH (m = 16, ef_construction = 64);
+-- NOTE: HNSW index requires a fixed dimension and is created lazily by
+-- CloudVectorStoreAdapter.ensureVectorIndex(dim) after the first batch of
+-- documents is inserted. Do NOT add a static hnsw index here.
 CREATE INDEX IF NOT EXISTS idx_chunks_dir ON chunks(dir_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_file ON chunks(file_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_tenant ON chunks(tenant_id);

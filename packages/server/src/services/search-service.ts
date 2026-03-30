@@ -2,7 +2,7 @@
 
 import type { StorageAdapter } from '@agent-fs/storage-adapter';
 import type { EmbeddingService } from '@agent-fs/llm';
-import { getPool } from '@agent-fs/storage-cloud';
+import { getPool, tokenize } from '@agent-fs/storage-cloud';
 
 export interface SearchParams {
   tenantId: string;
@@ -43,12 +43,9 @@ export class SearchService {
       mode: 'postfilter',
     });
 
-    // Inverted index search — tokenize the query text
+    // Inverted index search — tokenize with jieba for CJK support
     const searchText = keyword ?? query;
-    const terms = searchText
-      .split(/\s+/)
-      .map((t) => t.trim().toLowerCase())
-      .filter((t) => t.length > 0);
+    const terms = await tokenize(searchText);
 
     const invertedResults =
       terms.length > 0

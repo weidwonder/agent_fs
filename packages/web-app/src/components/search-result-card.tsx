@@ -3,6 +3,10 @@ interface SearchResult {
   chunk_id?: string;
   score?: number;
   content?: string;
+  // Backend returns flat fields from SearchResult type
+  filePath?: string;
+  locator?: string;
+  // Legacy nested shape — kept for backward compatibility
   document?: {
     file_path?: string;
     locator?: string;
@@ -16,7 +20,7 @@ interface SearchResultCardProps {
 
 export function SearchResultCard({ result, index }: SearchResultCardProps) {
   const chunkId = result.chunkId ?? result.chunk_id ?? '';
-  const filePath = result.document?.file_path ?? '';
+  const filePath = result.filePath ?? result.document?.file_path ?? '';
   const content = result.content ?? '';
 
   return (

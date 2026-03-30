@@ -108,8 +108,14 @@ export async function mcpRoutes(
       return reply.status(400).send({ error: 'Invalid JSON-RPC request' });
     }
 
+    // Notifications have no id and expect no response (HTTP 202)
+    if (body.id === undefined || body.id === null) {
+      await handleRpcRequest(tenantId, body, mcpToolService);
+      return reply.status(202).send();
+    }
+
     const response = await handleRpcRequest(tenantId, body, mcpToolService);
-    return reply.send(response);
+    return reply.header('content-type', 'application/json').send(response);
   });
 
   // Also handle GET for tools/list (convenience endpoint)
@@ -128,7 +134,17 @@ async function handleRpcRequest(
   try {
     let result: unknown;
 
-    if (method === 'tools/list') {
+    if (method === 'initialize') {
+      // MCP initialize handshake — respond with server capabilities
+      result = {
+        protocolVersion: '2024-11-05',
+        capabilities: { tools: {} },
+        serverInfo: { name: 'agent-fs', version: '0.1.0' },
+      };
+    } else if (method === 'notifications/initialized') {
+      // Client ack — no response needed (return null result)
+      result = null;
+    } else if (method === 'tools/list') {
       result = { tools: TOOL_LIST };
     } else if (method === 'tools/call') {
       const { name, arguments: args } = params as {
