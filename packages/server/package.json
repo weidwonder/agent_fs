@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@agent-fs/core": "workspace:*",
+    "@agent-fs/indexer": "workspace:*",
+    "@agent-fs/llm": "workspace:*",
     "@agent-fs/storage-adapter": "workspace:*",
     "@agent-fs/storage-cloud": "workspace:*",
     "fastify": "^5.0.0",
