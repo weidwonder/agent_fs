@@ -1,8 +1,12 @@
 // packages/server/src/app.ts
 
+import { existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
+import fastifyStatic from '@fastify/static';
 import type { ServerConfig } from './config.js';
 import { initDependencies, disposeDependencies } from './di.js';
 import { AuthService } from './services/auth-service.js';
@@ -55,6 +59,25 @@ export async function createApp(config: ServerConfig) {
   await mcpRoutes(app, config, mcpToolService);
 
   app.get('/health', async () => ({ status: 'ok' }));
+
+  // Serve web-app SPA in production
+  const webAppDist = join(dirname(fileURLToPath(import.meta.url)), '../../web-app/dist');
+  if (existsSync(webAppDist)) {
+    await app.register(fastifyStatic, { root: webAppDist, prefix: '/' });
+    app.setNotFoundHandler((request, reply) => {
+      if (
+        request.url.startsWith('/auth') ||
+        request.url.startsWith('/projects') ||
+        request.url.startsWith('/search') ||
+        request.url.startsWith('/mcp') ||
+        request.url.startsWith('/health')
+      ) {
+        reply.status(404).send({ error: 'Not found' });
+      } else {
+        void reply.sendFile('index.html');
+      }
+    });
+  }
 
   app.setErrorHandler(errorHandler);
 

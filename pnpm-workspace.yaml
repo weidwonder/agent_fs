@@ -8,3 +8,4 @@ onlyBuiltDependencies:
   - sharp
   - canvas
   - bcrypt
+  - esbuild
