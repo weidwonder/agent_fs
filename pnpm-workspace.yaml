@@ -7,3 +7,4 @@ onlyBuiltDependencies:
   - electron
   - sharp
   - canvas
+  - bcrypt
