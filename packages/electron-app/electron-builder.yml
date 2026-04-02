@@ -18,6 +18,7 @@ mac:
   target: dmg
   category: public.app-category.productivity
   icon: resources/icon.icns
+  identity: null
 win:
   target: nsis
   icon: resources/icon.ico
