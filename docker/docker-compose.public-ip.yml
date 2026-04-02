@@ -1,0 +1,13 @@
+# docker/docker-compose.public-ip.yml
+# 单机公网 IP 部署覆盖：
+# - 复用基础 compose 的端口映射
+# - 通过 .env 中的绑定 IP 控制仅暴露应用端口
+services:
+  migrate:
+    image: "${APP_IMAGE:-agent-fs-cloud:20260330}"
+
+  server:
+    image: "${APP_IMAGE:-agent-fs-cloud:20260330}"
+
+  worker:
+    image: "${APP_IMAGE:-agent-fs-cloud:20260330}"
