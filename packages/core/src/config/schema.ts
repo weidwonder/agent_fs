@@ -28,6 +28,7 @@ const apiEmbeddingSchema = z.object({
   model: z.string().min(1),
   timeout_ms: z.number().int().positive().default(60000),
   max_retries: z.number().int().min(1).max(8).default(3),
+  batch_size: z.number().int().positive().max(64).default(24),
 });
 
 /**

@@ -87,6 +87,9 @@ export interface APIEmbeddingConfig {
 
   /** 最大重试次数 */
   max_retries?: number;
+
+  /** 单次批量请求的文本条数 */
+  batch_size?: number;
 }
 
 /**

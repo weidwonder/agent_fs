@@ -3,6 +3,7 @@ import type { EmbeddingConfig } from '@agent-fs/core';
 import type { EmbeddingService as EmbeddingServiceType } from './service';
 
 const apiProviderConstructorSpy = vi.hoisted(() => vi.fn());
+const apiProviderEmbedBatchSpy = vi.hoisted(() => vi.fn());
 
 vi.mock('./api-provider', () => {
   class APIEmbeddingProvider {
@@ -14,7 +15,7 @@ vi.mock('./api-provider', () => {
     embed = vi.fn().mockImplementation((text: string) =>
       Promise.resolve(new Array(512).fill(0).map((_, i) => i + text.length))
     );
-    embedBatch = vi.fn().mockImplementation((texts: string[]) =>
+    embedBatch = apiProviderEmbedBatchSpy.mockImplementation((texts: string[]) =>
       Promise.resolve(texts.map((text) => new Array(512).fill(0).map((_, i) => i + text.length)))
     );
     getDimension = vi.fn().mockResolvedValue(512);
@@ -46,6 +47,7 @@ describe('EmbeddingService', () => {
       model: 'text-embedding-3-small',
       timeout_ms: 45000,
       max_retries: 4,
+      batch_size: 24,
     },
   };
 
@@ -54,6 +56,7 @@ describe('EmbeddingService', () => {
   beforeEach(async () => {
     vi.resetModules();
     apiProviderConstructorSpy.mockClear();
+    apiProviderEmbedBatchSpy.mockClear();
     const module = await import('./service');
     service = new module.EmbeddingService(apiConfig);
     await service.init();
@@ -110,5 +113,15 @@ describe('EmbeddingService', () => {
         maxRetries: 4,
       })
     );
+  });
+
+  it('should use configured API batch size by default', async () => {
+    const texts = new Array(25).fill(null).map((_, index) => `text-${index}`);
+
+    await service.embedBatch(texts, { useCache: false });
+
+    expect(apiProviderEmbedBatchSpy).toHaveBeenCalledTimes(2);
+    expect(apiProviderEmbedBatchSpy).toHaveBeenNthCalledWith(1, texts.slice(0, 24));
+    expect(apiProviderEmbedBatchSpy).toHaveBeenNthCalledWith(2, texts.slice(24));
   });
 });

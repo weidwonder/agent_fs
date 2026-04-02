@@ -8,6 +8,7 @@ export function buildEmbeddingConfig() {
   const apiKey = process.env['EMBEDDING_API_KEY'];
   const baseUrl = process.env['EMBEDDING_BASE_URL'];
   const model = process.env['EMBEDDING_MODEL'] ?? 'text-embedding-3-small';
+  const apiBatchSize = Number(process.env['EMBEDDING_BATCH_SIZE'] ?? '24');
 
   if (apiKey && baseUrl) {
     return {
@@ -19,6 +20,7 @@ export function buildEmbeddingConfig() {
         model,
         timeout_ms: 30000,
         max_retries: 3,
+        batch_size: Number.isFinite(apiBatchSize) && apiBatchSize > 0 ? apiBatchSize : 24,
       },
     };
   }

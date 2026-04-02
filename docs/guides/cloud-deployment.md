@@ -114,6 +114,17 @@ JWT_SECRET=dev-secret \
 
 Embedding 相关配置通过全局 `~/.agent_fs/config.yaml`（或环境变量）注入，详见 [代码规范](code-standards.md)。
 
+若使用 OpenAI 兼容 embedding 接口，建议显式设置：
+
+```env
+EMBEDDING_BATCH_SIZE=24
+```
+
+原因：
+
+- 部分兼容接口对 `/embeddings` 的单次 `input[]` 条数限制比 OpenAI 官方更严
+- 当前线上 `embedding-2` 经实测 `32` 条一批会触发 `400 / 1210`，`24` 条一批可稳定通过
+
 ---
 
 ## 5. 数据库 Migration

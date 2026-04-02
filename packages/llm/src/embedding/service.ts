@@ -48,16 +48,19 @@ export class EmbeddingService {
   private cache: EmbeddingCache;
   private modelName: string;
   private dimension: number | null = null;
+  private defaultBatchSize: number;
 
   constructor(config: EmbeddingConfig) {
     if (config.default === 'local' && config.local) {
       this.modelName = config.local.model;
+      this.defaultBatchSize = 32;
       this.provider = new LocalEmbeddingProvider({
         model: config.local.model,
         device: config.local.device,
       });
     } else if (config.api) {
       this.modelName = config.api.model;
+      this.defaultBatchSize = config.api.batch_size ?? 24;
       this.provider = new APIEmbeddingProvider({
         base_url: config.api.base_url,
         api_key: config.api.api_key,
@@ -116,7 +119,7 @@ export class EmbeddingService {
    * 批量生成 embedding
    */
   async embedBatch(texts: string[], options: EmbeddingOptions = {}): Promise<EmbeddingResult> {
-    const { useCache = true, batchSize = 32 } = options;
+    const { useCache = true, batchSize = this.defaultBatchSize } = options;
 
     const results: (number[] | null)[] = new Array(texts.length).fill(null);
     let cacheHits = 0;

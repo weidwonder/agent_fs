@@ -91,6 +91,7 @@ describe('configSchema', () => {
     const result = validateConfig(apiConfig);
     expect(result.embedding.api?.timeout_ms).toBe(60000);
     expect(result.embedding.api?.max_retries).toBe(3);
+    expect(result.embedding.api?.batch_size).toBe(24);
   });
 
   it('should keep custom embedding API timeout and retries', () => {
@@ -105,6 +106,7 @@ describe('configSchema', () => {
           model: 'text-embedding-3-small',
           timeout_ms: 120000,
           max_retries: 5,
+          batch_size: 12,
         },
       },
       indexing: { chunk_size: {} },
@@ -114,6 +116,7 @@ describe('configSchema', () => {
     const result = validateConfig(apiConfig);
     expect(result.embedding.api?.timeout_ms).toBe(120000);
     expect(result.embedding.api?.max_retries).toBe(5);
+    expect(result.embedding.api?.batch_size).toBe(12);
   });
 
   it('should apply default summary config', () => {

@@ -20,6 +20,7 @@ describe('Config Types', () => {
     expectTypeOf<APIEmbeddingConfig>().toHaveProperty('api_key');
     expectTypeOf<APIEmbeddingConfig>().toHaveProperty('timeout_ms');
     expectTypeOf<APIEmbeddingConfig>().toHaveProperty('max_retries');
+    expectTypeOf<APIEmbeddingConfig>().toHaveProperty('batch_size');
   });
 
   it('IndexingConfig 与 SearchConfig 使用 snake_case 字段', () => {
