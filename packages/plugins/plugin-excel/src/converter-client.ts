@@ -143,7 +143,7 @@ function defaultSpawn(command: string, args: string[]): ConverterProcess {
 }
 
 export function resolveConverterPath(customPath?: string): string {
-  if (customPath) return resolveExistingPath(customPath);
+  if (customPath) return resolvePreferredExistingPath(customPath);
 
   const packagedPath = resolvePackagedResourcePath('excel', 'ExcelConverter.dll');
   if (packagedPath) return packagedPath;
@@ -153,7 +153,7 @@ export function resolveConverterPath(customPath?: string): string {
     'dotnet',
     'ExcelConverter.dll'
   );
-  const resolvedDefaultPath = resolveExistingPath(defaultPath);
+  const resolvedDefaultPath = resolvePreferredExistingPath(defaultPath);
   if (existsSync(resolvedDefaultPath)) return resolvedDefaultPath;
 
   try {
@@ -161,7 +161,7 @@ export function resolveConverterPath(customPath?: string): string {
     const packageJson = require.resolve('@agent-fs/plugin-excel/package.json');
     const packageDir = dirname(packageJson);
     const fallbackPath = join(packageDir, 'dist', 'dotnet', 'ExcelConverter.dll');
-    const resolvedFallbackPath = resolveExistingPath(fallbackPath);
+    const resolvedFallbackPath = resolvePreferredExistingPath(fallbackPath);
     if (existsSync(resolvedFallbackPath)) return resolvedFallbackPath;
   } catch {
     // 忽略解析失败
@@ -180,7 +180,7 @@ export function resolveConverterPath(customPath?: string): string {
         'dotnet',
         'ExcelConverter.dll'
       );
-      const resolvedCandidatePath = resolveExistingPath(candidatePath);
+      const resolvedCandidatePath = resolvePreferredExistingPath(candidatePath);
       if (existsSync(resolvedCandidatePath)) return resolvedCandidatePath;
 
       const projectCandidatePath = join(
@@ -210,10 +210,20 @@ function resolvePackagedResourcePath(...pathSegments: string[]): string | null {
     return null;
   }
 
-  const packagedPath = resolveExistingPath(
+  const packagedPath = resolvePreferredExistingPath(
     join(resourcesPath, 'converters', ...pathSegments),
   );
   return existsSync(packagedPath) ? packagedPath : null;
+}
+
+function resolvePreferredExistingPath(inputPath: string): string {
+  for (const candidate of buildDirectPathCandidates(inputPath)) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return resolveExistingPath(inputPath);
 }
 
 export function resolveExistingPath(inputPath: string): string {
@@ -224,6 +234,15 @@ export function resolveExistingPath(inputPath: string): string {
   }
 
   return inputPath;
+}
+
+function buildDirectPathCandidates(inputPath: string): string[] {
+  const candidates = [inputPath];
+  if (inputPath.includes('app.asar')) {
+    candidates.unshift(inputPath.replace(/app\.asar([/\\])/u, 'app.asar.unpacked$1'));
+  }
+
+  return Array.from(new Set(candidates));
 }
 
 export function resolveConverterLaunchTarget(inputPath: string): ConverterLaunchTarget {
@@ -292,5 +311,17 @@ function buildPathCandidates(inputPath: string): string[] {
 }
 
 function buildLaunchPathCandidates(inputPath: string): string[] {
-  return buildPathCandidates(inputPath);
+  const candidates = buildPathCandidates(inputPath);
+  const executableCandidates = candidates.filter(
+    (candidate) => !candidate.endsWith('.dll') && !candidate.endsWith('.csproj'),
+  );
+  const dotnetCandidates = candidates.filter(
+    (candidate) => candidate.endsWith('.dll') || candidate.endsWith('.csproj'),
+  );
+
+  if (process.platform === 'win32') {
+    return Array.from(new Set([...executableCandidates, ...dotnetCandidates]));
+  }
+
+  return Array.from(new Set([...dotnetCandidates, ...executableCandidates]));
 }

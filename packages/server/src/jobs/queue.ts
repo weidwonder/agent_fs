@@ -17,5 +17,11 @@ export async function enqueueIndexing(
   boss: PgBoss,
   job: IndexFileJob,
 ): Promise<string | null> {
-  return boss.send(JOB_INDEX_FILE, job, { singletonKey: job.fileId });
+  const jobId = await boss.send(JOB_INDEX_FILE, job, { singletonKey: job.fileId });
+
+  if (!jobId) {
+    throw new Error(`Failed to enqueue indexing job for file ${job.fileId}`);
+  }
+
+  return jobId;
 }

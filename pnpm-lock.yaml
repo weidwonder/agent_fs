@@ -17,6 +17,9 @@ importers:
       nodejieba:
         specifier: ^2.6.0
         version: 2.6.0(encoding@0.1.13)
+      pg:
+        specifier: ^8.13.0
+        version: 8.20.0
       remark:
         specifier: ^15.0.1
         version: 15.0.1
@@ -361,6 +364,9 @@ importers:
       '@agent-fs/core':
         specifier: workspace:*
         version: link:../core
+      '@agent-fs/llm':
+        specifier: workspace:*
+        version: link:../llm
       '@lancedb/lancedb':
         specifier: ^0.23.0
         version: 0.23.0(apache-arrow@18.1.0)
@@ -437,6 +443,9 @@ importers:
       pg-boss:
         specifier: ^10.0.0
         version: 10.4.2
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
     devDependencies:
       '@types/bcrypt':
         specifier: ^5.0.0

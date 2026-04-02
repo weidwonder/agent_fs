@@ -45,10 +45,12 @@ export async function startWorker(config: ServerConfig): Promise<void> {
 
   const pluginManager = await buildPluginManager();
 
-  const chunker = new MarkdownChunker({ minTokens: 200, maxTokens: 800 });
+  // embedding-2 单条输入最多支持 512 tokens，留出安全余量避免大段文档触发上游参数错误。
+  const chunker = new MarkdownChunker({ minTokens: 200, maxTokens: 400 });
 
   const boss = new PgBoss(config.databaseUrl);
   await boss.start();
+  await boss.createQueue(JOB_INDEX_FILE);
 
   await boss.work<IndexFileJob>(
     JOB_INDEX_FILE,
@@ -249,4 +251,3 @@ async function buildPluginManager(): Promise<PluginManager> {
   await manager.initAll();
   return manager;
 }
-

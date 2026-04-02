@@ -4,7 +4,12 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { DocxService, resolveConverterLaunchTarget, resolveExistingPath } from './service';
+import {
+  DocxService,
+  resolveConverterLaunchTarget,
+  resolveConverterPath,
+  resolveExistingPath,
+} from './service';
 
 function createFakeProcess() {
   const stdout = new PassThrough();
@@ -203,8 +208,8 @@ describe('DocxService', () => {
       writeFileSync(executablePath, '');
     }
 
-    const { process } = createFakeProcess();
-    const spawnFn = vi.fn().mockReturnValue(process as any);
+    const { process: fakeProcess } = createFakeProcess();
+    const spawnFn = vi.fn().mockReturnValue(fakeProcess as any);
     const service = new DocxService({
       spawnFn,
       converterPath: '/tmp/DocxConverter.dll',
@@ -212,7 +217,11 @@ describe('DocxService', () => {
 
     await service.start();
 
-    expect(spawnFn).toHaveBeenCalledWith(executablePath, []);
+    if (process.platform === 'win32') {
+      expect(spawnFn).toHaveBeenCalledWith(executablePath, []);
+    } else {
+      expect(spawnFn).toHaveBeenCalledWith('dotnet', ['/tmp/DocxConverter.dll']);
+    }
 
     rmSync(executablePath, { force: true });
   });
@@ -231,7 +240,7 @@ describe('DocxService', () => {
     rmSync(tempRoot, { recursive: true, force: true });
   });
 
-  it('应为 dll 路径生成正确的启动目标', () => {
+  it('仅存在可执行文件时应回退到可执行文件启动', () => {
     const tempRoot = join(
       tmpdir(),
       `docx-service-launch-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -247,6 +256,58 @@ describe('DocxService', () => {
       path: executablePath,
     });
 
+    rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  it('同时存在 dll 和可执行文件时应按平台选择正确启动目标', () => {
+    const tempRoot = join(
+      tmpdir(),
+      `docx-service-launch-order-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
+    const executablePath = join(tempRoot, 'DocxConverter');
+    const dllPath = `${executablePath}.dll`;
+    mkdirSync(tempRoot, { recursive: true });
+    writeFileSync(executablePath, '');
+    writeFileSync(dllPath, '');
+
+    const target = resolveConverterLaunchTarget(dllPath);
+    if (process.platform === 'win32') {
+      expect(target).toEqual({
+        command: executablePath,
+        args: [],
+        path: executablePath,
+      });
+    } else {
+      expect(target).toEqual({
+        command: 'dotnet',
+        args: [dllPath],
+        path: dllPath,
+      });
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  it('自定义转换器路径同时存在 dll 和可执行文件时应优先保留 dll', () => {
+    const tempRoot = join(
+      tmpdir(),
+      `docx-service-resolve-path-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
+    const executablePath = join(tempRoot, 'DocxConverter');
+    const dllPath = `${executablePath}.dll`;
+    const previous = process.env.AGENT_FS_DOCX_CONVERTER;
+    mkdirSync(tempRoot, { recursive: true });
+    writeFileSync(executablePath, '');
+    writeFileSync(dllPath, '');
+    process.env.AGENT_FS_DOCX_CONVERTER = dllPath;
+
+    expect(resolveConverterPath()).toBe(dllPath);
+
+    if (previous === undefined) {
+      delete process.env.AGENT_FS_DOCX_CONVERTER;
+    } else {
+      process.env.AGENT_FS_DOCX_CONVERTER = previous;
+    }
     rmSync(tempRoot, { recursive: true, force: true });
   });
 });

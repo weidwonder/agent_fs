@@ -25,6 +25,7 @@ import { errorHandler } from './middleware/error-handler.js';
 import PgBoss from 'pg-boss';
 import { EmbeddingService } from '@agent-fs/llm';
 import { buildEmbeddingConfig } from './services/embedding-config.js';
+import { JOB_INDEX_FILE } from './jobs/queue.js';
 
 export async function createApp(config: ServerConfig) {
   const app = Fastify({ logger: true });
@@ -43,6 +44,7 @@ export async function createApp(config: ServerConfig) {
   // pg-boss for enqueuing (HTTP server doesn't run workers)
   const boss = new PgBoss(config.databaseUrl);
   await boss.start();
+  await boss.createQueue(JOB_INDEX_FILE);
 
   const authService = new AuthService(
     config.jwtSecret,
@@ -97,4 +99,3 @@ export async function createApp(config: ServerConfig) {
 
   return app;
 }
-

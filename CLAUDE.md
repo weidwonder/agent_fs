@@ -41,6 +41,9 @@
 云端部署指南
 └─> docs/guides/cloud-deployment.md
 
+182.92.22.224 部署记录
+└─> docs/guides/2026-03-30-182-92-22-224-deployment-record.md
+
 快速上手（用户使用流程）
 └─> docs/guides/getting-started.md
 

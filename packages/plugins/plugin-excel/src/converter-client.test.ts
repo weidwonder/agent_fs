@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import {
   ConverterClient,
   resolveConverterLaunchTarget,
+  resolveConverterPath,
   resolveExistingPath,
   type ConverterProcess,
 } from './converter-client';
@@ -67,7 +68,7 @@ describe('ConverterClient', () => {
     rmSync(tempRoot, { recursive: true, force: true });
   });
 
-  it('存在发布可执行文件时应直接执行可执行文件', () => {
+  it('仅存在可执行文件时应回退到可执行文件启动', () => {
     const tempRoot = join(
       tmpdir(),
       `excel-client-launch-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -82,6 +83,51 @@ describe('ConverterClient', () => {
       args: [],
       path: executablePath,
     });
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  it('同时存在 dll 和可执行文件时应按平台选择正确启动目标', () => {
+    const tempRoot = join(
+      tmpdir(),
+      `excel-client-launch-order-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
+    const executablePath = join(tempRoot, 'ExcelConverter');
+    const dllPath = `${executablePath}.dll`;
+    mkdirSync(tempRoot, { recursive: true });
+    writeFileSync(executablePath, '');
+    writeFileSync(dllPath, '');
+
+    const target = resolveConverterLaunchTarget(dllPath);
+    if (process.platform === 'win32') {
+      expect(target).toEqual({
+        command: executablePath,
+        args: [],
+        path: executablePath,
+      });
+    } else {
+      expect(target).toEqual({
+        command: 'dotnet',
+        args: [dllPath],
+        path: dllPath,
+      });
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  it('自定义转换器路径同时存在 dll 和可执行文件时应优先保留 dll', () => {
+    const tempRoot = join(
+      tmpdir(),
+      `excel-client-resolve-path-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
+    const executablePath = join(tempRoot, 'ExcelConverter');
+    const dllPath = `${executablePath}.dll`;
+    mkdirSync(tempRoot, { recursive: true });
+    writeFileSync(executablePath, '');
+    writeFileSync(dllPath, '');
+
+    expect(resolveConverterPath(dllPath)).toBe(dllPath);
 
     rmSync(tempRoot, { recursive: true, force: true });
   });

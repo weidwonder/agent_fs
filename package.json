@@ -36,6 +36,7 @@
     "@lancedb/lancedb": "^0.23.0",
     "gpt-tokenizer": "^3.4.0",
     "nodejieba": "^2.6.0",
+    "pg": "^8.13.0",
     "remark": "^15.0.1",
     "remark-parse": "^11.0.0",
     "unified": "^11.0.5",
