@@ -6,7 +6,7 @@
 
 默认情况下，先直接执行：
 
-1. `probe`
+1. `connect-cloud` 或 `probe`
 2. `tools-list`
 3. `list-indexes`
 
@@ -25,10 +25,11 @@
 1. 是否已经提供 `AGENT_FS_ENDPOINT`
 2. 是否已经提供 `AGENT_FS_TOKEN`
 3. 是否已经提供 `AGENT_FS_CREDENTIALS_FILE`
-4. 是否已经提供 `AGENT_FS_LOCAL_START_CMD`
-5. 是否已经提供 `AGENT_FS_LOCAL_BIN`
-6. PATH 中是否存在可用的 Agent FS 本地命令
-7. 是否存在当前仓库源码，可用仓库内启动命令拉起本地服务
+4. 是否已经提供 `AGENT_FS_CONNECTION_FILE`
+5. 是否已经提供 `AGENT_FS_LOCAL_START_CMD`
+6. 是否已经提供 `AGENT_FS_LOCAL_BIN`
+7. PATH 中是否存在可用的 Agent FS 本地命令
+8. 是否存在当前仓库源码，可用仓库内启动命令拉起本地服务
 
 如果以上都不满足，不要假定本地服务可用，应明确告诉用户当前缺少本地运行时。
 
@@ -42,16 +43,24 @@
 最小配置：
 
 ```bash
-export AGENT_FS_ENDPOINT="http://server-host:3000/<service-endpoint>"
+export AGENT_FS_ENDPOINT="http://server-host:3000/"
 export AGENT_FS_TOKEN="..."
+```
+
+如果用户只给了云端地址，优先先跑：
+
+```bash
+python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py \
+  --endpoint "http://server-host:3000/" \
+  connect-cloud
 ```
 
 如果没有 token，但用户有账号密码，优先直接执行：
 
 ```bash
 python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py \
-  --endpoint "http://server-host:3000/<service-endpoint>" \
-  login-cloud \
+  --endpoint "http://server-host:3000/" \
+  connect-cloud \
   --email "user@example.com" \
   --password "your-password"
 ```
@@ -60,17 +69,24 @@ python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py \
 
 ```bash
 python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py \
-  --endpoint "http://server-host:3000/<service-endpoint>" \
-  register-cloud \
+  --endpoint "http://server-host:3000/" \
+  connect-cloud \
   --email "user@example.com" \
   --password "your-password" \
-  --tenant-name "My Workspace"
+  --tenant-name "My Workspace" \
+  --register-if-needed
 ```
 
 如果没有显式 token，也可以使用凭证文件：
 
 ```bash
 export AGENT_FS_CREDENTIALS_FILE="$HOME/.agent_fs/credentials.json"
+```
+
+如果希望连接成功后保存默认云端地址，也可以指定：
+
+```bash
+export AGENT_FS_CONNECTION_FILE="$HOME/.agent_fs/skill-state.json"
 ```
 
 凭证文件格式要求：
@@ -82,7 +98,7 @@ export AGENT_FS_CREDENTIALS_FILE="$HOME/.agent_fs/credentials.json"
 配置后先验证：
 
 ```bash
-python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py probe
+python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py connect-cloud
 ```
 
 ## 3. 本地模式
@@ -151,7 +167,7 @@ pnpm --filter <local-service-package> start --host=127.0.0.1 --port=3001
 同时需要 local + cloud 时：
 
 ```bash
-export AGENT_FS_ENDPOINT="http://cloud-host:3000/<service-endpoint>"
+export AGENT_FS_ENDPOINT="http://cloud-host:3000/"
 export AGENT_FS_CREDENTIALS_FILE="$HOME/.agent_fs/credentials.json"
 export AGENT_FS_LOCAL_BIN="/path/to/agent-fs"
 ```
@@ -167,7 +183,7 @@ export AGENT_FS_LOCAL_BIN="/path/to/agent-fs"
 无论 local 还是 cloud，完成 setup 后都至少跑：
 
 ```bash
-python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py probe
+python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py connect-cloud
 python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py tools-list
 python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py list-indexes
 ```

@@ -14,6 +14,14 @@ from urllib.request import Request, urlopen
 
 DEFAULT_ENDPOINT = "http://127.0.0.1:3001/mcp"
 DEFAULT_CREDENTIALS_FILE = Path.home() / ".agent_fs" / "credentials.json"
+DEFAULT_CONNECTION_FILE = Path.home() / ".agent_fs" / "skill-state.json"
+GLOBAL_OPTIONS = {
+    "--endpoint",
+    "--token",
+    "--credentials-file",
+    "--connection-file",
+    "--timeout",
+}
 
 
 class CliError(RuntimeError):
@@ -25,6 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--endpoint")
     parser.add_argument("--token")
     parser.add_argument("--credentials-file")
+    parser.add_argument("--connection-file")
     parser.add_argument("--timeout", type=float, default=30.0)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -32,6 +41,13 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("probe")
     subparsers.add_parser("tools-list")
     subparsers.add_parser("list-indexes")
+
+    connect_cloud = subparsers.add_parser("connect-cloud")
+    connect_cloud.add_argument("--email")
+    connect_cloud.add_argument("--password")
+    connect_cloud.add_argument("--client", default="cli")
+    connect_cloud.add_argument("--tenant-name")
+    connect_cloud.add_argument("--register-if-needed", action="store_true")
 
     login_cloud = subparsers.add_parser("login-cloud")
     login_cloud.add_argument("--email", required=True)
@@ -72,8 +88,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    args = build_parser().parse_args()
     try:
+        args = build_parser().parse_args(normalize_cli_argv(sys.argv[1:]))
         resolve_runtime_args(args)
         result = dispatch(args)
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -83,8 +99,27 @@ def main() -> int:
         return 1
 
 
+def normalize_cli_argv(argv: list[str]) -> list[str]:
+    global_args: list[str] = []
+    remaining: list[str] = []
+    i = 0
+    while i < len(argv):
+        token = argv[i]
+        if token in GLOBAL_OPTIONS:
+            global_args.append(token)
+            if i + 1 >= len(argv):
+                raise CliError(f"缺少 {token} 的参数值")
+            global_args.append(argv[i + 1])
+            i += 2
+            continue
+        remaining.append(token)
+        i += 1
+    return global_args + remaining
+
+
 def resolve_runtime_args(args: argparse.Namespace) -> None:
-    args.endpoint = resolve_endpoint(args.endpoint)
+    args.connection_file = resolve_connection_file(args.connection_file)
+    args.endpoint = resolve_endpoint(args.endpoint, args.connection_file)
     args.credentials_file = resolve_credentials_file(args.credentials_file)
     args.token, args.token_source = resolve_token(
         args.endpoint,
@@ -93,22 +128,28 @@ def resolve_runtime_args(args: argparse.Namespace) -> None:
     )
 
 
-def resolve_endpoint(raw: str | None) -> str:
-    endpoint = (
+def resolve_endpoint(raw: str | None, connection_file: Path) -> str:
+    raw_endpoint = (
         raw
         or os.getenv("AGENT_FS_ENDPOINT")
         or os.getenv("AGENT_FS_MCP_URL")
+        or load_default_endpoint(connection_file)
         or DEFAULT_ENDPOINT
     )
-    parsed = urlparse(endpoint)
+    parsed = urlparse(raw_endpoint)
     if not parsed.scheme or not parsed.netloc:
-        raise CliError(f"endpoint 非法: {endpoint}")
-    return endpoint
+        raise CliError(f"endpoint 非法: {raw_endpoint}")
+    return ensure_service_endpoint(raw_endpoint)
 
 
 def resolve_credentials_file(raw: str | None) -> Path:
     value = raw or os.getenv("AGENT_FS_CREDENTIALS_FILE")
     return Path(value).expanduser() if value else DEFAULT_CREDENTIALS_FILE
+
+
+def resolve_connection_file(raw: str | None) -> Path:
+    value = raw or os.getenv("AGENT_FS_CONNECTION_FILE")
+    return Path(value).expanduser() if value else DEFAULT_CONNECTION_FILE
 
 
 def resolve_token(
@@ -148,10 +189,7 @@ def resolve_token(
 
 
 def credential_lookup_keys(endpoint: str) -> list[str]:
-    parsed = urlparse(endpoint)
-    path = parsed.path.rstrip("/")
-    base_path = path[:-4] if path.endswith("/mcp") else path
-    base_url = urlunparse((parsed.scheme, parsed.netloc, base_path, "", "", ""))
+    base_url = to_base_url(endpoint)
     return [base_url, endpoint]
 
 
@@ -160,6 +198,8 @@ def dispatch(args: argparse.Namespace):
         return get_json(to_health_url(args.endpoint), args.token, args.timeout)
     if args.command == "probe":
         return probe_endpoint(args)
+    if args.command == "connect-cloud":
+        return connect_cloud(args)
     if args.command == "login-cloud":
         return login_cloud(args)
     if args.command == "register-cloud":
@@ -216,6 +256,7 @@ def probe_endpoint(args: argparse.Namespace) -> dict:
     return {
         "ok": health_payload["ok"] and tools_payload["ok"],
         "endpoint": args.endpoint,
+        "target": normalize_target(args.endpoint),
         "health_url": to_health_url(args.endpoint),
         "auth": {
             "has_token": bool(args.token),
@@ -231,6 +272,90 @@ def probe_endpoint(args: argparse.Namespace) -> dict:
         },
         "profile": infer_profile(tools),
     }
+
+
+def connect_cloud(args: argparse.Namespace) -> dict:
+    result = {
+        "ok": False,
+        "status": "connecting",
+        "endpoint": args.endpoint,
+        "target": normalize_target(args.endpoint),
+        "auth": {
+            "has_token": bool(args.token),
+            "token_source": args.token_source,
+            "credentials_file": str(args.credentials_file),
+            "login_performed": False,
+            "needs_login": False,
+        },
+        "quick_test": {
+            "health": None,
+            "tools_list": None,
+            "list_indexes": None,
+        },
+        "connection": {
+            "saved": False,
+            "connection_file": str(args.connection_file),
+        },
+    }
+
+    result["quick_test"]["health"] = get_json(to_health_url(args.endpoint), args.token, args.timeout)
+    save_default_endpoint(args.connection_file, args.endpoint)
+    result["connection"]["saved"] = True
+
+    try:
+        tools_result = fetch_tools(args)
+    except CliError as exc:
+        if not is_auth_error(exc):
+            raise
+        result["auth"]["needs_login"] = True
+        if not args.email or not args.password:
+            result["quick_test"]["tools_list"] = {"ok": False, "error": str(exc)}
+            result["status"] = "needs_login"
+            result["message"] = "服务已连通，但需要登录后才能调用知识库工具。"
+            result["next_action"] = "使用 connect-cloud 补充 email/password 后重试。"
+            return result
+
+        try:
+            login_result = login_cloud(args)
+        except CliError:
+            if not args.register_if_needed:
+                raise
+            register_cloud(args)
+            login_result = login_cloud(args)
+        result["auth"]["login_performed"] = True
+        result["auth"]["needs_login"] = False
+        result["auth"]["token_source"] = f"credentials:{args.credentials_file}"
+        result["auth"]["has_token"] = True
+        result["auth"]["login_result"] = login_result
+        args.token = None
+        args.token, args.token_source = resolve_token(
+            args.endpoint,
+            explicit_token=args.token,
+            credentials_file=args.credentials_file,
+        )
+        tools_result = fetch_tools(args)
+
+    result["quick_test"]["tools_list"] = {
+        "ok": True,
+        "count": len(tools_result.get("tools", [])),
+        "names": [tool.get("name") for tool in tools_result.get("tools", [])],
+    }
+
+    try:
+        list_indexes_result = call_tool(args, "list_indexes", {})
+        project_count = len(list_indexes_result) if isinstance(list_indexes_result, list) else None
+        result["quick_test"]["list_indexes"] = {
+            "ok": True,
+            "project_count": project_count,
+            "result": list_indexes_result,
+        }
+    except CliError as exc:
+        result["quick_test"]["list_indexes"] = {"ok": False, "error": str(exc)}
+
+    result["ok"] = True
+    result["status"] = "connected"
+    result["message"] = "云端知识库服务已连接，快速测试已完成。"
+    return result
 
 
 def login_cloud(args: argparse.Namespace) -> dict:
@@ -284,6 +409,7 @@ def persist_auth_result(args: argparse.Namespace, result: dict, email: str) -> d
     return {
         "ok": True,
         "target": target,
+        "endpoint": args.endpoint,
         "email": email,
         "credentials_file": str(args.credentials_file),
         "expires_at": expires_at,
@@ -386,18 +512,51 @@ def store_credential(credentials_file: Path, target: str, credential: dict) -> N
     credentials_file.chmod(0o600)
 
 
+def load_default_endpoint(connection_file: Path) -> str | None:
+    if not connection_file.exists():
+        return None
+    try:
+        state = json.loads(connection_file.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(state, dict):
+        return None
+    endpoint = state.get("defaultEndpoint")
+    return endpoint if isinstance(endpoint, str) and endpoint else None
+
+
+def save_default_endpoint(connection_file: Path, endpoint: str) -> None:
+    connection_file.parent.mkdir(parents=True, exist_ok=True)
+    state = {
+        "defaultEndpoint": normalize_target(endpoint),
+        "savedAt": datetime.now(timezone.utc).isoformat(),
+    }
+    connection_file.write_text(
+        json.dumps(state, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    connection_file.chmod(0o600)
+
+
 def normalize_target(endpoint: str) -> str:
+    return to_base_url(endpoint)
+
+
+def to_base_url(endpoint: str) -> str:
     parsed = urlparse(endpoint)
     path = parsed.path.rstrip("/")
-    base_path = path[:-4] if path.endswith("/mcp") else path
+    if path.endswith("/mcp"):
+        base_path = path[:-4]
+    elif path.endswith("/health"):
+        base_path = path[:-7]
+    else:
+        base_path = path
     return urlunparse((parsed.scheme, parsed.netloc, base_path, "", "", "")).rstrip("/")
 
 
 def to_api_url(endpoint: str, api_path: str) -> str:
-    parsed = urlparse(endpoint)
-    path = parsed.path.rstrip("/")
-    base_path = path[:-4] if path.endswith("/mcp") else path
-    return urlunparse((parsed.scheme, parsed.netloc, f"{base_path}{api_path}", "", "", ""))
+    base_url = to_base_url(endpoint)
+    return f"{base_url}{api_path}"
 
 
 def parse_token_expiry(access_token: str) -> str | None:
@@ -531,15 +690,30 @@ def extract_text(result: dict) -> str:
 
 
 def to_health_url(endpoint: str) -> str:
-    parsed = urlparse(endpoint)
-    path = parsed.path or ""
+    return f"{to_base_url(endpoint)}/health"
+
+
+def ensure_service_endpoint(raw_endpoint: str) -> str:
+    parsed = urlparse(raw_endpoint)
+    path = parsed.path.rstrip("/")
     if path.endswith("/mcp"):
-        health_path = f"{path[:-4]}/health" or "/health"
+        service_path = path
+    elif path.endswith("/health"):
+        service_path = f"{path[:-7]}/mcp" or "/mcp"
     elif path in ("", "/"):
-        health_path = "/health"
+        service_path = "/mcp"
     else:
-        health_path = f"{path.rstrip('/')}/health"
-    return urlunparse((parsed.scheme, parsed.netloc, health_path, "", "", ""))
+        service_path = f"{path}/mcp"
+    return urlunparse((parsed.scheme, parsed.netloc, service_path, "", "", ""))
+
+
+def is_auth_error(exc: CliError) -> bool:
+    message = str(exc)
+    return (
+        "HTTP 401" in message
+        or "Unauthorized" in message
+        or "Authorization header" in message
+    )
 
 
 if __name__ == "__main__":

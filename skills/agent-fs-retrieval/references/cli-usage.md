@@ -11,7 +11,7 @@
 
 1. `--endpoint`
 2. `AGENT_FS_ENDPOINT`
-3. 默认值 `http://127.0.0.1:3001/<service-endpoint>`
+3. 默认值 `http://127.0.0.1:3001/`
 
 ## 2. 认证来源
 
@@ -25,7 +25,7 @@ CLI 会按以下顺序找 token：
 
 凭证文件按 endpoint 对应的基础地址匹配，例如：
 
-- endpoint: `http://182.92.22.224:1202/<service-endpoint>`
+- endpoint: `http://182.92.22.224:1202/`
 - credentials key: `http://182.92.22.224:1202`
 
 ## 3. 命令模板
@@ -35,6 +35,49 @@ CLI 会按以下顺序找 token：
 ```bash
 python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py health
 ```
+
+### 一步连接云端并快速测试
+
+用户只给知识库根地址时，优先使用这个命令：
+
+```bash
+python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py \
+  --endpoint "http://server-host:3000/" \
+  connect-cloud
+```
+
+如果需要同时完成登录：
+
+```bash
+python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py \
+  --endpoint "http://server-host:3000/" \
+  connect-cloud \
+  --email "user@example.com" \
+  --password "your-password"
+```
+
+如果允许自动注册后再登录：
+
+```bash
+python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py \
+  --endpoint "http://server-host:3000/" \
+  connect-cloud \
+  --email "user@example.com" \
+  --password "your-password" \
+  --tenant-name "My Workspace" \
+  --register-if-needed
+```
+
+这个命令会自动完成：
+
+- 规范化服务地址
+- 健康检查
+- 工具面探测
+- 必要时登录
+- `list-indexes` 快速测试
+- 保存默认云端连接，后续可直接复用
+
+连接成功或地址已保存后，后续命令可不再重复传 `--endpoint`。
 
 ### 探测 endpoint 类型与能力
 
@@ -60,7 +103,7 @@ python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py tools-list
 
 ```bash
 python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py \
-  --endpoint "http://server-host:3000/<service-endpoint>" \
+  --endpoint "http://server-host:3000/" \
   login-cloud \
   --email "user@example.com" \
   --password "your-password"
@@ -72,7 +115,7 @@ python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py \
 
 ```bash
 python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py \
-  --endpoint "http://server-host:3000/<service-endpoint>" \
+  --endpoint "http://server-host:3000/" \
   register-cloud \
   --email "user@example.com" \
   --password "your-password" \
@@ -176,7 +219,7 @@ python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py get-project-memory \
 
 ```bash
 python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py \
-  --endpoint "http://server-host:3000/<service-endpoint>" \
+  --endpoint "http://server-host:3000/" \
   --token "$AGENT_FS_TOKEN" \
   probe
 ```
@@ -201,3 +244,4 @@ bash skills/agent-fs-retrieval/scripts/start-local-service.sh
 - 默认输出格式化 JSON
 - 工具调用错误时，脚本返回非 0，并把错误打印到 stderr
 - `search` 的正文结果会自动把工具返回中的 JSON 文本解开，不需要手工二次解析
+- `connect-cloud` 会返回明确状态，例如 `connected` 或 `needs_login`
