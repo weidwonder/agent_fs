@@ -25,3 +25,24 @@ export async function enqueueIndexing(
 
   return jobId;
 }
+
+export const JOB_REEMBED_FILE = 'reembed-file';
+
+export interface ReembedFileJob {
+  tenantId: string;
+  fileId: string;
+  directoryId: string;
+}
+
+export async function enqueueReembed(
+  boss: PgBoss,
+  job: ReembedFileJob,
+): Promise<string | null> {
+  const jobId = await boss.send(JOB_REEMBED_FILE, job, { singletonKey: job.fileId });
+
+  if (!jobId) {
+    throw new Error(`Failed to enqueue reembed job for file ${job.fileId}`);
+  }
+
+  return jobId;
+}
