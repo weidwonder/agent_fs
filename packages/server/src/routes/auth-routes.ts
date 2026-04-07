@@ -40,9 +40,13 @@ export async function authRoutes(
   });
 
   app.post('/auth/login', async (request, reply) => {
-    const { email, password } = request.body as { email: string; password: string };
+    const { email, password, client } = request.body as {
+      email: string;
+      password: string;
+      client?: string;
+    };
     try {
-      const result = await authService.login(email, password);
+      const result = await authService.login(email, password, client);
       return reply.send(result);
     } catch (err: unknown) {
       if (err instanceof Error && err.message === 'INVALID_CREDENTIALS') {

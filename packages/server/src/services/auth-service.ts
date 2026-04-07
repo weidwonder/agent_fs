@@ -5,6 +5,7 @@ import { getPool } from '@agent-fs/storage-cloud';
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 import { hashPassword, verifyPassword } from '../auth/password.js';
 import { signAccessToken, signRefreshToken, verifyToken } from '../auth/jwt.js';
+import { resolveAccessTokenExpiresIn } from '../auth/access-token-expiry.js';
 
 export interface AuthResult {
   accessToken: string;
@@ -67,7 +68,7 @@ export class AuthService {
     }
   }
 
-  async login(email: string, password: string): Promise<AuthResult> {
+  async login(email: string, password: string, client?: string): Promise<AuthResult> {
     if (!EMAIL_REGEX.test(email)) throw new Error('INVALID_EMAIL');
     if (!password) throw new Error('PASSWORD_REQUIRED');
 
@@ -91,8 +92,9 @@ export class AuthService {
       tenant_id: string;
       role: string;
     };
+    const expiresIn = resolveAccessTokenExpiresIn(client, this.jwtExpiresIn);
     return {
-      accessToken: signAccessToken({ userId: user.id, tenantId, role }, this.jwtSecret, this.jwtExpiresIn),
+      accessToken: signAccessToken({ userId: user.id, tenantId, role }, this.jwtSecret, expiresIn),
       refreshToken: signRefreshToken(user.id, this.jwtSecret, this.jwtRefreshExpiresIn),
       userId: user.id,
       tenantId,

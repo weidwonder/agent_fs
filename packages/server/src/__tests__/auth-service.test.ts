@@ -3,6 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { hashPassword, verifyPassword } from '../auth/password.js';
 import { signAccessToken, signRefreshToken, verifyToken } from '../auth/jwt.js';
+import { resolveAccessTokenExpiresIn } from '../auth/access-token-expiry.js';
 
 // ─── Password hashing ────────────────────────────────────────────────────────
 
@@ -75,5 +76,15 @@ describe('JWT utilities', () => {
     // Wait 2ms so token is expired
     await new Promise((r) => setTimeout(r, 2));
     expect(() => verifyToken(token, TEST_SECRET)).toThrow();
+  });
+});
+
+describe('resolveAccessTokenExpiresIn', () => {
+  it('在 CLI 客户端登录时返回 3d', () => {
+    expect(resolveAccessTokenExpiresIn('cli', '15m')).toBe('3d');
+  });
+
+  it('在普通客户端登录时沿用默认有效期', () => {
+    expect(resolveAccessTokenExpiresIn(undefined, '15m')).toBe('15m');
   });
 });
