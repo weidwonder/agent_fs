@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS files (
   chunk_count INT NOT NULL DEFAULT 0,
   summary TEXT,
   afd_key TEXT,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'indexing', 'indexed', 'failed')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'indexing', 'importing', 'embedding', 'indexed', 'failed')),
   indexed_at TIMESTAMPTZ,
   error_message TEXT,
   retry_count INT NOT NULL DEFAULT 0,
