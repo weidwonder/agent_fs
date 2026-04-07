@@ -4,11 +4,13 @@
   "type": "module",
   "main": "./dist/index.js",
   "bin": {
+    "agent-fs": "./dist/index.js",
     "agent-fs-mcp": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc",
     "dev": "tsc -w",
+    "start": "node dist/index.js",
     "test": "vitest run"
   },
   "dependencies": {
