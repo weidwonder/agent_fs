@@ -20,15 +20,17 @@ import { projectRoutes } from './routes/project-routes.js';
 import { documentRoutes } from './routes/document-routes.js';
 import { indexingEventRoutes } from './routes/indexing-event-routes.js';
 import { searchRoutes } from './routes/search-routes.js';
+import { importRoutes } from './routes/import-routes.js';
 import { mcpRoutes } from './mcp/streamable.js';
 import { errorHandler } from './middleware/error-handler.js';
 import PgBoss from 'pg-boss';
 import { EmbeddingService } from '@agent-fs/llm';
 import { buildEmbeddingConfig } from './services/embedding-config.js';
-import { JOB_INDEX_FILE } from './jobs/queue.js';
+import { JOB_INDEX_FILE, JOB_REEMBED_FILE } from './jobs/queue.js';
+import { ImportService } from './services/import-service.js';
 
 export async function createApp(config: ServerConfig) {
-  const app = Fastify({ logger: true });
+  const app = Fastify({ logger: true, bodyLimit: 52428800 });
 
   await app.register(cors, { origin: true });
   await app.register(multipart);
@@ -45,6 +47,7 @@ export async function createApp(config: ServerConfig) {
   const boss = new PgBoss(config.databaseUrl);
   await boss.start();
   await boss.createQueue(JOB_INDEX_FILE);
+  await boss.createQueue(JOB_REEMBED_FILE);
 
   const authService = new AuthService(
     config.jwtSecret,
@@ -53,6 +56,7 @@ export async function createApp(config: ServerConfig) {
   );
   const projectService = new ProjectService();
   const indexingService = new IndexingService(boss);
+  const importService = new ImportService(boss);
   const searchService = new SearchService(embeddingService);
   const mcpToolService = new McpToolService(searchService, indexingService);
 
@@ -64,6 +68,7 @@ export async function createApp(config: ServerConfig) {
       await documentRoutes(api, indexingService, config.jwtSecret);
       await indexingEventRoutes(api, config.jwtSecret);
       await searchRoutes(api, searchService, config.jwtSecret);
+      await importRoutes(api, importService, config.jwtSecret);
     },
     { prefix: '/api' },
   );

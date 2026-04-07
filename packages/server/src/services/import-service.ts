@@ -157,6 +157,14 @@ export class ImportService {
     relativePath: string,
   ): Promise<string> {
     const pool = getPool();
+    const projectResult = await pool.query(
+      'SELECT id FROM projects WHERE id = $1 AND tenant_id = $2',
+      [projectId, tenantId],
+    );
+    if (projectResult.rows.length === 0) {
+      throw new Error('PROJECT_NOT_FOUND');
+    }
+
     const existing = await pool.query(
       `SELECT id FROM directories
        WHERE project_id = $1 AND tenant_id = $2 AND relative_path = $3`,
