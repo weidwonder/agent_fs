@@ -42,6 +42,7 @@ export async function pushCommand(target: string, projectId: string, localPath?:
   const embeddingMatch =
     registry.embeddingModel === cloudEmbedding.model &&
     registry.embeddingDimension === cloudEmbedding.dimension;
+  let canReuseLocalVectors = embeddingMatch;
 
   if (embeddingMatch) {
     console.log(`Embedding 模型一致 (${registry.embeddingModel})，将直接迁移向量`);
@@ -51,11 +52,21 @@ export async function pushCommand(target: string, projectId: string, localPath?:
     );
   }
 
-  const localAdapter = createLocalAdapter({
-    storagePath: join(homedir(), '.agent_fs', 'storage'),
-    dimension: registry.embeddingDimension,
-  });
-  await localAdapter.init();
+  let localAdapter: StorageAdapter | null = null;
+  if (canReuseLocalVectors) {
+    try {
+      localAdapter = createLocalAdapter({
+        storagePath: join(homedir(), '.agent_fs', 'storage'),
+        dimension: registry.embeddingDimension,
+      });
+      await localAdapter.init();
+    } catch (error) {
+      canReuseLocalVectors = false;
+      console.warn(
+        `警告: 本地向量存储不可用，将改为云端重新生成向量：${error instanceof Error ? error.message : error}`,
+      );
+    }
+  }
 
   try {
     const allFiles = collectFiles(projectPath);
@@ -69,7 +80,7 @@ export async function pushCommand(target: string, projectId: string, localPath?:
       const label = `[${String(index + 1).padStart(String(total).length)}/${total}]`;
 
       try {
-        const body = await buildImportBody(file, localAdapter, embeddingMatch);
+        const body = await buildImportBody(file, localAdapter, canReuseLocalVectors);
         const response = await fetch(`${normalizedTarget}/api/projects/${projectId}/import`, {
           method: 'POST',
           headers: {
@@ -100,7 +111,9 @@ export async function pushCommand(target: string, projectId: string, localPath?:
     if (skipped > 0) console.log(`  跳过（已存在）：${skipped}`);
     if (failed > 0) console.log(`  失败：${failed}`);
   } finally {
-    await localAdapter.close();
+    if (localAdapter) {
+      await localAdapter.close();
+    }
   }
 }
 
@@ -133,8 +146,8 @@ function collectFilesRecursive(projectPath: string, relativePath: string, files:
 
 async function buildImportBody(
   file: CollectedFile,
-  localAdapter: StorageAdapter,
-  embeddingMatch: boolean,
+  localAdapter: StorageAdapter | null,
+  canReuseLocalVectors: boolean,
 ): Promise<Record<string, unknown>> {
   const archiveName = file.file.afdName ?? file.file.name ?? file.file.fileId;
   const storage = createAFDStorage({ documentsDir: join(file.dirPath, '.fs_index', 'documents') });
@@ -144,7 +157,7 @@ async function buildImportBody(
     metadataJson = await storage.readText(archiveName, 'metadata.json');
   } catch {}
 
-  const chunks = embeddingMatch
+  const chunks = canReuseLocalVectors && localAdapter
     ? await buildChunksFromLocalIndex(file, contentMd, localAdapter).catch(() => buildChunksForReembed(contentMd))
     : buildChunksForReembed(contentMd);
 
