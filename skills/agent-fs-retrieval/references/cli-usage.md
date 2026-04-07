@@ -4,28 +4,28 @@
 
 ## 1. 默认端点
 
-- MCP: `http://127.0.0.1:3001/mcp`
+- 服务端点: 由环境提供
 - Health: `http://127.0.0.1:3001/health`
 
 如果不显式传 `--endpoint`，CLI 会按以下顺序取值：
 
 1. `--endpoint`
-2. `AGENT_FS_MCP_URL`
-3. 默认值 `http://127.0.0.1:3001/mcp`
+2. `AGENT_FS_ENDPOINT`
+3. 默认值 `http://127.0.0.1:3001/<service-endpoint>`
 
 ## 2. 认证来源
 
 CLI 会按以下顺序找 token：
 
 1. `--token`
-2. `AGENT_FS_MCP_TOKEN`
+2. `AGENT_FS_TOKEN`
 3. `--credentials-file`
 4. `AGENT_FS_CREDENTIALS_FILE`
 5. 默认凭证文件 `~/.agent_fs/credentials.json`
 
 凭证文件按 endpoint 对应的基础地址匹配，例如：
 
-- endpoint: `http://182.92.22.224:1202/mcp`
+- endpoint: `http://182.92.22.224:1202/<service-endpoint>`
 - credentials key: `http://182.92.22.224:1202`
 
 ## 3. 命令模板
@@ -60,7 +60,7 @@ python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py tools-list
 
 ```bash
 python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py \
-  --endpoint "http://server-host:3000/mcp" \
+  --endpoint "http://server-host:3000/<service-endpoint>" \
   login-cloud \
   --email "user@example.com" \
   --password "your-password"
@@ -72,7 +72,7 @@ python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py \
 
 ```bash
 python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py \
-  --endpoint "http://server-host:3000/mcp" \
+  --endpoint "http://server-host:3000/<service-endpoint>" \
   register-cloud \
   --email "user@example.com" \
   --password "your-password" \
@@ -176,8 +176,8 @@ python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py get-project-memory \
 
 ```bash
 python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py \
-  --endpoint "http://server-host:3000/mcp" \
-  --token "$AGENT_FS_MCP_TOKEN" \
+  --endpoint "http://server-host:3000/<service-endpoint>" \
+  --token "$AGENT_FS_TOKEN" \
   probe
 ```
 
@@ -190,14 +190,14 @@ python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py \
 - `AGENT_FS_LOCAL_HOST`
 - `AGENT_FS_LOCAL_PORT`
 
-启动本地 MCP：
+启动本地服务：
 
 ```bash
-bash skills/agent-fs-retrieval/scripts/start-local-mcp.sh
+bash skills/agent-fs-retrieval/scripts/start-local-service.sh
 ```
 
 ## 6. 输出约定
 
 - 默认输出格式化 JSON
 - 工具调用错误时，脚本返回非 0，并把错误打印到 stderr
-- `search` 的正文结果会自动把 MCP `content[0].text` 里的 JSON 解开，不需要手工二次解析
+- `search` 的正文结果会自动把工具返回中的 JSON 文本解开，不需要手工二次解析

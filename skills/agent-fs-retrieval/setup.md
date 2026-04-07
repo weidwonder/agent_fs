@@ -1,6 +1,6 @@
 # Agent FS Retrieval Setup
 
-> 目的：当默认检索流程失败时，用这份文档补齐 Agent FS MCP 的运行条件。
+> 目的：当默认检索流程失败时，用这份文档补齐 Agent FS 知识库服务的运行条件。
 
 ## 0. 什么时候再看这份文档
 
@@ -22,36 +22,35 @@
 
 按这个顺序检查：
 
-1. 是否已经提供 `AGENT_FS_MCP_URL`
-2. 是否已经提供 `AGENT_FS_MCP_TOKEN`
+1. 是否已经提供 `AGENT_FS_ENDPOINT`
+2. 是否已经提供 `AGENT_FS_TOKEN`
 3. 是否已经提供 `AGENT_FS_CREDENTIALS_FILE`
 4. 是否已经提供 `AGENT_FS_LOCAL_START_CMD`
 5. 是否已经提供 `AGENT_FS_LOCAL_BIN`
-6. PATH 中是否存在 `agent-fs-mcp`
-7. PATH 中是否存在 `agent-fs`
-8. 是否存在当前仓库源码，可用 `pnpm --filter @agent-fs/mcp-server` 启动
+6. PATH 中是否存在可用的 Agent FS 本地命令
+7. 是否存在当前仓库源码，可用仓库内启动命令拉起本地服务
 
-如果以上都不满足，不要假定本地 MCP 可用，应明确告诉用户当前缺少本地运行时。
+如果以上都不满足，不要假定本地服务可用，应明确告诉用户当前缺少本地运行时。
 
 ## 2. 云端模式
 
 适用条件：
 
 - 用户提供了云端地址
-- 或已配置 `AGENT_FS_MCP_URL`
+- 或已配置 `AGENT_FS_ENDPOINT`
 
 最小配置：
 
 ```bash
-export AGENT_FS_MCP_URL="http://server-host:3000/mcp"
-export AGENT_FS_MCP_TOKEN="..."
+export AGENT_FS_ENDPOINT="http://server-host:3000/<service-endpoint>"
+export AGENT_FS_TOKEN="..."
 ```
 
 如果没有 token，但用户有账号密码，优先直接执行：
 
 ```bash
 python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py \
-  --endpoint "http://server-host:3000/mcp" \
+  --endpoint "http://server-host:3000/<service-endpoint>" \
   login-cloud \
   --email "user@example.com" \
   --password "your-password"
@@ -61,7 +60,7 @@ python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py \
 
 ```bash
 python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py \
-  --endpoint "http://server-host:3000/mcp" \
+  --endpoint "http://server-host:3000/<service-endpoint>" \
   register-cloud \
   --email "user@example.com" \
   --password "your-password" \
@@ -91,7 +90,7 @@ python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py probe
 适用条件：
 
 - 用户要求连接本地知识库
-- 或未提供云端地址，但主机上存在本地 MCP 运行时
+- 或未提供云端地址，但主机上存在本地运行时
 
 优先级从高到低：
 
@@ -99,11 +98,11 @@ python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py probe
 
 适合：
 
-- 本地 MCP 需要通过特定包装命令启动
+- 本地服务需要通过特定包装命令启动
 - 运行时在自定义目录中
 
 ```bash
-export AGENT_FS_LOCAL_START_CMD='"/path/to/agent-fs-mcp" serve --host=127.0.0.1 --port=3001'
+export AGENT_FS_LOCAL_START_CMD='"/path/to/agent-fs" serve --host=127.0.0.1 --port=3001'
 ```
 
 ### 3.2 指定本地二进制
@@ -114,12 +113,12 @@ export AGENT_FS_LOCAL_START_CMD='"/path/to/agent-fs-mcp" serve --host=127.0.0.1 
 - 不希望依赖 PATH
 
 ```bash
-export AGENT_FS_LOCAL_BIN="/path/to/agent-fs-mcp"
+export AGENT_FS_LOCAL_BIN="/path/to/agent-fs"
 ```
 
-### 3.3 PATH 中已有 `agent-fs-mcp` 或 `agent-fs`
+### 3.3 PATH 中已有本地命令
 
-无需额外配置，`start-local-mcp.sh` 会自动探测。
+无需额外配置，`start-local-service.sh` 会自动探测。
 
 ### 3.4 当前仓库源码启动
 
@@ -131,13 +130,13 @@ export AGENT_FS_LOCAL_BIN="/path/to/agent-fs-mcp"
 脚本会自动 fallback 到：
 
 ```bash
-pnpm --filter @agent-fs/mcp-server build
-pnpm --filter @agent-fs/mcp-server start --host=127.0.0.1 --port=3001
+pnpm --filter <local-service-package> build
+pnpm --filter <local-service-package> start --host=127.0.0.1 --port=3001
 ```
 
 ## 4. 本地数据前提
 
-本地 MCP 能启动，不代表本地检索一定可用。本地检索还依赖：
+本地服务能启动，不代表本地检索一定可用。本地检索还依赖：
 
 - `~/.agent_fs/registry.json`
 - `~/.agent_fs/storage`
@@ -152,9 +151,9 @@ pnpm --filter @agent-fs/mcp-server start --host=127.0.0.1 --port=3001
 同时需要 local + cloud 时：
 
 ```bash
-export AGENT_FS_MCP_URL="http://cloud-host:3000/mcp"
+export AGENT_FS_ENDPOINT="http://cloud-host:3000/<service-endpoint>"
 export AGENT_FS_CREDENTIALS_FILE="$HOME/.agent_fs/credentials.json"
-export AGENT_FS_LOCAL_BIN="/path/to/agent-fs-mcp"
+export AGENT_FS_LOCAL_BIN="/path/to/agent-fs"
 ```
 
 使用建议：

@@ -21,7 +21,7 @@ class CliError(RuntimeError):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Agent FS MCP CLI")
+    parser = argparse.ArgumentParser(description="Agent FS 知识库 CLI")
     parser.add_argument("--endpoint")
     parser.add_argument("--token")
     parser.add_argument("--credentials-file")
@@ -94,7 +94,12 @@ def resolve_runtime_args(args: argparse.Namespace) -> None:
 
 
 def resolve_endpoint(raw: str | None) -> str:
-    endpoint = raw or os.getenv("AGENT_FS_MCP_URL") or DEFAULT_ENDPOINT
+    endpoint = (
+        raw
+        or os.getenv("AGENT_FS_ENDPOINT")
+        or os.getenv("AGENT_FS_MCP_URL")
+        or DEFAULT_ENDPOINT
+    )
     parsed = urlparse(endpoint)
     if not parsed.scheme or not parsed.netloc:
         raise CliError(f"endpoint 非法: {endpoint}")
@@ -114,7 +119,7 @@ def resolve_token(
     if explicit_token:
         return explicit_token, "argument"
 
-    env_token = os.getenv("AGENT_FS_MCP_TOKEN")
+    env_token = os.getenv("AGENT_FS_TOKEN") or os.getenv("AGENT_FS_MCP_TOKEN")
     if env_token:
         return env_token, "env"
 

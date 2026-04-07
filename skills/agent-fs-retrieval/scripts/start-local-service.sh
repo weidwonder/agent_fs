@@ -27,5 +27,5 @@ if [[ -f "${ROOT}/pnpm-workspace.yaml" ]]; then
   exec pnpm --filter @agent-fs/mcp-server start --host="$HOST" --port="$PORT"
 fi
 
-echo "未找到可用的本地 Agent FS MCP 运行时。请先阅读 setup.md 完成本地运行时配置。" >&2
+echo "未找到可用的本地 Agent FS 运行时。请先阅读 setup.md 完成本地运行时配置。" >&2
 exit 1

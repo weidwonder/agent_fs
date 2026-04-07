@@ -1,6 +1,6 @@
 ---
 name: agent-fs-retrieval
-description: 通过内置 CLI 调用 Agent FS MCP 服务，执行知识库检索、目录浏览、chunk 回查、项目 memory 读取与云端文档导入。适用于需要直接检索 Agent FS、缩小 scope、优化 query 或 keyword、展开 chunk 上下文、解释低召回原因，以及在 local/cloud 两种后端之间切换的场景。
+description: 通过内置 CLI 调用 Agent FS 知识库服务，执行知识库检索、目录浏览、chunk 回查、项目 memory 读取与云端文档导入。适用于需要直接检索 Agent FS、缩小 scope、优化 query 或 keyword、展开 chunk 上下文、解释低召回原因，以及在 local/cloud 两种后端之间切换的场景。
 ---
 
 # Agent FS Retrieval
@@ -13,7 +13,7 @@ description: 通过内置 CLI 调用 Agent FS MCP 服务，执行知识库检索
 - 需要先看项目或目录，再缩小检索范围
 - 需要从搜索结果继续展开 chunk 上下文
 - 需要解释“为什么没搜到”或“为什么结果太散”
-- 需要同时兼容本地 MCP 与云端 MCP
+- 需要同时兼容本地服务与云端服务
 
 不要把这个 skill 当成 Agent FS 内部实现说明。它的职责是优先通过内置 CLI 完成查询和回查，再把结果整理成对用户有用的结论。
 
@@ -21,12 +21,13 @@ description: 通过内置 CLI 调用 Agent FS MCP 服务，执行知识库检索
 
 - 优先使用 `scripts/agent_fs_cli.py`
 - 默认假定用户环境已就绪，先直接执行 `probe` / `health` / 工具调用
-- 本地 endpoint 不可达时，才尝试 `scripts/start-local-mcp.sh`
+- 本地 endpoint 不可达时，才尝试 `scripts/start-local-service.sh`
 - 只有在 endpoint 不可达、token 缺失、本地运行时缺失或本地索引数据未就绪时，才回退读取 `setup.md`
 - 如果云端认证失败且用户提供了账号密码，优先使用 `login-cloud`
 - 如果云端没有现成账号且允许新建账号，使用 `register-cloud`
+- 只允许通过内置 CLI 和内置脚本访问服务
 - 如果内置快捷子命令还没覆盖新工具，使用 `scripts/agent_fs_cli.py call-tool --name ... --arguments-json ...`
-- 不要手写 `initialize`、`tools/call` 或其他 MCP 协议请求，除非用户明确要求排查协议层问题
+- 不要手写协议层请求，除非用户明确要求排查协议层问题
 - 不要向用户展开 Agent FS 的内部实现细节，除非这些细节就是用户问题的一部分
 - 对用户输出时，优先给结论、证据和下一步检索动作，不要直接倾倒原始 JSON
 
@@ -35,7 +36,7 @@ description: 通过内置 CLI 调用 Agent FS MCP 服务，执行知识库检索
 ### 1. 先确认环境与 endpoint 类型
 
 - 先跑 `probe`
-- 如果本地端点不可达，再尝试 `scripts/start-local-mcp.sh`
+- 如果本地端点不可达，再尝试 `scripts/start-local-service.sh`
 - 如果云端缺 token 或返回 `401`，先尝试 `login-cloud`
 - 如果服务仍不可用，再读取 `setup.md` 定位缺失的 token、本地运行时或索引数据
 - 如果服务仍不可用，向用户明确说明阻塞点，不要假装检索已经完成
@@ -84,7 +85,7 @@ description: 通过内置 CLI 调用 Agent FS MCP 服务，执行知识库检索
 
 ### `scripts/agent_fs_cli.py`
 
-统一封装 Agent FS MCP 调用。支持：
+统一封装 Agent FS 服务调用。支持：
 
 - `health`
 - `probe`
@@ -101,18 +102,17 @@ description: 通过内置 CLI 调用 Agent FS MCP 服务，执行知识库检索
 
 支持环境变量：
 
-- `AGENT_FS_MCP_URL`
-- `AGENT_FS_MCP_TOKEN`
+- `AGENT_FS_ENDPOINT`
+- `AGENT_FS_TOKEN`
 - `AGENT_FS_CREDENTIALS_FILE`
 
-### `scripts/start-local-mcp.sh`
+### `scripts/start-local-service.sh`
 
-用于启动本地 Agent FS MCP 服务，默认监听 `127.0.0.1:3001`。
+用于启动本地 Agent FS 服务，默认监听 `127.0.0.1:3001`。
 
 启动优先级：
 
 1. `AGENT_FS_LOCAL_START_CMD`
 2. `AGENT_FS_LOCAL_BIN`
-3. PATH 中的 `agent-fs-mcp`
-4. PATH 中的 `agent-fs`
-5. 当前仓库源码构建启动
+3. PATH 中的 Agent FS 本地命令
+4. 当前仓库源码构建启动
