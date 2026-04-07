@@ -27,6 +27,9 @@ import type { ServerConfig } from '../config.js';
 import { buildEmbeddingConfig } from '../services/embedding-config.js';
 import { processReembedJob } from './reembed-worker.js';
 
+const DOCUMENT_SUMMARY_TIMEOUT_MS = 15_000;
+const DOCUMENT_SUMMARY_MAX_RETRIES = 1;
+
 export async function startWorker(config: ServerConfig): Promise<void> {
   await initDb({ connectionString: config.databaseUrl });
   initS3({
@@ -175,6 +178,11 @@ async function processJob(
         const summaryResult = await summaryService.generateDocumentSummary(
           fileName,
           convResult.markdown,
+          {
+            // 摘要只是增强信息，超时后应尽快回退，避免阻塞主索引链路。
+            timeoutMs: DOCUMENT_SUMMARY_TIMEOUT_MS,
+            maxRetries: DOCUMENT_SUMMARY_MAX_RETRIES,
+          },
         );
         summary = summaryResult.summary;
       } catch {

@@ -25,6 +25,14 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("tools-list")
     subparsers.add_parser("list-indexes")
 
+    index_documents = subparsers.add_parser("index-documents")
+    index_documents.add_argument("--project", required=True)
+    index_documents.add_argument("--url", action="append", required=True)
+
+    call_tool = subparsers.add_parser("call-tool")
+    call_tool.add_argument("--name", required=True)
+    call_tool.add_argument("--arguments-json", default="{}")
+
     dir_tree = subparsers.add_parser("dir-tree")
     dir_tree.add_argument("--scope", required=True)
     dir_tree.add_argument("--depth", type=int, default=2)
@@ -64,6 +72,10 @@ def dispatch(args: argparse.Namespace):
         return rpc(args.endpoint, args.token, args.timeout, "tools/list").get("result", {})
     if args.command == "list-indexes":
         return call_tool(args, "list_indexes", {})
+    if args.command == "index-documents":
+        return call_tool(args, "index_documents", {"project_id": args.project, "urls": args.url})
+    if args.command == "call-tool":
+        return call_tool(args, args.name, parse_json_object(args.arguments_json))
     if args.command == "dir-tree":
         return call_tool(args, "dir_tree", {"scope": args.scope, "depth": args.depth})
     if args.command == "search":
@@ -85,6 +97,18 @@ def dispatch(args: argparse.Namespace):
     if args.command == "get-project-memory":
         return call_tool(args, "get_project_memory", {"project": args.project})
     raise CliError(f"未知命令: {args.command}")
+
+
+def parse_json_object(raw: str) -> dict:
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise CliError(f"--arguments-json 不是合法 JSON: {exc}") from exc
+
+    if not isinstance(value, dict):
+        raise CliError("--arguments-json 必须是 JSON object")
+
+    return value
 
 
 def call_tool(args: argparse.Namespace, name: str, arguments: dict):
@@ -162,6 +186,8 @@ def open_and_parse(request: Request, timeout: float):
         with urlopen(request, timeout=timeout) as response:
             body = response.read().decode("utf-8")
             return parse_body(body, response.headers.get("Content-Type", ""))
+    except TimeoutError as exc:
+        raise CliError("请求超时，请增大 --timeout 后重试") from exc
     except HTTPError as exc:
         raise CliError(f"HTTP {exc.code}: {exc.read().decode('utf-8', 'replace')}") from exc
     except URLError as exc:

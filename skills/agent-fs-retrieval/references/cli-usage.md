@@ -27,10 +27,28 @@ python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py health
 python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py tools-list
 ```
 
+### 通用工具调用
+
+当快捷子命令还没覆盖新工具时，直接走通用入口：
+
+```bash
+python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py call-tool \
+  --name "list_indexes" \
+  --arguments-json '{}'
+```
+
 ### 列出项目
 
 ```bash
 python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py list-indexes
+```
+
+### 从 URL 导入文档
+
+```bash
+python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py index-documents \
+  --project "7a90237c-66de-4d50-a175-786312d70a75" \
+  --url "https://gitee.com/mirrors/gitignore/raw/main/README.md"
 ```
 
 ### 读取目录树
@@ -87,6 +105,8 @@ python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py \
   --token "$AGENT_FS_MCP_TOKEN" \
   list-indexes
 ```
+
+超时较长的调用可追加 `--timeout 180`。
 
 也可使用环境变量：
 

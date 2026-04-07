@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import type { IndexMetadata, Registry } from '@agent-fs/core';
+import { createAFDStorage } from '@agent-fs/storage';
 import { getStorageAdapter } from './search.js';
 
 interface GetChunkInput {
@@ -40,6 +41,8 @@ interface RuntimeProject {
   path: string;
   valid: boolean;
 }
+
+type SearchStorageAdapter = ReturnType<typeof getStorageAdapter>;
 
 function parseChunkId(chunkId: string): { fileId: string; chunkIndex: number } {
   const parts = chunkId.split(':');
@@ -113,6 +116,50 @@ function findFileDirectoryRecursive(
   }
 
   return null;
+}
+
+function resolveFileInfoFromVectorDoc(doc: VectorChunkDoc): FileInfo | null {
+  const filePath = doc.file_path?.trim();
+  if (!filePath) {
+    return null;
+  }
+
+  return {
+    dirPath: dirname(filePath),
+    fileName: basename(filePath),
+    afdName: basename(filePath),
+  };
+}
+
+async function readMarkdownFromArchive(
+  adapter: SearchStorageAdapter,
+  fileInfo: FileInfo,
+  fileId: string
+): Promise<string> {
+  const projectArchive = createAFDStorage({
+    documentsDir: join(fileInfo.dirPath, '.fs_index', 'documents'),
+  });
+
+  try {
+    return await projectArchive.readText(fileInfo.afdName, 'content.md');
+  } catch (projectArchiveError) {
+    const fallbackArchiveNames = Array.from(new Set([fileInfo.afdName, fileId]));
+
+    for (const archiveName of fallbackArchiveNames) {
+      try {
+        return await adapter.archive.read(archiveName, 'content.md');
+      } catch {
+        // 继续尝试下一个兜底 archive 名称
+      }
+    }
+
+    const archivePath = join(fileInfo.dirPath, '.fs_index', 'documents', `${fileInfo.afdName}.afd`);
+    const detail =
+      projectArchiveError instanceof Error
+        ? projectArchiveError.message
+        : String(projectArchiveError);
+    throw new Error(`AFD 文件不存在: ${archivePath}${detail ? ` (${detail})` : ''}`);
+  }
 }
 
 function parseLocatorRange(locator: string): { start: number; end: number } | null {
@@ -199,16 +246,7 @@ function toChunkInfo(
 export async function getChunk(input: GetChunkInput) {
   const { chunk_id, include_neighbors = false, neighbor_count = 2 } = input;
   const { fileId, chunkIndex } = parseChunkId(chunk_id);
-
-  const fileInfo = findFileDirectory(fileId);
-  if (!fileInfo) {
-    throw new Error(`Chunk not found: ${chunk_id}`);
-  }
-
-  const filePath = join(fileInfo.dirPath, fileInfo.fileName);
   const adapter = getStorageAdapter();
-
-  const markdown = await adapter.archive.read(fileInfo.afdName, 'content.md');
 
   const idsToLoad = include_neighbors
     ? [chunk_id, ...buildNeighborIds(fileId, chunkIndex, neighbor_count)]
@@ -221,6 +259,14 @@ export async function getChunk(input: GetChunkInput) {
   if (!mainDoc) {
     throw new Error(`Chunk not found: ${chunk_id}`);
   }
+
+  const fileInfo = findFileDirectory(fileId) ?? resolveFileInfoFromVectorDoc(mainDoc);
+  if (!fileInfo) {
+    throw new Error(`Chunk not found: ${chunk_id}`);
+  }
+
+  const filePath = mainDoc.file_path || join(fileInfo.dirPath, fileInfo.fileName);
+  const markdown = await readMarkdownFromArchive(adapter, fileInfo, fileId);
 
   const result: { chunk: ChunkInfo; neighbors?: { before: ChunkInfo[]; after: ChunkInfo[] } } = {
     chunk: toChunkInfo(chunk_id, mainDoc, markdown, filePath),

@@ -20,6 +20,7 @@ description: 通过内置 CLI 调用 Agent FS MCP 服务，执行知识库检索
 
 - 优先使用 `scripts/agent_fs_cli.py`
 - 只有在本地服务不可达时，才尝试 `scripts/start-local-mcp.sh`
+- 如果内置快捷子命令还没覆盖新工具，使用 `scripts/agent_fs_cli.py call-tool --name ... --arguments-json ...`
 - 不要手写 `initialize`、`tools/call` 或其他 MCP 协议请求，除非用户明确要求排查协议层问题
 - 不要向用户展开 Agent FS 的内部实现细节，除非这些细节就是用户问题的一部分
 - 对用户输出时，优先给结论、证据和下一步检索动作，不要直接倾倒原始 JSON
@@ -71,7 +72,9 @@ description: 通过内置 CLI 调用 Agent FS MCP 服务，执行知识库检索
 
 - `health`
 - `tools-list`
+- `call-tool`
 - `list-indexes`
+- `index-documents`
 - `dir-tree`
 - `search`
 - `get-chunk`

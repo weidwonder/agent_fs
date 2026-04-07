@@ -17,6 +17,8 @@ const state = {
     }
   >(),
   afdFiles: new Map<string, { content: string }>(),
+  projectArchiveReads: [] as string[],
+  centralArchiveReads: [] as string[],
 };
 
 vi.mock('node:os', async () => {
@@ -37,14 +39,22 @@ vi.mock('./search.js', () => ({
     },
     archive: {
       read: async (fileId: string, fileName: string) => {
-        // fileId here is afdName (e.g. 'a.md'), find matching entry in afdFiles
-        for (const [key, value] of state.afdFiles.entries()) {
-          if (key.endsWith(`:${fileId}`) && fileName === 'content.md') {
-            return value.content;
-          }
-        }
+        state.centralArchiveReads.push(`${fileId}:${fileName}`);
         throw new Error(`missing AFD: ${fileId}/${fileName}`);
       },
+    },
+  }),
+}));
+
+vi.mock('@agent-fs/storage', () => ({
+  createAFDStorage: ({ documentsDir }: { documentsDir: string }) => ({
+    readText: async (fileId: string, fileName: string) => {
+      state.projectArchiveReads.push(`${documentsDir}:${fileId}:${fileName}`);
+      const item = state.afdFiles.get(`${documentsDir}:${fileId}`);
+      if (!item || fileName !== 'content.md') {
+        throw new Error(`missing AFD: ${documentsDir}/${fileId}/${fileName}`);
+      }
+      return item.content;
     },
   }),
 }));
@@ -58,6 +68,8 @@ describe('getChunk', () => {
   beforeEach(() => {
     state.vectorDocs.clear();
     state.afdFiles.clear();
+    state.projectArchiveReads = [];
+    state.centralArchiveReads = [];
 
     baseDir = mkdtempSync(join(tmpdir(), 'agent-fs-mcp-get-chunk-'));
     state.homeDir = baseDir;
@@ -164,6 +176,10 @@ describe('getChunk', () => {
     expect(result.neighbors?.after[0].id).toBe('f1:0001');
     expect(result.neighbors?.after[0].content).toBe('第二行');
     expect(result.neighbors?.after[0].summary).toBe('');
+    expect(state.projectArchiveReads).toEqual([
+      `${join(projectDir, '.fs_index', 'documents')}:a.md:content.md`,
+    ]);
+    expect(state.centralArchiveReads).toEqual([]);
   });
 
   it('chunk_id 非法时抛错', async () => {
@@ -292,6 +308,33 @@ describe('getChunk', () => {
     const result = await getChunk({ chunk_id: 'f-sub:0000' });
     expect(result.chunk.content).toBe('子目录第一行');
     expect(result.chunk.summary).toBe('');
+  });
+
+  it('fileId 在当前 index 中失联时，应回退使用向量文档 file_path 定位归档', async () => {
+    const orphanDir = join(projectDir, 'legacy');
+    mkdirSync(join(orphanDir, '.fs_index'), { recursive: true });
+    const orphanDocumentsDir = join(orphanDir, '.fs_index', 'documents');
+
+    state.afdFiles.set(`${orphanDocumentsDir}:legacy.md`, {
+      content: '历史第一行\n历史第二行',
+    });
+
+    state.vectorDocs.set('legacy-file:0000', {
+      chunk_id: 'legacy-file:0000',
+      file_id: 'legacy-file',
+      file_path: join(orphanDir, 'legacy.md'),
+      locator: 'line:1-1',
+      chunk_line_start: 1,
+      chunk_line_end: 1,
+    });
+
+    const result = await getChunk({ chunk_id: 'legacy-file:0000' });
+
+    expect(result.chunk.content).toBe('历史第一行');
+    expect(result.chunk.source.file_path).toBe(join(orphanDir, 'legacy.md'));
+    expect(state.projectArchiveReads).toContain(
+      `${orphanDocumentsDir}:legacy.md:content.md`,
+    );
   });
 
   afterEach(() => {

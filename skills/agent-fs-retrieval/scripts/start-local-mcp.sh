@@ -7,4 +7,4 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 
 cd "$ROOT"
 pnpm --filter @agent-fs/mcp-server build
-pnpm --filter @agent-fs/mcp-server start -- --host="$HOST" --port="$PORT"
+pnpm --filter @agent-fs/mcp-server start --host="$HOST" --port="$PORT"
