@@ -23,6 +23,8 @@ description: 通过内置 CLI 调用 Agent FS MCP 服务，执行知识库检索
 - 默认假定用户环境已就绪，先直接执行 `probe` / `health` / 工具调用
 - 本地 endpoint 不可达时，才尝试 `scripts/start-local-mcp.sh`
 - 只有在 endpoint 不可达、token 缺失、本地运行时缺失或本地索引数据未就绪时，才回退读取 `setup.md`
+- 如果云端认证失败且用户提供了账号密码，优先使用 `login-cloud`
+- 如果云端没有现成账号且允许新建账号，使用 `register-cloud`
 - 如果内置快捷子命令还没覆盖新工具，使用 `scripts/agent_fs_cli.py call-tool --name ... --arguments-json ...`
 - 不要手写 `initialize`、`tools/call` 或其他 MCP 协议请求，除非用户明确要求排查协议层问题
 - 不要向用户展开 Agent FS 的内部实现细节，除非这些细节就是用户问题的一部分
@@ -34,6 +36,7 @@ description: 通过内置 CLI 调用 Agent FS MCP 服务，执行知识库检索
 
 - 先跑 `probe`
 - 如果本地端点不可达，再尝试 `scripts/start-local-mcp.sh`
+- 如果云端缺 token 或返回 `401`，先尝试 `login-cloud`
 - 如果服务仍不可用，再读取 `setup.md` 定位缺失的 token、本地运行时或索引数据
 - 如果服务仍不可用，向用户明确说明阻塞点，不要假装检索已经完成
 
@@ -86,6 +89,8 @@ description: 通过内置 CLI 调用 Agent FS MCP 服务，执行知识库检索
 - `health`
 - `probe`
 - `tools-list`
+- `login-cloud`
+- `register-cloud`
 - `call-tool`
 - `list-indexes`
 - `index-documents`

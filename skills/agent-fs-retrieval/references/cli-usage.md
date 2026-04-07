@@ -56,6 +56,29 @@ python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py probe
 python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py tools-list
 ```
 
+### 云端登录
+
+```bash
+python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py \
+  --endpoint "http://server-host:3000/mcp" \
+  login-cloud \
+  --email "user@example.com" \
+  --password "your-password"
+```
+
+登录成功后，access token 和 refresh token 会保存到凭证文件。
+
+### 云端注册
+
+```bash
+python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py \
+  --endpoint "http://server-host:3000/mcp" \
+  register-cloud \
+  --email "user@example.com" \
+  --password "your-password" \
+  --tenant-name "My Workspace"
+```
+
 ### 通用工具调用
 
 当快捷子命令还没覆盖新工具时，直接走通用入口：

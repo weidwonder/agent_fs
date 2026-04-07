@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse, urlunparse
@@ -30,6 +32,16 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("probe")
     subparsers.add_parser("tools-list")
     subparsers.add_parser("list-indexes")
+
+    login_cloud = subparsers.add_parser("login-cloud")
+    login_cloud.add_argument("--email", required=True)
+    login_cloud.add_argument("--password", required=True)
+    login_cloud.add_argument("--client", default="cli")
+
+    register_cloud = subparsers.add_parser("register-cloud")
+    register_cloud.add_argument("--email", required=True)
+    register_cloud.add_argument("--password", required=True)
+    register_cloud.add_argument("--tenant-name")
 
     index_documents = subparsers.add_parser("index-documents")
     index_documents.add_argument("--project", required=True)
@@ -110,7 +122,10 @@ def resolve_token(
         return None, "none"
 
     try:
-        credentials = json.loads(credentials_file.read_text(encoding="utf-8"))
+        raw = credentials_file.read_text(encoding="utf-8").strip()
+        if not raw:
+            return None, "none"
+        credentials = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise CliError(f"凭证文件不是合法 JSON: {credentials_file} ({exc})") from exc
 
@@ -140,6 +155,10 @@ def dispatch(args: argparse.Namespace):
         return get_json(to_health_url(args.endpoint), args.token, args.timeout)
     if args.command == "probe":
         return probe_endpoint(args)
+    if args.command == "login-cloud":
+        return login_cloud(args)
+    if args.command == "register-cloud":
+        return register_cloud(args)
     if args.command == "tools-list":
         return fetch_tools(args)
     if args.command == "list-indexes":
@@ -206,6 +225,63 @@ def probe_endpoint(args: argparse.Namespace) -> dict:
             "names": [tool.get("name") for tool in tools],
         },
         "profile": infer_profile(tools),
+    }
+
+
+def login_cloud(args: argparse.Namespace) -> dict:
+    result = post_json(
+        to_api_url(args.endpoint, "/api/auth/login"),
+        {
+            "email": args.email,
+            "password": args.password,
+            "client": args.client,
+        },
+        token=None,
+        timeout=args.timeout,
+    )
+    return persist_auth_result(args, result, email=args.email)
+
+
+def register_cloud(args: argparse.Namespace) -> dict:
+    payload = {
+        "email": args.email,
+        "password": args.password,
+    }
+    if args.tenant_name:
+        payload["tenantName"] = args.tenant_name
+    result = post_json(
+        to_api_url(args.endpoint, "/api/auth/register"),
+        payload,
+        token=None,
+        timeout=args.timeout,
+    )
+    return persist_auth_result(args, result, email=args.email)
+
+
+def persist_auth_result(args: argparse.Namespace, result: dict, email: str) -> dict:
+    access_token = result.get("accessToken")
+    refresh_token = result.get("refreshToken")
+    if not isinstance(access_token, str) or not isinstance(refresh_token, str):
+        raise CliError(f"登录返回格式异常: {json.dumps(result, ensure_ascii=False)}")
+
+    target = normalize_target(args.endpoint)
+    expires_at = parse_token_expiry(access_token) or default_cli_expiry()
+    store_credential(
+        args.credentials_file,
+        target,
+        {
+            "accessToken": access_token,
+            "refreshToken": refresh_token,
+            "expiresAt": expires_at,
+            "email": email,
+        },
+    )
+    return {
+        "ok": True,
+        "target": target,
+        "email": email,
+        "credentials_file": str(args.credentials_file),
+        "expires_at": expires_at,
     }
 
 
@@ -285,6 +361,61 @@ def parse_json_object(raw: str) -> dict:
         raise CliError("--arguments-json 必须是 JSON object")
 
     return value
+
+
+def store_credential(credentials_file: Path, target: str, credential: dict) -> None:
+    credentials_file.parent.mkdir(parents=True, exist_ok=True)
+    store: dict[str, dict] = {}
+    if credentials_file.exists():
+        try:
+            raw_store = json.loads(credentials_file.read_text(encoding="utf-8"))
+            if isinstance(raw_store, dict):
+                store = raw_store
+        except json.JSONDecodeError:
+            store = {}
+    store[target] = credential
+    credentials_file.write_text(
+        json.dumps(store, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    credentials_file.chmod(0o600)
+
+
+def normalize_target(endpoint: str) -> str:
+    parsed = urlparse(endpoint)
+    path = parsed.path.rstrip("/")
+    base_path = path[:-4] if path.endswith("/mcp") else path
+    return urlunparse((parsed.scheme, parsed.netloc, base_path, "", "", "")).rstrip("/")
+
+
+def to_api_url(endpoint: str, api_path: str) -> str:
+    parsed = urlparse(endpoint)
+    path = parsed.path.rstrip("/")
+    base_path = path[:-4] if path.endswith("/mcp") else path
+    return urlunparse((parsed.scheme, parsed.netloc, f"{base_path}{api_path}", "", "", ""))
+
+
+def parse_token_expiry(access_token: str) -> str | None:
+    parts = access_token.split(".")
+    if len(parts) < 2:
+        return None
+
+    payload = parts[1]
+    padding = "=" * (-len(payload) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(payload + padding)
+        data = json.loads(decoded.decode("utf-8"))
+    except (ValueError, json.JSONDecodeError):
+        return None
+
+    exp = data.get("exp")
+    if not isinstance(exp, int):
+        return None
+    return datetime.fromtimestamp(exp, tz=timezone.utc).isoformat()
+
+
+def default_cli_expiry() -> str:
+    return (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
 
 
 def fetch_tools(args: argparse.Namespace) -> dict:

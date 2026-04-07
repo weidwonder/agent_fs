@@ -1,4 +1,4 @@
 interface:
   display_name: "Agent FS 检索执行器"
   short_description: "通过内置 CLI 调用 Agent FS MCP，完成检索、回查与排障"
-  default_prompt: "使用 $agent-fs-retrieval 通过内置 CLI 检索 Agent FS 知识库。默认假定环境已就绪，先直接执行 probe；只有在连接、认证或本地运行时失败时，才回退查看 setup.md。"
+  default_prompt: "使用 $agent-fs-retrieval 通过内置 CLI 检索 Agent FS 知识库。默认假定环境已就绪，先直接执行 probe；如果云端缺 token 或认证失败，优先使用 login-cloud，只有在连接、本地运行时或环境本身失败时，才回退查看 setup.md。"

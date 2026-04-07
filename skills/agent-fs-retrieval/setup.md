@@ -47,6 +47,27 @@ export AGENT_FS_MCP_URL="http://server-host:3000/mcp"
 export AGENT_FS_MCP_TOKEN="..."
 ```
 
+如果没有 token，但用户有账号密码，优先直接执行：
+
+```bash
+python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py \
+  --endpoint "http://server-host:3000/mcp" \
+  login-cloud \
+  --email "user@example.com" \
+  --password "your-password"
+```
+
+如果云端还没有账号，并且当前环境允许注册，可执行：
+
+```bash
+python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py \
+  --endpoint "http://server-host:3000/mcp" \
+  register-cloud \
+  --email "user@example.com" \
+  --password "your-password" \
+  --tenant-name "My Workspace"
+```
+
 如果没有显式 token，也可以使用凭证文件：
 
 ```bash
@@ -154,7 +175,7 @@ python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py list-indexes
 
 ## 7. 阻塞时怎么处理
 
-- 缺 token：要求用户提供 token，或提供凭证文件位置
+- 缺 token：优先使用 `login-cloud`；如果没有现成账号且允许注册，则使用 `register-cloud`
 - 缺本地运行时：优先让用户提供 `AGENT_FS_LOCAL_BIN` 或 `AGENT_FS_LOCAL_START_CMD`
 - 缺本地索引数据：说明“服务可启动，但没有可检索知识库”
 - local/cloud 工具语义不一致：先跑 `probe`，再按能力分支调用，不要硬套同一套参数
