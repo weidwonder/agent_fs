@@ -22,9 +22,10 @@ import { createDocxPlugin } from '@agent-fs/plugin-docx';
 import { createExcelPlugin } from '@agent-fs/plugin-excel';
 import type { VectorDocument } from '@agent-fs/core';
 import type { InvertedIndexEntry } from '@agent-fs/storage-adapter';
-import { JOB_INDEX_FILE, type IndexFileJob } from './queue.js';
+import { JOB_INDEX_FILE, JOB_REEMBED_FILE, type IndexFileJob, type ReembedFileJob } from './queue.js';
 import type { ServerConfig } from '../config.js';
 import { buildEmbeddingConfig } from '../services/embedding-config.js';
+import { processReembedJob } from './reembed-worker.js';
 
 export async function startWorker(config: ServerConfig): Promise<void> {
   await initDb({ connectionString: config.databaseUrl });
@@ -51,6 +52,7 @@ export async function startWorker(config: ServerConfig): Promise<void> {
   const boss = new PgBoss(config.databaseUrl);
   await boss.start();
   await boss.createQueue(JOB_INDEX_FILE);
+  await boss.createQueue(JOB_REEMBED_FILE);
 
   await boss.work<IndexFileJob>(
     JOB_INDEX_FILE,
@@ -58,6 +60,16 @@ export async function startWorker(config: ServerConfig): Promise<void> {
     async (jobs) => {
       for (const job of jobs) {
         await processJob(job.data, embeddingService, summaryService, pluginManager, chunker);
+      }
+    },
+  );
+
+  await boss.work<ReembedFileJob>(
+    JOB_REEMBED_FILE,
+    { batchSize: 2, pollingIntervalSeconds: 2 },
+    async (jobs) => {
+      for (const job of jobs) {
+        await processReembedJob(job.data, embeddingService);
       }
     },
   );
