@@ -4,6 +4,7 @@
 
 ## 1. 默认顺序
 
+0. `probe`
 1. `list-indexes`
 2. `dir-tree` 或 `get-project-memory`
 3. `search`
@@ -44,9 +45,15 @@
 
 ## 4. Scope 策略
 
+先看 `probe.profile.scope_reference_kind`：
+
+- `path`：传项目路径或目录路径
+- `id`：传项目 ID 或目录 ID
+- `mixed`：按工具说明分别判断，不要假定路径和 ID 都通用
+
 ### 已知项目
 
-- 先用项目根路径试一轮
+- 先用项目根 scope 试一轮
 - 结果太散时，再缩到子目录
 
 ### 已知目录
@@ -67,7 +74,7 @@
 
 1. 看 `keyword_snippets`
 2. 看 `source.locator`
-3. 跑 `get-chunk --include-neighbors`
+3. 如果 `probe.profile.supports_chunk_neighbors=true`，再跑 `get-chunk --include-neighbors`
 
 不要因为代表 chunk 不准，就直接判定整次检索失败。
 

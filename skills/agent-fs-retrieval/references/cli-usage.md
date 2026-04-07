@@ -1,25 +1,54 @@
 # Agent FS CLI 参考
 
-按需读取这份文件：仅当你需要精确命令格式、环境变量、本地或云端切换方式时再展开。
+按需读取这份文件：默认直接按这里的命令工作；只有在命令失败或环境不明确时，再回到 `setup.md` 做安装与排障。
 
 ## 1. 默认端点
 
 - MCP: `http://127.0.0.1:3001/mcp`
 - Health: `http://127.0.0.1:3001/health`
 
-本地服务不可达时：
+如果不显式传 `--endpoint`，CLI 会按以下顺序取值：
 
-```bash
-bash skills/agent-fs-retrieval/scripts/start-local-mcp.sh
-```
+1. `--endpoint`
+2. `AGENT_FS_MCP_URL`
+3. 默认值 `http://127.0.0.1:3001/mcp`
 
-## 2. 命令模板
+## 2. 认证来源
+
+CLI 会按以下顺序找 token：
+
+1. `--token`
+2. `AGENT_FS_MCP_TOKEN`
+3. `--credentials-file`
+4. `AGENT_FS_CREDENTIALS_FILE`
+5. 默认凭证文件 `~/.agent_fs/credentials.json`
+
+凭证文件按 endpoint 对应的基础地址匹配，例如：
+
+- endpoint: `http://182.92.22.224:1202/mcp`
+- credentials key: `http://182.92.22.224:1202`
+
+## 3. 命令模板
 
 ### 健康检查
 
 ```bash
 python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py health
 ```
+
+### 探测 endpoint 类型与能力
+
+```bash
+python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py probe
+```
+
+重点看：
+
+- `profile.backend_kind`
+- `profile.scope_reference_kind`
+- `profile.project_reference_kind`
+- `profile.supports_index_documents`
+- `profile.supports_chunk_neighbors`
 
 ### 查看工具面
 
@@ -45,6 +74,8 @@ python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py list-indexes
 
 ### 从 URL 导入文档
 
+仅在 `probe.profile.supports_index_documents=true` 时使用：
+
 ```bash
 python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py index-documents \
   --project "7a90237c-66de-4d50-a175-786312d70a75" \
@@ -53,13 +84,25 @@ python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py index-documents \
 
 ### 读取目录树
 
+本地路径型 scope 示例：
+
 ```bash
 python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py dir-tree \
   --scope "/path/to/project" \
   --depth 2
 ```
 
+云端 ID 型 scope 示例：
+
+```bash
+python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py dir-tree \
+  --scope "7a90237c-66de-4d50-a175-786312d70a75" \
+  --depth 2
+```
+
 ### 搜索
+
+路径型 scope 示例：
 
 ```bash
 python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py search \
@@ -69,17 +112,19 @@ python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py search \
   --top-k 5
 ```
 
-多目录范围：
+ID 型 scope 示例：
 
 ```bash
 python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py search \
-  --scope "/path/to/project/税法体系" \
-  --scope "/path/to/project/会计政策" \
-  --query "查找递延所得税确认条件" \
+  --scope "7a90237c-66de-4d50-a175-786312d70a75" \
+  --query "金融工具减值" \
+  --keyword "金融工具减值" \
   --top-k 5
 ```
 
 ### 读取 chunk 上下文
+
+仅在 `probe.profile.supports_chunk_neighbors=true` 时追加邻居参数：
 
 ```bash
 python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py get-chunk \
@@ -88,14 +133,21 @@ python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py get-chunk \
   --neighbor-count 3
 ```
 
+不支持邻居参数时：
+
+```bash
+python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py get-chunk \
+  --chunk-id "file-id:0007"
+```
+
 ### 读取项目 memory
 
 ```bash
 python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py get-project-memory \
-  --project "/path/to/project"
+  --project "7a90237c-66de-4d50-a175-786312d70a75"
 ```
 
-## 3. 云端调用
+## 4. 云端调用
 
 云端场景覆盖端点和 token：
 
@@ -103,20 +155,25 @@ python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py get-project-memory \
 python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py \
   --endpoint "http://server-host:3000/mcp" \
   --token "$AGENT_FS_MCP_TOKEN" \
-  list-indexes
+  probe
 ```
 
 超时较长的调用可追加 `--timeout 180`。
 
-也可使用环境变量：
+## 5. 本地运行时相关环境变量
+
+- `AGENT_FS_LOCAL_START_CMD`
+- `AGENT_FS_LOCAL_BIN`
+- `AGENT_FS_LOCAL_HOST`
+- `AGENT_FS_LOCAL_PORT`
+
+启动本地 MCP：
 
 ```bash
-export AGENT_FS_MCP_URL="http://server-host:3000/mcp"
-export AGENT_FS_MCP_TOKEN="..."
-python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py list-indexes
+bash skills/agent-fs-retrieval/scripts/start-local-mcp.sh
 ```
 
-## 4. 输出约定
+## 6. 输出约定
 
 - 默认输出格式化 JSON
 - 工具调用错误时，脚本返回非 0，并把错误打印到 stderr
