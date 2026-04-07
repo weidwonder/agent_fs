@@ -72,3 +72,16 @@ Phase 6 (Docker)   Phase 6A (dev compose) ← 可提前到 Phase 3 后
 6. **storage-cloud 导出面对齐**：确保 Phase 4 所需的 getPool/initDb/putObject 等全部导出
 7. **补齐数据库索引**：tenant_members(user_id)、directories(parent_dir_id)、files(directory_id,name) UNIQUE 等
 8. **adapter 生命周期统一**：createXAdapter() 只组装，显式 init()/close()，server 走单例
+
+## 已知遗留小需求
+
+- 云端 Web 端尚未补齐与本地 Electron 版等价的“设置”能力。当前运行配置仍以服务端环境变量和 `docker/.env` 为主，尚未提供完整的 Web 设置页与租户级配置管理流程。
+- 当前已具备的基础能力：
+  - 数据层已预留 `tenants.config` / `projects.config`
+  - 项目创建接口支持写入 `config`
+- 后续补齐范围：
+  - Web 端“设置”入口与页面
+  - 租户级 LLM / Embedding 配置读写 API
+  - 成员管理入口
+  - 项目级配置编辑与权限控制
+- 该项不阻塞当前云端主链路，可作为后续小需求排期。

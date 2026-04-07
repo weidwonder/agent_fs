@@ -1,22 +1,45 @@
 # MCP 客户端接入指南
 
-> 配置 AI Agent 通过 MCP 协议连接 Agent FS 云端知识库
+> 配置 AI Agent 通过 MCP 协议连接 Agent FS 本地或云端知识库
 
 ---
 
 ## 概述
 
-Agent FS 在 `/mcp` 路径暴露 Streamable HTTP MCP 端点，AI 客户端通过标准 MCP 协议即可调用搜索、浏览等工具。
+Agent FS 的本地版和云端都在 `/mcp` 路径暴露 Streamable HTTP MCP 端点，AI 客户端通过标准 MCP 协议即可调用搜索、浏览等工具。
 
-**端点地址：** `http://<server-host>:3000/mcp`
-
-**认证方式：** HTTP Header `Authorization: Bearer <access-token>`
+| 模式 | 端点地址 | 认证 | 说明 |
+|------|----------|------|------|
+| 本地版 | `http://127.0.0.1:3001/mcp` | 无 | 需先手动启动本地 MCP 服务 |
+| 云端 | `http://<server-host>:3000/mcp` | `Authorization: Bearer <access-token>` | 多租户 SaaS 部署 |
 
 ---
 
-## 1. 获取 Access Token
+## 1. 启动本地 MCP 服务
 
-MCP 请求需要携带 JWT access token。先通过 API 登录获取：
+本地版不再通过 `stdio` 由客户端按需拉起，而是作为独立的 HTTP 服务运行。
+
+```bash
+pnpm --filter @agent-fs/mcp-server build
+pnpm --filter @agent-fs/mcp-server start
+```
+
+默认监听地址：
+
+- MCP: `http://127.0.0.1:3001/mcp`
+- Health: `http://127.0.0.1:3001/health`
+
+如需自定义监听地址：
+
+```bash
+pnpm --filter @agent-fs/mcp-server start -- --host=0.0.0.0 --port=3101
+```
+
+---
+
+## 2. 云端获取 Access Token
+
+云端 MCP 请求需要携带 JWT access token。先通过 API 登录获取：
 
 ```bash
 curl -X POST http://localhost:3000/api/auth/login \
@@ -30,7 +53,7 @@ curl -X POST http://localhost:3000/api/auth/login \
 
 ---
 
-## 2. Claude Desktop 配置
+## 3. Claude Desktop 配置
 
 编辑 Claude Desktop 的 MCP 配置文件：
 
@@ -52,9 +75,21 @@ curl -X POST http://localhost:3000/api/auth/login \
 
 保存后重启 Claude Desktop，即可在对话中使用 Agent FS 的搜索工具。
 
+本地版配置示例：
+
+```json
+{
+  "mcpServers": {
+    "agent-fs-local": {
+      "url": "http://127.0.0.1:3001/mcp"
+    }
+  }
+}
+```
+
 ---
 
-## 3. Claude Code (CLI) 配置
+## 4. Claude Code (CLI) 配置
 
 在项目根目录或全局 `~/.claude/settings.json` 中添加：
 
@@ -72,9 +107,22 @@ curl -X POST http://localhost:3000/api/auth/login \
 }
 ```
 
+本地版配置示例：
+
+```json
+{
+  "mcpServers": {
+    "agent-fs-local": {
+      "type": "url",
+      "url": "http://127.0.0.1:3001/mcp"
+    }
+  }
+}
+```
+
 ---
 
-## 4. Cursor 配置
+## 5. Cursor 配置
 
 在 Cursor 设置中添加 MCP server：
 
@@ -85,9 +133,11 @@ curl -X POST http://localhost:3000/api/auth/login \
    - URL: `http://localhost:3000/mcp`
    - Headers: `Authorization: Bearer <your-access-token>`
 
+本地版只需把 URL 改为 `http://127.0.0.1:3001/mcp`，并移除认证头。
+
 ---
 
-## 5. 其他 MCP 客户端
+## 6. 其他 MCP 客户端
 
 任何支持 MCP Streamable HTTP 传输的客户端均可接入。关键参数：
 
@@ -95,7 +145,7 @@ curl -X POST http://localhost:3000/api/auth/login \
 |------|-----|
 | 传输协议 | Streamable HTTP (POST) |
 | 端点 URL | `http://<host>:3000/mcp` |
-| 认证 | `Authorization: Bearer <token>` |
+| 认证 | 本地无；云端为 `Authorization: Bearer <token>` |
 | Content-Type | `application/json` |
 
 ### 握手流程
@@ -106,8 +156,7 @@ MCP 客户端需先完成初始化握手：
 
 ```bash
 # Step 1: initialize
-curl -X POST http://localhost:3000/mcp \
-  -H "Authorization: Bearer $TOKEN" \
+curl -X POST http://127.0.0.1:3001/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -d '{
@@ -122,8 +171,7 @@ curl -X POST http://localhost:3000/mcp \
   }'
 
 # Step 2: initialized notification
-curl -X POST http://localhost:3000/mcp \
-  -H "Authorization: Bearer $TOKEN" \
+curl -X POST http://127.0.0.1:3001/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -d '{
@@ -132,8 +180,7 @@ curl -X POST http://localhost:3000/mcp \
   }'
 
 # Step 3: list available tools
-curl -X POST http://localhost:3000/mcp \
-  -H "Authorization: Bearer $TOKEN" \
+curl -X POST http://127.0.0.1:3001/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}'
@@ -141,7 +188,7 @@ curl -X POST http://localhost:3000/mcp \
 
 ---
 
-## 6. 可用的 MCP 工具
+## 7. 可用的 MCP 工具
 
 | 工具 | 说明 | 关键参数 |
 |------|------|---------|
@@ -155,8 +202,7 @@ curl -X POST http://localhost:3000/mcp \
 ### 搜索示例
 
 ```bash
-curl -X POST http://localhost:3000/mcp \
-  -H "Authorization: Bearer $TOKEN" \
+curl -X POST http://127.0.0.1:3001/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -d '{
@@ -175,7 +221,7 @@ curl -X POST http://localhost:3000/mcp \
 
 ---
 
-## 7. Token 自动刷新
+## 8. Token 自动刷新
 
 Access token 默认 15 分钟过期。对于需要长时间运行的 AI Agent，可编写简单的刷新脚本：
 
@@ -197,7 +243,7 @@ echo "$NEW_TOKEN"
 
 ---
 
-## 8. 网络部署注意事项
+## 9. 网络部署注意事项
 
 ### 内网部署
 
@@ -242,6 +288,10 @@ server {
 **Q: Token 过期后 MCP 请求报 401？**
 
 A: 使用 refresh token 获取新的 access token，更新客户端配置并重启。
+
+**Q: 本地版为什么连不上？**
+
+A: 先确认本地 MCP 服务已经单独启动，再检查 `curl http://127.0.0.1:3001/health` 是否返回 `{"status":"ok"}`。
 
 **Q: Claude Desktop 连接不上？**
 

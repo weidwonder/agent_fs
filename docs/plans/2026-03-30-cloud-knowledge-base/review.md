@@ -48,6 +48,7 @@
    - “搜索范围选择”没有实现。
    - “项目详情概况”缺少文件数、chunk 数、索引版本、summary 覆盖率、增量更新/补全 summary/重新索引动作。
    - “索引进度通过 SSE 推送”未覆盖。
+   - 当前实际部署仍主要依赖服务端环境变量或 `docker/.env` 管理运行配置，尚未像本地 Electron 版那样提供可视化设置面板。
 
 6. **租户配置与配额没有业务实现**
    - Spec 有 `tenants.config`、`storage_quota_bytes`。

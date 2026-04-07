@@ -75,7 +75,7 @@ Agent FS 让 AI Agent 能够检索用户本地文档：
 | 向量库 | LanceDB（文件型） |
 | 全文搜索 | SQLite 倒排索引 + nodejieba |
 | 桌面应用 | Electron + React |
-| MCP | stdio 模式 |
+| MCP | Streamable HTTP |
 
 ## 项目结构
 

@@ -166,8 +166,11 @@ curl -X POST http://localhost:3000/api/search \
 
 ```bash
 # 列出可用工具
-curl http://localhost:3000/mcp/tools \
-  -H "Authorization: Bearer $TOKEN"
+curl -X POST http://localhost:3000/mcp \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
 ---

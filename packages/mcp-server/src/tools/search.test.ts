@@ -3,6 +3,17 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+const moduleMocks = vi.hoisted(() => ({
+  loadConfig: vi.fn(() => ({
+    embedding: {
+      provider: 'mock',
+      model: 'mock-embedding',
+    },
+  })),
+  createEmbeddingService: vi.fn(),
+  createLocalAdapter: vi.fn(),
+}));
+
 const state = {
   homeDir: '',
   afdFiles: new Map<string, {
@@ -19,6 +30,14 @@ vi.mock('node:os', async () => {
     homedir: () => state.homeDir,
   };
 });
+
+vi.mock('@agent-fs/core', () => ({
+  loadConfig: moduleMocks.loadConfig,
+}));
+
+vi.mock('@agent-fs/llm', () => ({
+  createEmbeddingService: moduleMocks.createEmbeddingService,
+}));
 
 vi.mock('@agent-fs/search', () => ({
   createVectorStore: vi.fn(),
@@ -107,10 +126,11 @@ vi.mock('@agent-fs/search', () => ({
 }));
 
 vi.mock('@agent-fs/storage-adapter', () => ({
-  createLocalAdapter: vi.fn().mockReturnValue(null),
+  createLocalAdapter: moduleMocks.createLocalAdapter,
 }));
 
 import {
+  initSearchService,
   search,
   __resetSearchServicesForTest,
   __setSearchServicesForTest,
@@ -161,6 +181,85 @@ function makeAdapterMock(opts: {
     metadata: {} as any,
   };
 }
+
+describe('initSearchService', () => {
+  let baseDir: string;
+
+  beforeEach(() => {
+    baseDir = mkdtempSync(join(tmpdir(), 'agent-fs-mcp-search-init-'));
+    state.homeDir = baseDir;
+    mkdirSync(join(baseDir, '.agent_fs', 'storage', 'vectors'), { recursive: true });
+
+    moduleMocks.loadConfig.mockClear();
+    moduleMocks.createEmbeddingService.mockReset();
+    moduleMocks.createLocalAdapter.mockReset();
+  });
+
+  afterEach(() => {
+    __resetSearchServicesForTest();
+    rmSync(baseDir, { recursive: true, force: true });
+  });
+
+  it('并发初始化时只创建一组搜索服务实例', async () => {
+    const embeddingService = {
+      init: vi.fn().mockImplementation(async () => {
+        await Promise.resolve();
+      }),
+      getDimension: vi.fn().mockReturnValue(1024),
+      dispose: vi.fn().mockResolvedValue(undefined),
+    };
+    const storageAdapter = {
+      init: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+
+    moduleMocks.createEmbeddingService.mockReturnValue(embeddingService);
+    moduleMocks.createLocalAdapter.mockReturnValue(storageAdapter);
+
+    await Promise.all([initSearchService(), initSearchService(), initSearchService()]);
+
+    expect(moduleMocks.createEmbeddingService).toHaveBeenCalledTimes(1);
+    expect(moduleMocks.createLocalAdapter).toHaveBeenCalledTimes(1);
+    expect(embeddingService.init).toHaveBeenCalledTimes(1);
+    expect(storageAdapter.init).toHaveBeenCalledTimes(1);
+  });
+
+  it('初始化失败时会清理资源并允许后续重试', async () => {
+    const failedEmbeddingService = {
+      init: vi.fn().mockResolvedValue(undefined),
+      getDimension: vi.fn().mockReturnValue(1024),
+      dispose: vi.fn().mockResolvedValue(undefined),
+    };
+    const failedStorageAdapter = {
+      init: vi.fn().mockRejectedValue(new Error('adapter init failed')),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    const nextEmbeddingService = {
+      init: vi.fn().mockResolvedValue(undefined),
+      getDimension: vi.fn().mockReturnValue(1024),
+      dispose: vi.fn().mockResolvedValue(undefined),
+    };
+    const nextStorageAdapter = {
+      init: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+
+    moduleMocks.createEmbeddingService
+      .mockReturnValueOnce(failedEmbeddingService)
+      .mockReturnValueOnce(nextEmbeddingService);
+    moduleMocks.createLocalAdapter
+      .mockReturnValueOnce(failedStorageAdapter)
+      .mockReturnValueOnce(nextStorageAdapter);
+
+    await expect(initSearchService()).rejects.toThrow('adapter init failed');
+    expect(failedEmbeddingService.dispose).toHaveBeenCalledTimes(1);
+    expect(failedStorageAdapter.close).toHaveBeenCalledTimes(1);
+
+    await expect(initSearchService()).resolves.toBeUndefined();
+    expect(moduleMocks.createEmbeddingService).toHaveBeenCalledTimes(2);
+    expect(moduleMocks.createLocalAdapter).toHaveBeenCalledTimes(2);
+  });
+});
 
 describe('search', () => {
   let baseDir: string;

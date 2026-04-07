@@ -12,7 +12,7 @@
 |------|------|
 | 场景 | 多租户 SaaS |
 | 文档入口 | Web UI 上传（优先）+ MCP 触发索引 |
-| MCP 传输 | Streamable HTTP（云端）；stdio 保留（本地） |
+| MCP 传输 | Streamable HTTP（本地 + 云端） |
 | 认证 | 自建用户系统（JWT），预留 OAuth / API Key |
 | 桌面端 | 保留 Electron 本地版，云端另做 Web UI，两者并行 |
 | 存储 | 云端：pgvector + PG FTS + S3/MinIO；本地：保持 LanceDB + SQLite + AFD |
@@ -34,7 +34,7 @@ packages/
 ├── server/               # 🆕 HTTP API + MCP Streamable HTTP
 ├── web-app/              # 🆕 React Web UI
 │
-├── mcp-server/           # 保持 — stdio 模式（本地版）
+├── mcp-server/           # 保持 — 本地 MCP Streamable HTTP 服务
 ├── electron-app/         # 保持 — 桌面客户端
 └── e2e/                  # 保持
 ```
@@ -44,7 +44,7 @@ packages/
 - `storage-cloud` 实现 `CloudAdapter`（pgvector + PG FTS + S3）
 - `indexer` 和 `search` 不再直接 import LanceDB/SQLite，改为依赖 `storage-adapter` 接口
 - `server` 同时承担 HTTP API 和 MCP Streamable HTTP
-- `mcp-server`（stdio）保留给 Electron 本地版
+- `mcp-server` 保留为本地独立 MCP Streamable HTTP 服务，供本地 AI 客户端接入
 
 ## 4. Storage Adapter 接口
 

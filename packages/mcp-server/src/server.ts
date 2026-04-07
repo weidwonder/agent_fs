@@ -1,12 +1,11 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { listIndexes } from './tools/list-indexes.js';
 import { dirTree } from './tools/dir-tree.js';
-import { search, initSearchService, disposeSearchService } from './tools/search.js';
+import { search } from './tools/search.js';
 import { getChunk } from './tools/get-chunk.js';
 import { getProjectMemory } from './tools/get-project-memory.js';
 
@@ -128,21 +127,4 @@ export async function createServer() {
   });
 
   return server;
-}
-
-export async function runServer() {
-  // 初始化搜索服务（预加载，避免首次查询延迟）
-  await initSearchService();
-
-  const server = await createServer();
-  const transport = new StdioServerTransport();
-
-  // 优雅退出
-  process.on('SIGINT', async () => {
-    await disposeSearchService();
-    process.exit(0);
-  });
-
-  await server.connect(transport);
-  console.error('Agent FS MCP Server running on stdio');
 }

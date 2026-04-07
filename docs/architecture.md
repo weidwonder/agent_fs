@@ -362,7 +362,7 @@ Agent FS 同时支持本地和云端两种部署模式，通过 `StorageAdapter`
 │ ┌─本地─────────────────────┐  ┌─云端───────────────────────────────┐ │
 │ │ @agent-fs/electron-app   │  │ @agent-fs/server (Fastify)        │ │
 │ │ @agent-fs/mcp-server     │  │   - HTTP API + MCP Streamable HTTP│ │
-│ │   (stdio)                │  │   - pg-boss Worker                │ │
+│ │   (Streamable HTTP)      │  │   - pg-boss Worker                │ │
 │ └──────────────────────────┘  │ @agent-fs/web-app (React SPA)     │ │
 │                               └────────────────────────────────────┘ │
 ├──────────────────────────────────────────────────────────────────────┤

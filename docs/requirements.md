@@ -120,7 +120,7 @@
 | 程序 | 职责 | 运行方式 |
 |------|------|----------|
 | Electron 客户端 | 创建/管理索引、配置、查看状态 | 用户按需启动 |
-| MCP Server | 响应 AI Agent 查询 | stdio 模式，AI Agent 按需启动 |
+| MCP Server | 响应 AI Agent 查询 | 本地常驻 Streamable HTTP 服务，默认 `http://127.0.0.1:3001/mcp` |
 
 ### 3.4 全局存储
 
@@ -294,7 +294,7 @@
 
 | 模式 | 说明 |
 |------|------|
-| 本地模式 | Electron + MCP stdio，存储为 LanceDB + SQLite + AFD（保持不变） |
+| 本地模式 | Electron + 本地 MCP Streamable HTTP，存储为 LanceDB + SQLite + AFD（保持不变） |
 | 云端模式 | Fastify HTTP Server + MCP Streamable HTTP + React Web UI |
 
 ### 13.3 云端存储

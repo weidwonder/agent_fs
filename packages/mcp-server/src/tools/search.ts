@@ -14,7 +14,7 @@ import {
 } from '@agent-fs/search';
 import type { StorageAdapter } from '@agent-fs/storage-adapter';
 import { createLocalAdapter } from '@agent-fs/storage-adapter';
-import { resolveDisplayLocator } from './locator-display';
+import { resolveDisplayLocator } from './locator-display.js';
 
 interface SearchInput {
   query: string;
@@ -73,6 +73,7 @@ interface RuntimeProject {
 
 let embeddingService: EmbeddingService | null = null;
 let storageAdapter: StorageAdapter | null = null;
+let initPromise: Promise<void> | null = null;
 
 export function setStorageAdapter(adapter: StorageAdapter): void {
   storageAdapter = adapter;
@@ -83,6 +84,28 @@ export async function initSearchService(): Promise<void> {
     return;
   }
 
+  if (initPromise) {
+    return initPromise;
+  }
+
+  initPromise = initializeSearchService();
+
+  try {
+    await initPromise;
+  } finally {
+    initPromise = null;
+  }
+}
+
+async function initializeSearchService(): Promise<void> {
+  if (embeddingService && storageAdapter) {
+    return;
+  }
+
+  if (embeddingService || storageAdapter) {
+    await closeCurrentSearchServices();
+  }
+
   const config = loadConfig();
   const storagePath = join(homedir(), '.agent_fs', 'storage');
 
@@ -91,26 +114,39 @@ export async function initSearchService(): Promise<void> {
     return;
   }
 
-  embeddingService = createEmbeddingService(config.embedding);
-  await embeddingService.init();
+  const nextEmbeddingService = createEmbeddingService(config.embedding);
+  let nextStorageAdapter: StorageAdapter | null = null;
 
-  storageAdapter = createLocalAdapter({
-    storagePath,
-    dimension: embeddingService.getDimension(),
-  });
-  await storageAdapter.init();
+  try {
+    await nextEmbeddingService.init();
+
+    nextStorageAdapter = createLocalAdapter({
+      storagePath,
+      dimension: nextEmbeddingService.getDimension(),
+    });
+    await nextStorageAdapter.init();
+
+    embeddingService = nextEmbeddingService;
+    storageAdapter = nextStorageAdapter;
+  } catch (error) {
+    await closeInitializedSearchServices(nextEmbeddingService, nextStorageAdapter);
+    throw error;
+  }
 }
 
 export async function disposeSearchService(): Promise<void> {
-  if (storageAdapter) {
-    await storageAdapter.close();
-    storageAdapter = null;
+  const pendingInit = initPromise;
+  initPromise = null;
+
+  if (pendingInit) {
+    try {
+      await pendingInit;
+    } catch {
+      // 初始化失败后继续清理当前资源
+    }
   }
 
-  if (embeddingService) {
-    await embeddingService.dispose();
-    embeddingService = null;
-  }
+  await closeCurrentSearchServices();
 }
 
 export function getStorageAdapter(): StorageAdapter {
@@ -134,8 +170,35 @@ export function __setSearchServicesForTest(services: {
 }
 
 export function __resetSearchServicesForTest(): void {
+  initPromise = null;
   embeddingService = null;
   storageAdapter = null;
+}
+
+async function closeCurrentSearchServices(): Promise<void> {
+  const currentStorageAdapter = storageAdapter;
+  const currentEmbeddingService = embeddingService;
+
+  storageAdapter = null;
+  embeddingService = null;
+
+  await closeInitializedSearchServices(currentEmbeddingService, currentStorageAdapter);
+}
+
+async function closeInitializedSearchServices(
+  activeEmbeddingService: EmbeddingService | null,
+  activeStorageAdapter: StorageAdapter | null,
+): Promise<void> {
+  const cleanupResults = await Promise.allSettled([
+    activeStorageAdapter?.close(),
+    activeEmbeddingService?.dispose(),
+  ]);
+
+  for (const result of cleanupResults) {
+    if (result.status === 'rejected') {
+      console.error('搜索服务清理失败:', result.reason);
+    }
+  }
 }
 
 export async function search(input: SearchInput) {

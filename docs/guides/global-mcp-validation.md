@@ -11,9 +11,12 @@
 
 ## 2. 前置条件
 
+- 本地 MCP HTTP 服务已启动：
+  - `pnpm --filter @agent-fs/mcp-server build`
+  - `pnpm --filter @agent-fs/mcp-server start`
 - 已在全局 Codex 配置中加入：
-  - `command = "/opt/homebrew/opt/node@22/bin/node"`
-  - `args = ["/Users/weidwonder/projects/agent_fs/packages/mcp-server/dist/index.js"]`
+  - `type = "url"`
+  - `url = "http://127.0.0.1:3001/mcp"`
 - 已重新启动客户端或新建会话
 - 知识库目录已建立索引：
   - `/Users/weidwonder/tasks/260205 审计知识库建立`
@@ -31,7 +34,7 @@
 
 - Electron app
 - 本地脚本直调
-- 手工启动 `stdio` 子进程
+- 在验证会话内临时启动本地 MCP 进程
 
 ## 4. 通过标准
 
@@ -119,7 +122,7 @@
 下面这段可以直接发到新会话：
 
 ```text
-请只使用当前会话里已经注入的全局 MCP 工具来验证 `agent-fs`，不要退回到本地脚本、shell 手工启动 stdio、也不要直接 import 仓库源码。
+请只使用当前会话里已经注入的全局 MCP 工具来验证 `agent-fs`，不要退回到本地脚本，也不要直接 import 仓库源码。
 
 验证目标：
 1. 确认全局 MCP 里是否已经接入 `agent-fs`
