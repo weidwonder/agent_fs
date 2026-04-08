@@ -63,16 +63,16 @@ COPY packages/ packages/
 COPY scripts/fix-esm-specifiers.mjs scripts/
 
 # 仅构建云端部署需要的包，且显式控制顺序，避免工作区并行构建导致类型产物缺失。
-# DOCX/Excel 插件的 .NET 产物复用仓库中的发布目录，规避 qemu 下的 dotnet publish 崩溃；
-# 但 TypeScript 产物仍需在镜像内重新编译，避免把宿主机陈旧 dist 带进镜像。
+# DOCX/Excel 插件必须在 Linux builder 内重新执行完整 build，确保 dotnet 产物与线上容器平台一致，
+# 避免把宿主机（如 macOS）编译出的二进制误打进生产镜像。
 RUN pnpm --filter @agent-fs/core build \
     && pnpm --filter @agent-fs/llm build \
     && pnpm --filter @agent-fs/storage build \
     && pnpm --filter @agent-fs/search build \
     && pnpm --filter @agent-fs/plugin-markdown build \
     && pnpm --filter @agent-fs/plugin-pdf build \
-    && pnpm --filter @agent-fs/plugin-docx exec tsc \
-    && pnpm --filter @agent-fs/plugin-excel exec tsc \
+    && pnpm --filter @agent-fs/plugin-docx build \
+    && pnpm --filter @agent-fs/plugin-excel build \
     && pnpm --filter @agent-fs/storage-adapter build \
     && pnpm --filter @agent-fs/indexer build \
     && pnpm --filter @agent-fs/storage-cloud build \
