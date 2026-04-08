@@ -13,7 +13,7 @@ Agent FS 让 AI Agent 在本地完成“索引 → 检索 → 定位原文”的
    - 向量索引（LanceDB）
    - 倒排索引（SQLite）
    - 原文归档（AFD，`.afd`）
-5. MCP Server 对外提供 `search / get_chunk / list_indexes / dir_tree`
+5. MCP Server 对外提供 `list_indexes / dir_tree / glob_md / read_md / grep_md / search / get_chunk`
 
 ---
 
@@ -184,12 +184,18 @@ Electron 客户端在知识库卡片设置中提供三种手动操作：
   - `files`（memory 下 markdown 文件列表与大小）
 - memory 数据不参与向量索引与倒排索引，仅作为项目记忆存储
 
-## 5.4 目录工具
+## 5.4 Markdown 原文工具
+
+- `glob_md`：列出指定 scope 下可读取的 Markdown 原文文件
+- `read_md`：按文件读取 AFD 中的 `content.md`，支持行范围截取
+- `grep_md`：在 AFD 的 `content.md` 中做精确文本匹配并返回上下文
+
+## 5.5 目录工具
 
 - `list_indexes`：返回 registry 中有效 Project 与扁平化子目录引用
 - `dir_tree`：返回递归目录树，支持 `depth` 限制，子索引缺失时返回回退节点
 
-## 5.5 Electron 客户端查询链路
+## 5.6 Electron 客户端查询链路
 
 - 通过 `ipcMain.handle('search')` 复用同一套向量/倒排/RRF 能力
 - `get-project-overview` 基于递归读取 `index.json` 计算项目概况、索引版本与文档/目录 Summary 覆盖率
@@ -326,7 +332,7 @@ interface DocumentConversionResult {
 当前关键验证包含：
 
 - Indexer 单元与集成测试（含递归与增量）
-- MCP 工具单测（`search / get_chunk / dir_tree / list_indexes`）
+- MCP 工具单测（`list_indexes / dir_tree / glob_md / read_md / grep_md / search / get_chunk`）
 - Electron 查询范围解析单测：`packages/electron-app/src/main/search-scope.test.ts`
 - Electron 构建前原生依赖重建：`pnpm --filter @agent-fs/electron-app run predev`
 - E2E（Phase H）：

@@ -14,6 +14,7 @@ import { AuthService } from './services/auth-service.js';
 import { ProjectService } from './services/project-service.js';
 import { IndexingService } from './services/indexing-service.js';
 import { SearchService } from './services/search-service.js';
+import { MarkdownService } from './services/markdown-service.js';
 import { McpToolService } from './services/mcp-tool-service.js';
 import { authRoutes } from './routes/auth-routes.js';
 import { projectRoutes } from './routes/project-routes.js';
@@ -58,7 +59,8 @@ export async function createApp(config: ServerConfig) {
   const indexingService = new IndexingService(boss);
   const importService = new ImportService(boss);
   const searchService = new SearchService(embeddingService);
-  const mcpToolService = new McpToolService(searchService, indexingService);
+  const markdownService = new MarkdownService();
+  const mcpToolService = new McpToolService(searchService, indexingService, markdownService);
 
   // Register all API routes under /api prefix
   await app.register(

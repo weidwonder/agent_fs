@@ -4,12 +4,14 @@ import type { StorageAdapter } from '@agent-fs/storage-adapter';
 import { getPool } from '@agent-fs/storage-cloud';
 import type { SearchService } from './search-service.js';
 import type { IndexingService } from './indexing-service.js';
+import type { MarkdownService } from './markdown-service.js';
 import { safeFetch } from '../utils/safe-fetch.js';
 
 export class McpToolService {
   constructor(
     private readonly searchService: SearchService,
     private readonly indexingService: IndexingService,
+    private readonly markdownService: MarkdownService,
   ) {}
 
   async listIndexes(tenantId: string) {
@@ -123,6 +125,35 @@ export class McpToolService {
   ) {
     // adapter is tenant-scoped; S3 keys are prefixed with tenantId in CloudMetadataAdapter
     return adapter.metadata.readProjectMemory(projectId);
+  }
+
+  async globMd(tenantId: string, scope: string, pattern?: string, limit?: number) {
+    return this.markdownService.globMd(tenantId, scope, pattern, limit);
+  }
+
+  async readMd(
+    tenantId: string,
+    args: { scope: string; path?: string; file_id?: string; start_line?: number; end_line?: number },
+    adapter: StorageAdapter,
+  ) {
+    return this.markdownService.readMd(tenantId, args, adapter);
+  }
+
+  async grepMd(
+    tenantId: string,
+    args: {
+      scope: string;
+      query: string;
+      pattern?: string;
+      path?: string;
+      file_id?: string;
+      context_lines?: number;
+      limit?: number;
+      case_sensitive?: boolean;
+    },
+    adapter: StorageAdapter,
+  ) {
+    return this.markdownService.grepMd(tenantId, args, adapter);
   }
 
   async indexDocuments(

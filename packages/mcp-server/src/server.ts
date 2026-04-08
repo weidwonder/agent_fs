@@ -8,6 +8,9 @@ import { dirTree } from './tools/dir-tree.js';
 import { search } from './tools/search.js';
 import { getChunk } from './tools/get-chunk.js';
 import { getProjectMemory } from './tools/get-project-memory.js';
+import { globMd } from './tools/glob-md.js';
+import { readMd } from './tools/read-md.js';
+import { grepMd } from './tools/grep-md.js';
 
 export async function createServer() {
   const server = new Server(
@@ -43,6 +46,52 @@ export async function createServer() {
             depth: { type: 'number', description: '展示深度，默认 2' },
           },
           required: ['scope'],
+        },
+      },
+      {
+        name: 'glob_md',
+        description: '列出指定范围内可读取的 Markdown 原文文件',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            scope: { type: 'string', description: '目录路径' },
+            pattern: { type: 'string', description: 'glob 模式，默认 **/*' },
+            limit: { type: 'number', description: '返回数量上限，默认 100' },
+          },
+          required: ['scope'],
+        },
+      },
+      {
+        name: 'read_md',
+        description: '读取指定文档的 Markdown 原文，可按行范围截取',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            scope: { type: 'string', description: '目录路径' },
+            path: { type: 'string', description: '相对于当前 scope 的文件路径' },
+            file_id: { type: 'string', description: '文件 ID' },
+            start_line: { type: 'number', description: '起始行，1-based' },
+            end_line: { type: 'number', description: '结束行，1-based' },
+          },
+          required: ['scope'],
+        },
+      },
+      {
+        name: 'grep_md',
+        description: '在 Markdown 原文中做精确文本搜索并返回上下文',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            scope: { type: 'string', description: '目录路径' },
+            query: { type: 'string', description: '待搜索的文本' },
+            pattern: { type: 'string', description: '可选 glob 模式' },
+            path: { type: 'string', description: '相对于当前 scope 的文件路径' },
+            file_id: { type: 'string', description: '文件 ID' },
+            context_lines: { type: 'number', description: '上下文行数，默认 2' },
+            limit: { type: 'number', description: '返回命中数量上限，默认 20' },
+            case_sensitive: { type: 'boolean', description: '是否区分大小写' },
+          },
+          required: ['scope', 'query'],
         },
       },
       {
@@ -106,6 +155,15 @@ export async function createServer() {
 
         case 'search':
           return { content: [{ type: 'text', text: JSON.stringify(await search(args as any)) }] };
+
+        case 'glob_md':
+          return { content: [{ type: 'text', text: JSON.stringify(await globMd(args as any)) }] };
+
+        case 'read_md':
+          return { content: [{ type: 'text', text: JSON.stringify(await readMd(args as any)) }] };
+
+        case 'grep_md':
+          return { content: [{ type: 'text', text: JSON.stringify(await grepMd(args as any)) }] };
 
         case 'get_chunk':
           return { content: [{ type: 'text', text: JSON.stringify(await getChunk(args as any)) }] };

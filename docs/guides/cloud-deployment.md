@@ -290,6 +290,9 @@ curl -X POST http://localhost:3000/mcp \
 |------|------|
 | `list_indexes` | 列出所有已索引项目 |
 | `dir_tree` | 展示目录结构（支持 `depth` 参数） |
+| `glob_md` | 列出当前范围内可读取的 Markdown 原文文件 |
+| `read_md` | 读取指定文档的 Markdown 全文或指定行范围 |
+| `grep_md` | 在 Markdown 原文里做精确文本搜索并返回上下文 |
 | `search` | 混合召回搜索（`query` + 可选 `keyword` / `scope` / `top_k`） |
 | `get_chunk` | 获取指定 chunk 详情 |
 | `get_project_memory` | 获取项目 memory 内容 |

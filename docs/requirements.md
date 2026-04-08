@@ -187,6 +187,9 @@
 |------|------|
 | `list_indexes` | 列出所有已索引 **Project 文件夹**及其 summary（含子文件夹树） |
 | `dir_tree` | 展示目录结构（文件/子目录的 summary） |
+| `glob_md` | 枚举指定范围内可读取的 Markdown 原文文件 |
+| `read_md` | 读取指定文档的 Markdown 全文或指定行范围 |
+| `grep_md` | 在 Markdown 原文里做精确文本搜索并返回上下文 |
 | `search` | 多路召回搜索（语义 + 精准关键词），支持多文件夹过滤 |
 | `get_chunk` | 获取指定 chunk 详情及相邻 chunk（从 AFD 读取） |
 | `get_project_memory` | 获取项目 memory 路径、project.md 内容和 markdown 文件列表 |
@@ -321,6 +324,9 @@
 |------|------|
 | `list_indexes` | 列出当前租户所有已索引项目及统计 |
 | `dir_tree` | 展示目录结构（基于 `directories` 表递归） |
+| `glob_md` | 枚举指定项目/目录范围内的 Markdown 原文文件 |
+| `read_md` | 读取指定文档的 Markdown 全文或指定行范围 |
+| `grep_md` | 在 Markdown 原文里做精确文本搜索并返回上下文 |
 | `search` | 多路召回搜索（语义 + 关键词），租户隔离 |
 | `get_chunk` | 获取 chunk 详情（从 S3 读取归档） |
 | `get_project_memory` | 获取项目 memory |

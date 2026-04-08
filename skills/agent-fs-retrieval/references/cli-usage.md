@@ -166,6 +166,34 @@ python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py dir-tree \
   --depth 2
 ```
 
+### 列出当前范围内的 Markdown 原文文件
+
+```bash
+python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py glob-md \
+  --scope "7a90237c-66de-4d50-a175-786312d70a75" \
+  --pattern "**/*货币资金*"
+```
+
+### 读取整篇或指定行范围的 Markdown 原文
+
+```bash
+python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py read-md \
+  --scope "7a90237c-66de-4d50-a175-786312d70a75" \
+  --path "审计准则体系/审计准则问题解答第12号-货币资金审计.pdf" \
+  --start-line 1 \
+  --end-line 120
+```
+
+### 在 Markdown 原文里做精确文本搜索
+
+```bash
+python3 skills/agent-fs-retrieval/scripts/agent_fs_cli.py grep-md \
+  --scope "7a90237c-66de-4d50-a175-786312d70a75" \
+  --query "银行函证" \
+  --context-lines 2 \
+  --limit 10
+```
+
 ### 搜索
 
 路径型 scope 示例：

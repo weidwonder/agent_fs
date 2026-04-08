@@ -4,6 +4,9 @@ import { startHttpServer } from './http-server.js';
 const mocks = vi.hoisted(() => ({
   listIndexes: vi.fn(),
   dirTree: vi.fn(),
+  globMd: vi.fn(),
+  readMd: vi.fn(),
+  grepMd: vi.fn(),
   search: vi.fn(),
   getChunk: vi.fn(),
   getProjectMemory: vi.fn(),
@@ -17,6 +20,18 @@ vi.mock('./tools/list-indexes.js', () => ({
 
 vi.mock('./tools/dir-tree.js', () => ({
   dirTree: mocks.dirTree,
+}));
+
+vi.mock('./tools/glob-md.js', () => ({
+  globMd: mocks.globMd,
+}));
+
+vi.mock('./tools/read-md.js', () => ({
+  readMd: mocks.readMd,
+}));
+
+vi.mock('./tools/grep-md.js', () => ({
+  grepMd: mocks.grepMd,
 }));
 
 vi.mock('./tools/search.js', () => ({
@@ -106,7 +121,16 @@ describe('startHttpServer', () => {
     };
 
     expect(toolsListPayload.result.tools.map((tool) => tool.name)).toEqual(
-      expect.arrayContaining(['list_indexes', 'dir_tree', 'search', 'get_chunk', 'get_project_memory']),
+      expect.arrayContaining([
+        'list_indexes',
+        'dir_tree',
+        'glob_md',
+        'read_md',
+        'grep_md',
+        'search',
+        'get_chunk',
+        'get_project_memory',
+      ]),
     );
 
     const callResponse = await fetch(`${server.url}/mcp`, {

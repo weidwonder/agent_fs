@@ -194,6 +194,9 @@ curl -X POST http://127.0.0.1:3001/mcp \
 |------|------|---------|
 | `list_indexes` | 列出所有已索引项目 | — |
 | `dir_tree` | 展示目录结构 | `project_id`, `depth`(可选) |
+| `glob_md` | 列出可读取的 Markdown 原文文件 | `scope`, `pattern`(可选), `limit`(可选) |
+| `read_md` | 读取 Markdown 全文或指定行范围 | `scope`, `path`/`file_id`, `start_line`(可选), `end_line`(可选) |
+| `grep_md` | 在 Markdown 原文里做精确文本搜索 | `scope`, `query`, `pattern`(可选), `context_lines`(可选) |
 | `search` | 混合召回搜索 | `query`, `keyword`(可选), `scope`(可选), `top_k`(可选) |
 | `get_chunk` | 获取 chunk 详情 | `chunk_id` |
 | `get_project_memory` | 获取项目记忆 | `project_id` |

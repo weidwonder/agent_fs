@@ -36,6 +36,75 @@ function buildMcpServer(tenantId: string, mcpToolService: McpToolService): McpSe
   );
 
   server.tool(
+    'glob_md',
+    '列出指定范围内可读取的 Markdown 原文文件',
+    {
+      scope: z.string().describe('项目ID或目录ID'),
+      pattern: z.string().optional().describe('glob 模式，默认 **/*'),
+      limit: z.number().optional().describe('返回数量上限，默认 100'),
+    },
+    async ({ scope, pattern, limit }) => {
+      const result = await mcpToolService.globMd(tenantId, scope, pattern, limit);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    },
+  );
+
+  server.tool(
+    'read_md',
+    '读取指定文档的 Markdown 原文，可按行范围截取',
+    {
+      scope: z.string().describe('项目ID或目录ID'),
+      path: z.string().optional().describe('相对于当前 scope 的文件路径'),
+      file_id: z.string().optional().describe('文件ID'),
+      start_line: z.number().optional().describe('起始行，1-based'),
+      end_line: z.number().optional().describe('结束行，1-based'),
+    },
+    async ({ scope, path, file_id, start_line, end_line }) => {
+      const adapter = createCloudAdapter({ tenantId });
+      await adapter.init();
+      try {
+        const result = await mcpToolService.readMd(
+          tenantId,
+          { scope, path, file_id, start_line, end_line },
+          adapter,
+        );
+        return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+      } finally {
+        await adapter.close();
+      }
+    },
+  );
+
+  server.tool(
+    'grep_md',
+    '在 Markdown 原文中做精确文本搜索并返回上下文',
+    {
+      scope: z.string().describe('项目ID或目录ID'),
+      query: z.string().describe('待搜索的文本'),
+      pattern: z.string().optional().describe('可选 glob 模式'),
+      path: z.string().optional().describe('相对于当前 scope 的文件路径'),
+      file_id: z.string().optional().describe('文件ID'),
+      context_lines: z.number().optional().describe('上下文行数，默认 2'),
+      limit: z.number().optional().describe('返回命中数量上限，默认 20'),
+      case_sensitive: z.boolean().optional().describe('是否区分大小写'),
+    },
+    async ({ scope, query, pattern, path, file_id, context_lines, limit, case_sensitive }) => {
+      const adapter = createCloudAdapter({ tenantId });
+      await adapter.init();
+      try {
+        const result = await mcpToolService.grepMd(
+          tenantId,
+          { scope, query, pattern, path, file_id, context_lines, limit, case_sensitive },
+          adapter,
+        );
+        return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+      } finally {
+        await adapter.close();
+      }
+    },
+  );
+
+  server.tool(
     'search',
     '在知识库中搜索相关内容',
     {

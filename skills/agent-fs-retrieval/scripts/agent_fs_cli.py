@@ -71,6 +71,28 @@ def build_parser() -> argparse.ArgumentParser:
     dir_tree.add_argument("--scope", required=True)
     dir_tree.add_argument("--depth", type=int, default=2)
 
+    glob_md = subparsers.add_parser("glob-md")
+    glob_md.add_argument("--scope", required=True)
+    glob_md.add_argument("--pattern")
+    glob_md.add_argument("--limit", type=int, default=100)
+
+    read_md = subparsers.add_parser("read-md")
+    read_md.add_argument("--scope", required=True)
+    read_md.add_argument("--path")
+    read_md.add_argument("--file-id")
+    read_md.add_argument("--start-line", type=int)
+    read_md.add_argument("--end-line", type=int)
+
+    grep_md = subparsers.add_parser("grep-md")
+    grep_md.add_argument("--scope", required=True)
+    grep_md.add_argument("--query", required=True)
+    grep_md.add_argument("--pattern")
+    grep_md.add_argument("--path")
+    grep_md.add_argument("--file-id")
+    grep_md.add_argument("--context-lines", type=int, default=2)
+    grep_md.add_argument("--limit", type=int, default=20)
+    grep_md.add_argument("--case-sensitive", action="store_true")
+
     search = subparsers.add_parser("search")
     search.add_argument("--scope", action="append", required=True)
     search.add_argument("--query", required=True)
@@ -213,7 +235,40 @@ def dispatch(args: argparse.Namespace):
     if args.command == "call-tool":
         return call_tool(args, args.name, parse_json_object(args.arguments_json))
     if args.command == "dir-tree":
-        return call_tool(args, "dir_tree", {"scope": args.scope, "depth": args.depth})
+        return call_tool(args, "dir_tree", compact_object({"scope": args.scope, "depth": args.depth}))
+    if args.command == "glob-md":
+        return call_tool(
+            args,
+            "glob_md",
+            compact_object({"scope": args.scope, "pattern": args.pattern, "limit": args.limit}),
+        )
+    if args.command == "read-md":
+        return call_tool(
+            args,
+            "read_md",
+            compact_object({
+                "scope": args.scope,
+                "path": args.path,
+                "file_id": args.file_id,
+                "start_line": args.start_line,
+                "end_line": args.end_line,
+            }),
+        )
+    if args.command == "grep-md":
+        return call_tool(
+            args,
+            "grep_md",
+            compact_object({
+                "scope": args.scope,
+                "query": args.query,
+                "pattern": args.pattern,
+                "path": args.path,
+                "file_id": args.file_id,
+                "context_lines": args.context_lines,
+                "limit": args.limit,
+                "case_sensitive": args.case_sensitive,
+            }),
+        )
     if args.command == "search":
         scope = args.scope[0] if len(args.scope) == 1 else args.scope
         payload = {"query": args.query, "scope": scope, "top_k": args.top_k}
@@ -492,6 +547,10 @@ def parse_json_object(raw: str) -> dict:
         raise CliError("--arguments-json 必须是 JSON object")
 
     return value
+
+
+def compact_object(payload: dict) -> dict:
+    return {key: value for key, value in payload.items() if value is not None}
 
 
 def store_credential(credentials_file: Path, target: str, credential: dict) -> None:
