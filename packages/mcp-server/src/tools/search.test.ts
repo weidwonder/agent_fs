@@ -132,6 +132,7 @@ vi.mock('@agent-fs/storage-adapter', () => ({
 import {
   initSearchService,
   search,
+  stripPageMarkers,
   __resetSearchServicesForTest,
   __setSearchServicesForTest,
 } from './search';
@@ -258,6 +259,21 @@ describe('initSearchService', () => {
     await expect(initSearchService()).resolves.toBeUndefined();
     expect(moduleMocks.createEmbeddingService).toHaveBeenCalledTimes(2);
     expect(moduleMocks.createLocalAdapter).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('stripPageMarkers', () => {
+  it('空输入应返回空字符串', () => {
+    expect(stripPageMarkers('')).toBe('');
+  });
+
+  it('重复调用应保持幂等', () => {
+    const content = '<!-- page: 1 -->\n\n第一行\n<!-- page: 2 -->\n\n第二行';
+    const once = stripPageMarkers(content);
+    const twice = stripPageMarkers(once);
+
+    expect(once).toBe('第一行\n第二行');
+    expect(twice).toBe(once);
   });
 });
 
@@ -407,6 +423,49 @@ describe('search', () => {
     expect(invertedCalls).toHaveLength(1);
     expect(invertedCalls[0].dirIds).toEqual(['d1']);
     expect(searchByVector).toHaveBeenCalledTimes(1);
+  });
+
+  it('应从返回内容中剥离页码注释', async () => {
+    const documentsDir = join(projectDir, '.fs_index', 'documents');
+    state.afdFiles.set(`${documentsDir}:a.md`, {
+      content: '<!-- page: 1 -->\n\n第一行\n<!-- page: 2 -->\n\n第二行',
+      summaries: { documentSummary: 'doc summary' },
+    });
+
+    __setSearchServicesForTest({
+      embeddingService: {
+        embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
+      } as any,
+      storageAdapter: makeAdapterMock({
+        vectorResults: [
+          {
+            chunk_id: 'f1:0000',
+            score: 0.9,
+            document: {
+              chunk_id: 'f1:0000',
+              file_id: 'f1',
+              dir_id: 'd1',
+              rel_path: 'a.md',
+              file_path: join(projectDir, 'a.md'),
+              chunk_line_start: 1,
+              chunk_line_end: 6,
+              content_vector: [],
+              locator: 'line:1-6',
+              indexed_at: '',
+              deleted_at: '',
+            },
+          },
+        ],
+      }) as any,
+    });
+
+    const result = await search({
+      query: '第一行',
+      scope: projectDir,
+      top_k: 5,
+    });
+
+    expect(result.results[0].content).toBe('第一行\n第二行');
   });
 
   it('同文件关键词命中被聚合后，应优先选中关键词快照对应的 chunk 作为代表结果', async () => {
