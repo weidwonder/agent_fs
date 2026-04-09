@@ -5,9 +5,11 @@
   "scripts": {
     "native:check": "node scripts/ensure-nodejieba-native.mjs --check",
     "native:sync": "node scripts/ensure-nodejieba-native.mjs --fix",
+    "native:sqlite:check": "node scripts/ensure-better-sqlite3-native.mjs --check",
+    "native:sqlite:sync": "node scripts/ensure-better-sqlite3-native.mjs --fix",
     "prebuild": "pnpm native:sync",
     "build": "pnpm -r build",
-    "pretest": "pnpm --filter @agent-fs/core build",
+    "pretest": "pnpm native:sync && pnpm native:sqlite:sync && pnpm --filter @agent-fs/core build",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
