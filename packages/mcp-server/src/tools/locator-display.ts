@@ -16,7 +16,39 @@ interface ResolveDisplayLocatorInput {
   mappings?: LocatorMapping[];
 }
 
-const EXCEL_EXTENSIONS = new Set(['.xls', '.xlsx']);
+interface DisplayRule {
+  extensions: string[];
+  pattern: RegExp;
+  format: (match: RegExpMatchArray) => string;
+}
+
+const DISPLAY_RULES: DisplayRule[] = [
+  {
+    extensions: ['.xls', '.xlsx'],
+    pattern: /^sheet:([^/]+)\/range:(.+)$/u,
+    format: (match) => `sheet:${match[1]}/range:${match[2]}`,
+  },
+  {
+    extensions: ['.pdf'],
+    pattern: /^page:(\d+)$/u,
+    format: (match) => `第 ${match[1]} 页`,
+  },
+  {
+    extensions: ['.doc', '.docx'],
+    pattern: /^para:(\d+)$/u,
+    format: (match) => `第 ${match[1]} 段`,
+  },
+  {
+    extensions: ['.doc', '.docx'],
+    pattern: /^heading:\d+:(.+)$/u,
+    format: (match) => `标题 "${match[1]}"`,
+  },
+  {
+    extensions: ['.doc', '.docx'],
+    pattern: /^table:(\d+)$/u,
+    format: (match) => `表 ${match[1]}`,
+  },
+];
 
 function parseLocatorLineRange(locator: string): { start: number; end: number } | null {
   const rangeMatch = /^(?:line|lines):(\d+)-(\d+)$/u.exec(locator.trim());
@@ -80,11 +112,13 @@ export function resolveDisplayLocator(input: ResolveDisplayLocatorInput): string
     return '';
   }
 
-  if (/^sheet:[^/]+\/range:.+/u.test(input.locator)) {
-    return input.locator;
+  const extension = getFileExtension(input.filePath);
+  const direct = formatLocator(extension, input.locator);
+  if (direct) {
+    return direct;
   }
 
-  if (!EXCEL_EXTENSIONS.has(getFileExtension(input.filePath))) {
+  if (!DISPLAY_RULES.some((rule) => rule.extensions.includes(extension))) {
     return input.locator;
   }
 
@@ -101,9 +135,20 @@ export function resolveDisplayLocator(input: ResolveDisplayLocatorInput): string
     return input.locator;
   }
 
-  if (!/^sheet:[^/]+\/range:.+/u.test(mapping.originalLocator)) {
-    return input.locator;
+  return formatLocator(extension, mapping.originalLocator) ?? input.locator;
+}
+
+function formatLocator(extension: string, locator: string): string | null {
+  for (const rule of DISPLAY_RULES) {
+    if (!rule.extensions.includes(extension)) {
+      continue;
+    }
+
+    const match = locator.match(rule.pattern);
+    if (match) {
+      return rule.format(match);
+    }
   }
 
-  return mapping.originalLocator;
+  return null;
 }

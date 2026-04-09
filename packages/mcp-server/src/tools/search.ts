@@ -790,7 +790,7 @@ async function hydrateResult(
       filePath: fileInfo.filePath,
       locator: displayLocator,
     },
-    content: parsedContent,
+    content: stripPageMarkers(parsedContent),
     summary: summaries.documentSummary,
   };
 }
@@ -917,6 +917,8 @@ interface LocatorMappingItem {
   originalLocator: string;
 }
 
+const PAGE_MARKER_LINE_RE = /^\s*<!-- page: \d+ -->\s*$/u;
+
 async function readLocatorMappings(
   archiveName: string,
   cacheKey: string,
@@ -982,6 +984,24 @@ function extractByLineRange(
   return lines
     .slice(Math.max(0, lineStart - 1), Math.min(lines.length, lineEnd))
     .join('\n');
+}
+
+export function stripPageMarkers(content: string): string {
+  if (!content) {
+    return '';
+  }
+
+  const withoutMarkers = content.replace(
+    /(^|\n)\s*<!-- page: \d+ -->\s*(\n|$)/gu,
+    '$1',
+  );
+
+  return withoutMarkers
+    .split('\n')
+    .filter((line) => !PAGE_MARKER_LINE_RE.test(line))
+    .join('\n')
+    .replace(/\n{3,}/gu, '\n\n')
+    .trim();
 }
 
 function toPositiveInt(value: unknown): number | undefined {
