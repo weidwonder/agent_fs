@@ -1,9 +1,5 @@
 import type { LLMConfig } from '@agent-fs/core';
 import { countTokens, createTokenizer } from '@agent-fs/core';
-import { unified } from 'unified';
-import remarkParse from 'remark-parse';
-import { visit } from 'unist-util-visit';
-import type { Root, Heading } from 'mdast';
 import { SummaryCache } from './cache';
 import {
   DOCUMENT_SUMMARY_PROMPT,
@@ -18,6 +14,10 @@ const MAX_RATE_LIMIT_DELAY_MS = 120000;
 const DEFAULT_REQUEST_MIN_INTERVAL_MS = 1500;
 const DOCUMENT_SUMMARY_MAX_INPUT_TOKENS = 10000;
 const DOCUMENT_SUMMARY_PREFIX_TOKENS = 1000;
+const DOCUMENT_SUMMARY_ESTIMATE_SAMPLE_CHARS = 4000;
+const DOCUMENT_SUMMARY_ESTIMATE_LOW_WATERMARK = 8000;
+const DOCUMENT_SUMMARY_ESTIMATE_HIGH_WATERMARK = 12000;
+const DOCUMENT_SUMMARY_PREFIX_INITIAL_CHARS = 4096;
 
 class SummaryApiError extends Error {
   readonly status: number;
@@ -156,33 +156,63 @@ export function extractMarkdownHeadings(markdown: string): string[] {
     return [];
   }
 
-  const tree = unified().use(remarkParse).parse(markdown) as Root;
   const headings: string[] = [];
-
-  visit(tree, 'heading', (node: Heading) => {
-    const text = node.children
-      .map((child) => ('value' in child && typeof child.value === 'string' ? child.value : ''))
-      .join('')
-      .trim();
+  for (const line of markdown.split(/\r?\n/u)) {
+    const match = /^(#{1,6})\s+(.+)$/u.exec(line);
+    const text = match?.[2]?.trim();
     if (text) {
       headings.push(text);
     }
-  });
+  }
 
   return headings;
 }
 
 function sliceTextByTokens(text: string, maxTokens: number): string {
   const tokenizer = createTokenizer();
-  const tokens = tokenizer.encode(text);
+  let sliceLength = Math.min(text.length, Math.max(DOCUMENT_SUMMARY_PREFIX_INITIAL_CHARS, maxTokens * 4));
+  let tokens = tokenizer.encode(text.slice(0, sliceLength));
+
+  while (tokens.length < maxTokens && sliceLength < text.length) {
+    sliceLength = Math.min(text.length, sliceLength * 2);
+    tokens = tokenizer.encode(text.slice(0, sliceLength));
+  }
+
   if (tokens.length <= maxTokens) {
-    return text;
+    return text.trim();
   }
   return tokenizer.decode(tokens.slice(0, maxTokens)).trim();
 }
 
+function estimateTokenCount(text: string): number {
+  const sampleLength = Math.min(text.length, DOCUMENT_SUMMARY_ESTIMATE_SAMPLE_CHARS);
+  if (sampleLength === 0) {
+    return 0;
+  }
+
+  const tokenizer = createTokenizer();
+  const sampleTokens = tokenizer.count(text.slice(0, sampleLength));
+  return Math.ceil((text.length / sampleLength) * sampleTokens);
+}
+
+function shouldSummarizeLongDocument(markdown: string): boolean {
+  if (markdown.length <= DOCUMENT_SUMMARY_MAX_INPUT_TOKENS) {
+    return false;
+  }
+
+  const estimatedTokens = estimateTokenCount(markdown);
+  if (estimatedTokens <= DOCUMENT_SUMMARY_ESTIMATE_LOW_WATERMARK) {
+    return false;
+  }
+  if (estimatedTokens >= DOCUMENT_SUMMARY_ESTIMATE_HIGH_WATERMARK) {
+    return true;
+  }
+
+  return countTokens(markdown) > DOCUMENT_SUMMARY_MAX_INPUT_TOKENS;
+}
+
 export function buildDocumentSummaryInput(markdown: string): string {
-  if (countTokens(markdown) <= DOCUMENT_SUMMARY_MAX_INPUT_TOKENS) {
+  if (!shouldSummarizeLongDocument(markdown)) {
     return markdown;
   }
 
