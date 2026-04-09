@@ -5,6 +5,19 @@
 ## 用户说明（面向编码代理）
 当前项目处在初期阶段，不要考虑任何兼容性。旧结构的代码或者发现孤儿函数、代码等请全部移除。要保持代码更新后对应文档也要更新。
 
+## 文档组织强约束（**重要**）
+
+**所有 markdown 文档统一放在 `docs/` 下**，按以下结构：
+- `docs/architecture.md`、`docs/requirements.md` — 顶层综述
+- `docs/guides/` — 开发/运维/使用指南（长期有效）
+- `docs/specs/` — 设计规格（design docs，格式 `{YYYY-MM-DD}-{topic}-design.md`）
+- `docs/plans/` — 实施计划（**禁止**放项目根 `plans/` 下）
+  - 多 phase 项目：`docs/plans/{YYMMDD}-{HHmm}-{slug}/`，含 `plan.md` + `phase-XX-*.md` + `reports/`
+  - 扁平 plan：`docs/plans/{YYYY-MM-DD}-{topic}.md`
+  - brainstorm 报告、研究报告统一放到该子目录的 `reports/` 下
+
+详细规范见 `.claude/rules/documentation-management.md`。
+
 ## 云端默认约定
 
 - 若用户提到“云端”“线上”“服务器部署”等且未额外指定目标，默认指当前部署服务器 `182.92.22.224`

@@ -48,6 +48,48 @@ docker compose down -v       # 同时删除数据卷（不可恢复）
 
 ---
 
+## 2.1 当前推荐发布流程（182.92.22.224）
+
+当前线上服务器 `182.92.22.224` 的推荐发布方式不是“本地构建镜像后上传 tar”，而是：
+
+1. 本地将最小源码上下文打包传到远端临时目录
+2. 远端直接执行 `docker build`
+3. 自动更新 `/opt/agent-fs/docker/.env` 中的 `APP_IMAGE`
+4. 自动执行 `docker compose up -d --no-build`
+5. 自动做 `/health` 探活
+
+直接使用仓库脚本：
+
+```bash
+pnpm deploy:cloud
+```
+
+或指定镜像标签：
+
+```bash
+./scripts/deploy-cloud-remote-build.sh --tag 20260409-markdown-tools-v3
+```
+
+这样做有两个现实原因：
+
+- 当前服务器外网拉镜像不稳定，不适合依赖在线镜像仓库
+- `plugin-docx` / `plugin-excel` 的 .NET 产物必须在 Linux builder 中重新生成，不能直接复用 macOS 宿主机产物
+
+脚本默认约定：
+
+- 目标主机：`root@182.92.22.224`
+- 远端部署目录：`/opt/agent-fs`
+- 健康检查端口：`1202`
+- 发布完成后会删除远端临时构建目录
+
+若要查看全部参数：
+
+```bash
+./scripts/deploy-cloud-remote-build.sh --help
+```
+
+---
+
 ## 3. 开发环境搭建
 
 开发模式下仅用 Docker 启动基础设施，server/worker 在宿主机热更新运行。

@@ -236,15 +236,27 @@ git pull origin main
 # 2. 备份数据（见第 3 节）
 ./backup.sh
 
-# 3. 重新构建镜像并启动
-cd docker
-docker compose up --build -d
+# 3. 执行远端构建发布
+pnpm deploy:cloud
 
-# 4. 检查 migration 是否自动执行
-docker compose logs migrate
+# 4. 验证健康状态
+curl http://182.92.22.224:1202/health
+```
 
-# 5. 验证健康状态
-curl http://localhost:3000/health
+补充说明：
+
+- 当前 `182.92.22.224` 服务器推荐使用远端构建脚本，而不是在本地 `docker compose up --build`
+- 脚本会自动完成：
+  - 推送当前分支
+  - 上传最小构建上下文
+  - 在远端构建新镜像
+  - 更新 `APP_IMAGE`
+  - 重启 `server` / `worker`
+  - 进行 `/health` 验证
+- 若需要自定义镜像标签，可执行：
+
+```bash
+./scripts/deploy-cloud-remote-build.sh --tag 20260409-hotfix-v1
 ```
 
 ### 数据库 Migration 注意
@@ -256,14 +268,14 @@ curl http://localhost:3000/health
 ### 回滚
 
 ```bash
-# 回退代码版本
+# 1. 回退代码版本并推送
 git checkout <previous-tag>
+git push origin HEAD:main
 
-# 重建并启动
-cd docker
-docker compose up --build -d
+# 2. 重新发布指定版本
+./scripts/deploy-cloud-remote-build.sh --tag rollback-<date>
 
-# 如需恢复数据库（仅在 migration 包含不可逆变更时）
+# 3. 如需恢复数据库（仅在 migration 包含不可逆变更时）
 cat backup_YYYYMMDD.sql | docker compose exec -T postgres psql -U agentfs agentfs
 ```
 

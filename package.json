@@ -5,6 +5,7 @@
   "scripts": {
     "native:check": "node scripts/ensure-nodejieba-native.mjs --check",
     "native:sync": "node scripts/ensure-nodejieba-native.mjs --fix",
+    "deploy:cloud": "bash scripts/deploy-cloud-remote-build.sh",
     "prebuild": "pnpm native:sync",
     "build": "pnpm -r build",
     "pretest": "pnpm --filter @agent-fs/core build",
