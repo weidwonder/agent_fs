@@ -11,6 +11,18 @@ import { getProjectMemory } from './tools/get-project-memory.js';
 import { globMd } from './tools/glob-md.js';
 import { readMd } from './tools/read-md.js';
 import { grepMd } from './tools/grep-md.js';
+import {
+  clueAddFolder,
+  clueAddLeaf,
+  clueCreate,
+  clueDelete,
+  clueGetStructure,
+  clueRemoveNode,
+  clueUpdateNode,
+} from './tools/clue-builder.js';
+import { listClues } from './tools/list-clues.js';
+import { browseClue } from './tools/browse-clue.js';
+import { readClueLeaf } from './tools/read-clue-leaf.js';
 
 export async function createServer() {
   const server = new Server(
@@ -115,6 +127,147 @@ export async function createServer() {
         },
       },
       {
+        name: 'list_clues',
+        description: '列出指定项目下的知识线索',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            project: { type: 'string', description: 'projectId 或项目路径' },
+          },
+          required: ['project'],
+        },
+      },
+      {
+        name: 'browse_clue',
+        description: '浏览 Clue 树结构',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            clue_id: { type: 'string', description: 'Clue ID' },
+            node_path: { type: 'string', description: '节点路径，默认 root' },
+            depth: { type: 'number', description: '可选最大深度' },
+          },
+          required: ['clue_id'],
+        },
+      },
+      {
+        name: 'read_clue_leaf',
+        description: '读取 Clue leaf 的正文与来源定位',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            clue_id: { type: 'string', description: 'Clue ID' },
+            node_path: { type: 'string', description: 'leaf 路径' },
+          },
+          required: ['clue_id', 'node_path'],
+        },
+      },
+      {
+        name: 'clue_create',
+        description: '创建一个新的 Clue',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            project: { type: 'string', description: 'projectId 或项目路径' },
+            name: { type: 'string', description: 'Clue 名称' },
+            description: { type: 'string', description: 'Clue 描述' },
+            principle: { type: 'string', description: 'Clue 原则' },
+            root_organization: { type: 'string', enum: ['tree', 'timeline'] },
+            root_time_format: { type: 'string', description: 'timeline 根节点格式' },
+          },
+          required: ['project', 'name', 'description', 'principle', 'root_organization'],
+        },
+      },
+      {
+        name: 'clue_delete',
+        description: '删除一个 Clue',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            clue_id: { type: 'string', description: 'Clue ID' },
+          },
+          required: ['clue_id'],
+        },
+      },
+      {
+        name: 'clue_add_folder',
+        description: '向 Clue 中添加 folder 节点',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            clue_id: { type: 'string' },
+            parent_path: { type: 'string' },
+            name: { type: 'string' },
+            summary: { type: 'string' },
+            organization: { type: 'string', enum: ['tree', 'timeline'] },
+            time_format: { type: 'string' },
+            position: { type: 'number' },
+          },
+          required: ['clue_id', 'parent_path', 'name', 'summary', 'organization'],
+        },
+      },
+      {
+        name: 'clue_add_leaf',
+        description: '向 Clue 中添加 leaf 节点',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            clue_id: { type: 'string' },
+            parent_path: { type: 'string' },
+            name: { type: 'string' },
+            summary: { type: 'string' },
+            file_id: { type: 'string' },
+            segment_type: { type: 'string', enum: ['document', 'range'] },
+            anchor_start: { type: 'number' },
+            anchor_end: { type: 'number' },
+            position: { type: 'number' },
+          },
+          required: ['clue_id', 'parent_path', 'name', 'summary', 'file_id', 'segment_type'],
+        },
+      },
+      {
+        name: 'clue_update_node',
+        description: '更新 Clue 节点',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            clue_id: { type: 'string' },
+            node_path: { type: 'string' },
+            name: { type: 'string' },
+            summary: { type: 'string' },
+            organization: { type: 'string', enum: ['tree', 'timeline'] },
+            time_format: { type: 'string' },
+            anchor_start: { type: 'number' },
+            anchor_end: { type: 'number' },
+          },
+          required: ['clue_id', 'node_path'],
+        },
+      },
+      {
+        name: 'clue_remove_node',
+        description: '删除 Clue 节点及其子树',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            clue_id: { type: 'string' },
+            node_path: { type: 'string' },
+          },
+          required: ['clue_id', 'node_path'],
+        },
+      },
+      {
+        name: 'clue_get_structure',
+        description: '读取 Clue 的结构文本',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            clue_id: { type: 'string' },
+            node_path: { type: 'string' },
+          },
+          required: ['clue_id'],
+        },
+      },
+      {
         name: 'get_chunk',
         description: '获取指定 chunk 的详细内容',
         inputSchema: {
@@ -155,6 +308,46 @@ export async function createServer() {
 
         case 'search':
           return { content: [{ type: 'text', text: JSON.stringify(await search(args as any)) }] };
+
+        case 'list_clues':
+          return { content: [{ type: 'text', text: JSON.stringify(await listClues(args as any)) }] };
+
+        case 'browse_clue':
+          return { content: [{ type: 'text', text: JSON.stringify(await browseClue(args as any)) }] };
+
+        case 'read_clue_leaf':
+          return { content: [{ type: 'text', text: JSON.stringify(await readClueLeaf(args as any)) }] };
+
+        case 'clue_create':
+          return { content: [{ type: 'text', text: JSON.stringify(await clueCreate(args as any)) }] };
+
+        case 'clue_delete':
+          return { content: [{ type: 'text', text: JSON.stringify(await clueDelete(args as any)) }] };
+
+        case 'clue_add_folder':
+          return {
+            content: [{ type: 'text', text: JSON.stringify(await clueAddFolder(args as any)) }],
+          };
+
+        case 'clue_add_leaf':
+          return {
+            content: [{ type: 'text', text: JSON.stringify(await clueAddLeaf(args as any)) }],
+          };
+
+        case 'clue_update_node':
+          return {
+            content: [{ type: 'text', text: JSON.stringify(await clueUpdateNode(args as any)) }],
+          };
+
+        case 'clue_remove_node':
+          return {
+            content: [{ type: 'text', text: JSON.stringify(await clueRemoveNode(args as any)) }],
+          };
+
+        case 'clue_get_structure':
+          return {
+            content: [{ type: 'text', text: JSON.stringify(await clueGetStructure(args as any)) }],
+          };
 
         case 'glob_md':
           return { content: [{ type: 'text', text: JSON.stringify(await globMd(args as any)) }] };

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
@@ -10,8 +10,10 @@ import {
   LocalInvertedIndexAdapter,
   LocalArchiveAdapter,
   LocalMetadataAdapter,
+  LocalClueAdapter,
   createLocalAdapter,
 } from '../local/index.js';
+import type { Clue, Registry } from '@agent-fs/core';
 import type { VectorDocument, IndexMetadata } from '../types.js';
 
 // ---------------------------------------------------------------------------
@@ -54,6 +56,26 @@ function makeMetadata(dirId: string): IndexMetadata {
     files: [],
     subdirectories: [],
     unsupportedFiles: [],
+  };
+}
+
+function makeClue(projectId: string, overrides: Partial<Clue> = {}): Clue {
+  return {
+    id: 'clue-001',
+    projectId,
+    name: '认证系统演进',
+    description: '认证系统知识组织',
+    principle: '按主题组织',
+    createdAt: '2026-04-23T00:00:00.000Z',
+    updatedAt: '2026-04-23T00:00:00.000Z',
+    root: {
+      kind: 'folder',
+      organization: 'tree',
+      name: '',
+      summary: '认证系统知识组织',
+      children: [],
+    },
+    ...overrides,
   };
 }
 
@@ -265,6 +287,112 @@ describe('LocalMetadataAdapter', () => {
 });
 
 // ---------------------------------------------------------------------------
+// LocalClueAdapter
+// ---------------------------------------------------------------------------
+
+describe('LocalClueAdapter', () => {
+  let tmpDir: string;
+  let projectAPath: string;
+  let projectBPath: string;
+  let adapter: LocalClueAdapter;
+  let registryPath: string;
+
+  beforeAll(async () => {
+    tmpDir = makeTempDir();
+    projectAPath = join(tmpDir, 'project-a');
+    projectBPath = join(tmpDir, 'project-b');
+    registryPath = join(tmpDir, 'registry.json');
+
+    mkdirSync(join(projectAPath, '.fs_index'), { recursive: true });
+    mkdirSync(join(projectBPath, '.fs_index'), { recursive: true });
+
+    const registry: Registry = {
+      version: '2.0',
+      embeddingModel: 'mock',
+      embeddingDimension: 4,
+      projects: [
+        {
+          path: projectAPath,
+          alias: 'project-a',
+          projectId: 'project-a',
+          summary: 'A',
+          lastUpdated: '2026-04-23T00:00:00.000Z',
+          totalFileCount: 0,
+          totalChunkCount: 0,
+          subdirectories: [],
+          valid: true,
+        },
+        {
+          path: projectBPath,
+          alias: 'project-b',
+          projectId: 'project-b',
+          summary: 'B',
+          lastUpdated: '2026-04-23T00:00:00.000Z',
+          totalFileCount: 0,
+          totalChunkCount: 0,
+          subdirectories: [],
+          valid: true,
+        },
+      ],
+    };
+    writeFileSync(registryPath, JSON.stringify(registry, null, 2));
+
+    adapter = new LocalClueAdapter({ registryPath });
+    await adapter.init();
+  });
+
+  afterAll(async () => {
+    await adapter.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('saveClue 应写入项目 .fs_index/clues 目录', async () => {
+    const clue = makeClue('project-a');
+    await adapter.saveClue(clue);
+
+    expect(await adapter.getClue(clue.id)).toEqual(clue);
+    expect(
+      existsSync(join(projectAPath, '.fs_index', 'clues', 'registry.json')),
+    ).toBe(true);
+    expect(
+      existsSync(join(projectAPath, '.fs_index', 'clues', `${clue.id}.json`)),
+    ).toBe(true);
+  });
+
+  it('listClues 应按 projectId 过滤', async () => {
+    await adapter.saveClue(makeClue('project-a', { id: 'clue-a-1', name: 'A-1' }));
+    await adapter.saveClue(makeClue('project-b', { id: 'clue-b-1', name: 'B-1' }));
+
+    const projectAClues = await adapter.listClues('project-a');
+    expect(projectAClues.map((item) => item.id).sort()).toEqual(['clue-001', 'clue-a-1']);
+    expect(projectAClues.every((item) => typeof item.leafCount === 'number')).toBe(true);
+  });
+
+  it('同一项目下 duplicate clue name 应报错，但不同项目允许同名', async () => {
+    await expect(
+      adapter.saveClue(makeClue('project-a', { id: 'clue-a-dup', name: '认证系统演进' })),
+    ).rejects.toThrow(/Clue 名称已存在/u);
+
+    await expect(
+      adapter.saveClue(makeClue('project-b', { id: 'clue-b-dup', name: '认证系统演进' })),
+    ).resolves.toBeUndefined();
+  });
+
+  it('deleteClue 应移除项目内文件与 registry 条目', async () => {
+    const clue = makeClue('project-a', { id: 'clue-delete', name: '待删除' });
+    await adapter.saveClue(clue);
+
+    await adapter.deleteClue(clue.id);
+
+    expect(await adapter.getClue(clue.id)).toBeNull();
+    const registry = JSON.parse(
+      readFileSync(join(projectAPath, '.fs_index', 'clues', 'registry.json'), 'utf-8'),
+    ) as { clues: Array<{ id: string }> };
+    expect(registry.clues.some((item) => item.id === clue.id)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // createLocalAdapter (factory)
 // ---------------------------------------------------------------------------
 
@@ -290,6 +418,7 @@ describe('createLocalAdapter factory', () => {
     expect(adapter.invertedIndex).toBeDefined();
     expect(adapter.archive).toBeDefined();
     expect(adapter.metadata).toBeDefined();
+    expect(adapter.clue).toBeDefined();
 
     await adapter.init();
     await adapter.close();

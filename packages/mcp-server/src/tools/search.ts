@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import type { IndexMetadata, Registry } from '@agent-fs/core';
+import type { ClueReference, IndexMetadata, Registry } from '@agent-fs/core';
 import { loadConfig } from '@agent-fs/core';
 import type { EmbeddingService } from '@agent-fs/llm';
 import { createEmbeddingService } from '@agent-fs/llm';
@@ -15,6 +15,7 @@ import {
 import type { StorageAdapter } from '@agent-fs/storage-adapter';
 import { createLocalAdapter } from '@agent-fs/storage-adapter';
 import { resolveDisplayLocator } from './locator-display.js';
+import { collectLeafEntries } from './clue-storage.js';
 
 interface SearchInput {
   query: string;
@@ -45,6 +46,12 @@ interface AggregatedSearchResult {
   score: number;
   chunkHits: number;
   chunkIds: string[];
+}
+
+interface McpClueReference {
+  clue_id: string;
+  clue_name: string;
+  leaf_path: string;
 }
 
 interface FileLookup {
@@ -293,6 +300,11 @@ export async function search(input: SearchInput) {
     locatorMappingCache
   );
 
+  const clueRefsByFileId = await buildClueRefsByFileId(
+    new Set(reselectedResults.map((item) => item.item.fileId).filter((fileId) => fileId.length > 0)),
+    storageAdapter,
+  );
+
   const hydratedResults = await Promise.all(
     reselectedResults.map(async (fusedItem) => {
       const hydrated = await hydrateResult(
@@ -310,6 +322,9 @@ export async function search(input: SearchInput) {
         chunk_hits: fusedItem.chunkHits,
         aggregated_chunk_ids: fusedItem.chunkIds,
         keyword_snippets: keywordSnippetsByFile.get(hydrated.fileId),
+        ...(clueRefsByFileId.has(hydrated.fileId)
+          ? { clue_refs: serializeClueReferences(clueRefsByFileId.get(hydrated.fileId) ?? []) }
+          : {}),
         source: {
           file_path: hydrated.source.filePath,
           locator: hydrated.source.locator,
@@ -521,6 +536,60 @@ async function searchVector(
   }
 
   return [...merged.values()].sort((a, b) => b.score - a.score).slice(0, topK * 3);
+}
+
+async function buildClueRefsByFileId(
+  fileIds: Set<string>,
+  adapter: StorageAdapter,
+): Promise<Map<string, ClueReference[]>> {
+  const refs = new Map<string, ClueReference[]>();
+  if (fileIds.size === 0) {
+    return refs;
+  }
+
+  const registry = loadRegistry();
+  const projects = registry?.projects.filter((project) => project.valid) ?? [];
+
+  for (const project of projects) {
+    let summaries: Array<{ id: string; name: string }> = [];
+    try {
+      summaries = await adapter.clue.listClues(project.projectId);
+    } catch {
+      continue;
+    }
+
+    for (const summary of summaries) {
+      const clue = await adapter.clue.getClue(summary.id);
+      if (!clue) continue;
+
+      for (const entry of collectLeafEntries(clue)) {
+        if (!fileIds.has(entry.leaf.segment.fileId)) continue;
+
+        const items = refs.get(entry.leaf.segment.fileId) ?? [];
+        items.push({
+          clueId: clue.id,
+          clueName: clue.name,
+          leafPath: entry.path,
+        });
+        refs.set(entry.leaf.segment.fileId, items);
+      }
+    }
+  }
+
+  return new Map(
+    [...refs.entries()].map(([fileId, items]) => [
+      fileId,
+      items.sort((left, right) => left.leafPath.localeCompare(right.leafPath, 'zh-CN')),
+    ]),
+  );
+}
+
+function serializeClueReferences(items: ClueReference[]): McpClueReference[] {
+  return items.map((item) => ({
+    clue_id: item.clueId,
+    clue_name: item.clueName,
+    leaf_path: item.leafPath,
+  }));
 }
 
 function mapVectorItem(

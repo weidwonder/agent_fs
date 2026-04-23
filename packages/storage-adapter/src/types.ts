@@ -1,4 +1,4 @@
-import type { IndexMetadata, VectorDocument } from '@agent-fs/core';
+import type { Clue, ClueSummary, IndexMetadata, VectorDocument } from '@agent-fs/core';
 
 export type { VectorDocument, IndexMetadata };
 
@@ -119,6 +119,19 @@ export interface MetadataAdapter {
 }
 
 // ---------------------------------------------------------------------------
+// Clue
+// ---------------------------------------------------------------------------
+
+export interface ClueAdapter {
+  init(): Promise<void>;
+  listClues(projectId: string): Promise<ClueSummary[]>;
+  getClue(clueId: string): Promise<Clue | null>;
+  saveClue(clue: Clue): Promise<void>;
+  deleteClue(clueId: string): Promise<void>;
+  close(): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
 // StorageAdapter (root)
 // ---------------------------------------------------------------------------
 
@@ -133,6 +146,7 @@ export interface StorageAdapter {
   invertedIndex: InvertedIndexAdapter;
   archive: DocumentArchiveAdapter;
   metadata: MetadataAdapter;
+  clue: ClueAdapter;
   init(): Promise<void>;
   close(): Promise<void>;
 }

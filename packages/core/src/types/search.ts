@@ -1,3 +1,5 @@
+import type { ClueReference } from './clue';
+
 /**
  * 搜索结果
  */
@@ -28,6 +30,9 @@ export interface SearchResult {
 
   /** 同一文件聚合的 chunk_id 列表 */
   aggregatedChunkIds?: string[];
+
+  /** 命中文件关联的知识线索引用 */
+  clueRefs?: ClueReference[];
 }
 
 /**

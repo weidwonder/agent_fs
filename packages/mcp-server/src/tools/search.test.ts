@@ -145,6 +145,8 @@ function makeAdapterMock(opts: {
   searchByVector?: ReturnType<typeof vi.fn>;
   getByChunkIds?: ReturnType<typeof vi.fn>;
   invertedSearch?: ReturnType<typeof vi.fn>;
+  clueListClues?: ReturnType<typeof vi.fn>;
+  clueGetClue?: ReturnType<typeof vi.fn>;
 }) {
   const vectorResults = opts.vectorResults ?? [];
   const invertedResults = opts.invertedResults ?? [];
@@ -176,6 +178,10 @@ function makeAdapterMock(opts: {
         }
         throw new Error(`missing AFD: ${fileId}/${filePath}`);
       }),
+    },
+    clue: {
+      listClues: opts.clueListClues ?? vi.fn().mockResolvedValue([]),
+      getClue: opts.clueGetClue ?? vi.fn().mockResolvedValue(null),
     },
     init: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
@@ -1059,5 +1065,96 @@ describe('search', () => {
     expect(result.results[0].chunk_id).toBe('f1:0000');
     expect(result.results[1].chunk_id).toBe('f2:0000');
     expect(new Set(result.results.map((item: any) => item.source.file_path)).size).toBe(2);
+  });
+
+  it('命中文件被 Clue 引用时应返回 clue_refs', async () => {
+    const clue = {
+      id: 'clue-1',
+      projectId: 'd1',
+      name: '认证系统演进',
+      description: '认证系统知识组织',
+      principle: '按主题组织',
+      createdAt: '2026-04-23T00:00:00.000Z',
+      updatedAt: '2026-04-23T00:00:00.000Z',
+      root: {
+        kind: 'folder',
+        organization: 'tree',
+        name: '',
+        summary: '认证系统知识组织',
+        children: [
+          {
+            kind: 'folder',
+            organization: 'timeline',
+            timeFormat: 'YYYY-MM',
+            name: '基础认证',
+            summary: 'Session 到 JWT',
+            children: [
+              {
+                kind: 'leaf',
+                name: '2024-03',
+                summary: 'JWT 迁移',
+                segment: {
+                  fileId: 'f1',
+                  type: 'range',
+                  anchorStart: 2,
+                  anchorEnd: 2,
+                },
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    __setSearchServicesForTest({
+      embeddingService: {
+        embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
+      } as any,
+      storageAdapter: makeAdapterMock({
+        vectorResults: [
+          {
+            chunk_id: 'f1:0000',
+            score: 0.9,
+            document: {
+              chunk_id: 'f1:0000',
+              file_id: 'f1',
+              dir_id: 'd1',
+              rel_path: 'a.md',
+              file_path: join(projectDir, 'a.md'),
+              chunk_line_start: 2,
+              chunk_line_end: 2,
+              content_vector: [],
+              locator: 'line:2-2',
+              indexed_at: '',
+              deleted_at: '',
+            },
+          },
+        ],
+        clueListClues: vi.fn().mockResolvedValue([
+          {
+            id: 'clue-1',
+            name: '认证系统演进',
+            description: '认证系统知识组织',
+            updatedAt: '2026-04-23T00:00:00.000Z',
+          },
+        ]),
+        clueGetClue: vi.fn().mockResolvedValue(clue),
+      }) as any,
+    });
+
+    const result = await search({
+      query: '第二行',
+      scope: projectDir,
+      top_k: 5,
+    });
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0].clue_refs).toEqual([
+      {
+        clue_id: 'clue-1',
+        clue_name: '认证系统演进',
+        leaf_path: '基础认证/2024-03',
+      },
+    ]);
   });
 });

@@ -4,7 +4,7 @@
 
 ## 1. 系统定位
 
-Agent FS 让 AI Agent 在本地完成“索引 → 检索 → 定位原文”的完整闭环：
+Agent FS 让 AI Agent 在本地完成“索引 → 检索 → 定位原文 → 组织知识线索”的完整闭环：
 
 1. 用户选择一个 Project 目录
 2. Indexer 递归处理子目录与文件
@@ -14,6 +14,7 @@ Agent FS 让 AI Agent 在本地完成“索引 → 检索 → 定位原文”的
    - 倒排索引（SQLite）
    - 原文归档（AFD，`.afd`）
 5. MCP Server 对外提供 `list_indexes / dir_tree / glob_md / read_md / grep_md / search / get_chunk`
+6. 在此基础上，Knowledge Clue Phase 0 允许 Agent 通过 MCP 将文档片段组织成可浏览的 Clue 树
 
 ---
 
@@ -24,6 +25,7 @@ Agent FS 让 AI Agent 在本地完成“索引 → 检索 → 定位原文”的
 - **可定位**：每个 chunk 都可追溯到原文位置（locator + 行号）
 - **可增量**：基于文件变更检测，仅重建变化文件
 - **可层级检索**：支持 Project / 子目录 / 多目录范围检索
+- **可组织**：支持通过 Clue 对文档片段做二次知识编排，并在搜索结果中挂接 Clue 上下文
 
 ---
 
@@ -35,6 +37,9 @@ Agent FS 让 AI Agent 在本地完成“索引 → 检索 → 定位原文”的
 │ - @agent-fs/mcp-server（AI Agent 工具入口）               │
 │ - @agent-fs/electron-app（索引管理与可视化）              │
 ├────────────────────────────────────────────────────────────┤
+│ 核心模型层                                                 │
+│ - @agent-fs/core（类型、chunker、Clue 树操作）            │
+├────────────────────────────────────────────────────────────┤
 │ 索引编排层                                                 │
 │ - @agent-fs/indexer（扫描、转换、切分、向量化、写入）     │
 ├────────────────────────────────────────────────────────────┤
@@ -43,9 +48,11 @@ Agent FS 让 AI Agent 在本地完成“索引 → 检索 → 定位原文”的
 │ - @agent-fs/llm（Embedding / Summary）                    │
 ├────────────────────────────────────────────────────────────┤
 │ 存储层                                                     │
+│ - @agent-fs/storage-adapter（含 ClueAdapter 抽象）        │
 │ - @agent-fs/storage（Rust N-API：AFD 读写）               │
 │ - LanceDB（向量）                                          │
 │ - SQLite（倒排）                                           │
+│ - Project `.fs_index/clues/*.json`（Clue 本地持久化）      │
 ├────────────────────────────────────────────────────────────┤
 │ 插件层                                                     │
 │ - plugin-markdown / plugin-pdf / plugin-docx / plugin-excel│
@@ -118,6 +125,8 @@ Electron 客户端在知识库卡片设置中提供三种手动操作：
 
 对子目录删除场景，系统会基于 `SubdirectoryInfo.fileIds` 与 `fileArchives` 做兜底清理，避免子索引缺失时残留孤儿向量、倒排记录或 AFD 归档。
 
+说明：当前 Indexer 主流程尚未在增量更新末尾自动同步 Clue；Clue 仍由 MCP Builder 工具显式维护。
+
 ---
 
 ## 5. 查询主流程（MCP Server / Electron 客户端）
@@ -149,6 +158,7 @@ Electron 客户端在知识库卡片设置中提供三种手动操作：
    - `chunk_hits`：该文件在候选集中命中的 chunk 数
    - `aggregated_chunk_ids`：参与聚合的 chunk_id 列表
    - `keyword_snippets`：当请求包含 `keyword` 时，返回同文件关键词命中 chunk 的局部快照；若其对应 chunk 更优，也会参与代表 chunk 重选
+   - `clue_refs`：若命中文件被某个 Clue leaf 引用，则追加 `clue_id / clue_name / leaf_path`，便于 Consumer 继续沿 Clue 浏览
 
 ## 5.1.1 Electron `remove-project` 体验
 
@@ -190,12 +200,45 @@ Electron 客户端在知识库卡片设置中提供三种手动操作：
 - `read_md`：按文件读取 AFD 中的 `content.md`，支持行范围截取
 - `grep_md`：在 AFD 的 `content.md` 中做精确文本匹配并返回上下文
 
-## 5.5 目录工具
+## 5.5 Knowledge Clue 工具链路
+
+当前已落地的 Clue 能力采用“文件系统”隐喻：
+
+- `ClueFolder` 对应目录，支持 `tree` / `timeline`
+- `ClueLeaf` 对应文件，指向 `Segment`
+- 节点通过路径定位，不暴露节点级 ID
+
+Builder 侧工具：
+
+- `clue_create`
+- `clue_delete`
+- `clue_add_folder`
+- `clue_add_leaf`
+- `clue_update_node`
+- `clue_remove_node`
+- `clue_get_structure`
+
+Consumer 侧工具：
+
+- `list_clues`
+- `browse_clue`
+- `read_clue_leaf`
+
+当前链路特点：
+
+- Clue 数据通过 `StorageAdapter.clue` 读写，落地到 `<project>/.fs_index/clues/`
+- `browse_clue` 只返回结构、类型与摘要，不暴露来源定位
+- `read_clue_leaf` 复用现有 AFD Markdown 读取链路，返回正文与来源行号
+- `search` 会扫描命中文件对应的 Clue 引用，并追加 `clue_refs`
+
+说明：LLM 自动构建 Clue、Indexer 自动同步 Clue、Electron Clue UI 仍未实现。
+
+## 5.6 目录工具
 
 - `list_indexes`：返回 registry 中有效 Project 与扁平化子目录引用
 - `dir_tree`：返回递归目录树，支持 `depth` 限制，子索引缺失时返回回退节点
 
-## 5.6 Electron 客户端查询链路
+## 5.7 Electron 客户端查询链路
 
 - 通过 `ipcMain.handle('search')` 复用同一套向量/倒排/RRF 能力
 - `get-project-overview` 基于递归读取 `index.json` 计算项目概况、索引版本与文档/目录 Summary 覆盖率
@@ -267,6 +310,32 @@ interface DocumentConversionResult {
 
 说明：向量表已移除 `content/summary` 文本字段，大文本统一从 AFD 读取。
 
+## 6.5 Knowledge Clue 数据模型
+
+当前本地模式已落地的 Clue 核心模型包括：
+
+- `Segment`
+  - `fileId`
+  - `type: 'document' | 'range'`
+  - `anchorStart` / `anchorEnd`
+- `ClueFolder`
+  - `organization: 'tree' | 'timeline'`
+  - `timeFormat?`
+  - `name / summary / children`
+- `ClueLeaf`
+  - `name / summary / segment`
+- `Clue`
+  - `id`
+  - `projectId`
+  - `name / description / principle`
+  - `root`
+
+实现约束：
+
+- 根节点仅作为内部容器，不进入外部路径空间
+- 节点身份由路径决定，同层不允许重名
+- Clue 当前整体读写，不做节点级持久化
+
 ---
 
 ## 7. 存储布局
@@ -293,6 +362,9 @@ interface DocumentConversionResult {
 │   ├── logs/
 │   │   ├── indexing.latest.jsonl   # 增量/重建最新日志
 │   │   └── summary-backfill.latest.jsonl
+│   ├── clues/                      # 当前 Project 根目录下的 Clue 数据
+│   │   ├── registry.json
+│   │   └── <clue-id>.json
 │   ├── memory/                     # 项目结构记忆（不参与索引）
 │   │   ├── project.md              # 项目介绍
 │   │   └── extend/                 # 项目经验扩展
@@ -332,7 +404,9 @@ interface DocumentConversionResult {
 当前关键验证包含：
 
 - Indexer 单元与集成测试（含递归与增量）
-- MCP 工具单测（`list_indexes / dir_tree / glob_md / read_md / grep_md / search / get_chunk`）
+- MCP 工具单测（`list_indexes / dir_tree / glob_md / read_md / grep_md / search / get_chunk / list_clues / browse_clue / read_clue_leaf / clue_*`）
+- Clue 树操作单测：`packages/core/src/clue/tree.test.ts`
+- LocalClueAdapter 单测：`packages/storage-adapter/src/__tests__/local-adapter.test.ts`
 - Electron 查询范围解析单测：`packages/electron-app/src/main/search-scope.test.ts`
 - Electron 构建前原生依赖重建：`pnpm --filter @agent-fs/electron-app run predev`
 - E2E（Phase H）：
@@ -350,6 +424,8 @@ interface DocumentConversionResult {
 - 旧 BM25 JSON 索引不再作为主链路
 - 搜索质量依赖插件 `locator` 与 `searchableText` 质量
 - 若切换 Node/Electron 版本导致 ABI 变化，需重新执行 Electron 端原生模块重建
+- Clue 当前仅在本地模式实现；云端 `ClueAdapter` 仍是占位
+- Clue 当前不参与 Indexer 自动增量同步，需通过 MCP Builder 工具显式维护
 
 ---
 
@@ -383,7 +459,8 @@ Agent FS 同时支持本地和云端两种部署模式，通过 `StorageAdapter`
 │   ├─ VectorStoreAdapter                                             │
 │   ├─ InvertedIndexAdapter                                           │
 │   ├─ DocumentArchiveAdapter                                         │
-│   └─ MetadataAdapter                                                │
+│   ├─ MetadataAdapter                                                │
+│   └─ ClueAdapter                                                    │
 ├──────────────────────────────────────────────────────────────────────┤
 │ 存储实现层                                                           │
 │ ┌─本地─────────────────────┐  ┌─云端───────────────────────────────┐ │
@@ -392,6 +469,7 @@ Agent FS 同时支持本地和云端两种部署模式，通过 `StorageAdapter`
 │ │ - SQLite（倒排）          │  │ - PostgreSQL + 应用层BM25（倒排）  │ │
 │ │ - AFD / Rust N-API（归档）│  │ - S3 / MinIO（归档）              │ │
 │ │ - 文件系统（元数据）      │  │ - PostgreSQL（元数据）             │ │
+│ │ - `.fs_index/clues`       │  │ - ClueAdapter（当前仅占位）        │ │
 │ └──────────────────────────┘  └────────────────────────────────────┘ │
 ├──────────────────────────────────────────────────────────────────────┤
 │ 插件层（共享）                                                       │
@@ -458,6 +536,7 @@ users ─┬─> tenant_members ─> tenants
 - `createLocalAdapter()` / `createCloudAdapter()`：只组装对象，不做 I/O
 - 调用方必须显式调用 `adapter.init()` 和 `adapter.close()`
 - Server 模式下 DB pool 和 S3 client 是全局单例
+- 当前 `LocalAdapter` 已实现 `clue` 子适配器；`CloudAdapter` 仅提供编译级占位实现
 - `CloudAdapter` 按 tenant 创建（轻量操作），共享底层连接池
 
 ---

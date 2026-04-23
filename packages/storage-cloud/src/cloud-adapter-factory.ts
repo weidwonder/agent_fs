@@ -16,12 +16,29 @@ export function createCloudAdapter(config: CloudAdapterConfig): StorageAdapter {
   const invertedIndex = new CloudInvertedIndexAdapter(tenantId);
   const archive = new CloudArchiveAdapter(tenantId);
   const metadata = new CloudMetadataAdapter(tenantId);
+  const clue = {
+    async init(): Promise<void> {},
+    async listClues(): Promise<[]> {
+      return [];
+    },
+    async getClue(): Promise<null> {
+      return null;
+    },
+    async saveClue(): Promise<void> {
+      throw new Error('云端 ClueAdapter 尚未实现');
+    },
+    async deleteClue(): Promise<void> {
+      throw new Error('云端 ClueAdapter 尚未实现');
+    },
+    async close(): Promise<void> {},
+  };
 
   return {
     vector,
     invertedIndex,
     archive,
     metadata,
+    clue,
     async init(): Promise<void> {
       await Promise.all([
         vector.init(),

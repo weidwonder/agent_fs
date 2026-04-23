@@ -9,6 +9,7 @@ export type {
   InvertedIndexAdapter,
   DocumentArchiveAdapter,
   MetadataAdapter,
+  ClueAdapter,
   StorageAdapter,
 } from './types.js';
 
@@ -17,6 +18,7 @@ export {
   LocalInvertedIndexAdapter,
   LocalArchiveAdapter,
   LocalMetadataAdapter,
+  LocalClueAdapter,
   createLocalAdapter,
   type LocalAdapterOptions,
 } from './local/index.js';

@@ -68,7 +68,7 @@
 | 查询范围 | 单/多个 Project 或子文件夹，**自动包含所有子文件夹** |
 | 层级过滤 | 指定 Project 文件夹 → 搜索全部；指定子文件夹 → 仅搜索该子树 |
 | 范围解析一致性 | scope 传入 Project 时，优先基于 `.fs_index/index.json` 递归解析真实 `dirId`；索引缺失时回退 registry |
-| 结果元数据 | 搜索结果返回代表 chunk 的 `chunkId`，并可附带 `chunkHits` / `aggregatedChunkIds` 说明同文件聚合命中情况；当传入 `keyword` 时，可额外返回 `keywordSnippets` 展示关键词命中片段快照，并作为代表 chunk 重选的信号之一 |
+| 结果元数据 | 搜索结果返回代表 chunk 的 `chunkId`，并可附带 `chunkHits` / `aggregatedChunkIds` 说明同文件聚合命中情况；当传入 `keyword` 时，可额外返回 `keywordSnippets` 展示关键词命中片段快照，并作为代表 chunk 重选的信号之一；若命中文件被知识线索引用，MCP 响应还可返回 `clue_refs`（`clue_id / clue_name / leaf_path`） |
 
 ### 2.5 增量更新
 
@@ -86,6 +86,19 @@
 | OpenAI 兼容约束 | Summary 请求需显式关闭 thinking，避免模型将内容写入 reasoning 字段 |
 | 限流保护 | Summary 请求需做全局队列限流、最小请求间隔与 `429` 退避重试 |
 | 执行可观测性 | 维护弹窗实时展示进度（阶段/文件）与日志尾部，并刷新 summary 覆盖率 |
+
+### 2.6 知识线索（Knowledge Clue）Phase 0
+
+| 需求 | 说明 |
+|------|------|
+| 组织隐喻 | Clue 采用“文件系统”隐喻：folder 表示目录，leaf 表示指向文档片段的文件 |
+| 节点寻址 | 节点通过路径定位，不暴露节点 ID；同层节点不允许重名 |
+| 组织模式 | 当前支持 `tree` 和 `timeline` 两种 folder 组织模式，可混合嵌套 |
+| 内容粒度 | leaf 指向 `Segment`，支持整个文档（`document`）或行号区间（`range`） |
+| 当前创建方式 | Phase 0 通过 MCP Builder 工具显式创建与维护，不依赖 LLM 自动生成 |
+| 当前浏览方式 | 通过 `list_clues / browse_clue / read_clue_leaf` 浏览结构、读取正文与来源定位 |
+| 当前范围 | 已落地 Core 类型、树操作、本地存储、MCP 工具、搜索 `clueRefs` 挂接 |
+| 暂未覆盖 | LLM 自动构建、Indexer 自动同步、Electron Clue UI |
 
 ## 3. 系统架构要求
 
@@ -145,6 +158,8 @@
 | `logs/*.latest.jsonl` | 增量/重建与补全 Summary 的最新运行日志 |
 | `memory/project.md` | 项目级记忆入口（项目介绍与索引摘要） |
 | `memory/extend/*.md` | 项目经验扩展记忆（约定在 project.md 引用） |
+| `clues/registry.json` | 当前 Project 下的 Clue 列表索引 |
+| `clues/<clue-id>.json` | 单个 Clue 的完整结构化数据 |
 | `documents/<原文件名>.afd` | 当前目录文件对应的压缩归档（ZIP，含 content.md、metadata.json、summaries.json，其中 `summaries.json` 仅保存 `documentSummary`） |
 
 ## 4. 索引存储优化
@@ -193,6 +208,16 @@
 | `search` | 多路召回搜索（语义 + 精准关键词），支持多文件夹过滤 |
 | `get_chunk` | 获取指定 chunk 详情及相邻 chunk（从 AFD 读取） |
 | `get_project_memory` | 获取项目 memory 路径、project.md 内容和 markdown 文件列表 |
+| `list_clues` | 列出指定项目下的知识线索摘要与 leaf 统计 |
+| `browse_clue` | 浏览 Clue 的树结构（仅名称、类型、摘要） |
+| `read_clue_leaf` | 读取指定 leaf 的正文与来源定位 |
+| `clue_create` | 创建 Clue 根结构 |
+| `clue_delete` | 删除指定 Clue |
+| `clue_add_folder` | 在 Clue 中新增 folder 节点 |
+| `clue_add_leaf` | 在 Clue 中新增 leaf 节点 |
+| `clue_update_node` | 更新 Clue 节点名称、摘要或 Segment 锚点 |
+| `clue_remove_node` | 删除 Clue 节点及其子树 |
+| `clue_get_structure` | 读取 Clue 文本树结构 |
 
 ## 6. 用户界面
 
@@ -203,6 +228,7 @@
 | 核心功能 | 选择目录、启动索引、查看进度、管理配置、执行语义/精准搜索（支持范围选择）、查看项目概况 |
 | 进度展示 | 当前文件、已完成/总数、索引更新时间 |
 | 项目概况 | 展示文件数、已索引文件数、chunk 数、索引版本、文档/目录 Summary 覆盖率，并支持从概况面板触发增量更新 / 补全 Summary / 重新索引 |
+| 知识线索 | 当前 Electron 客户端尚未提供 Clue 列表、树浏览或创建向导；Phase 0 仅落地后端与 MCP 能力 |
 | 布局约束 | 左侧项目面板与右侧搜索面板并排显示，列表卡片不得横向溢出或被搜索面板遮挡 |
 
 ## 7. 可配置项
@@ -246,6 +272,9 @@
 - 自动检测文件变化（需手动触发重新索引）
 - 图片/音视频等非文档格式
 - searchableText 原始明细不单独持久化（每次重建索引时重新生成）
+- LLM 主导的 Clue 对话式创建与自动展开
+- Indexer 管线末尾自动同步 Clue
+- Electron 客户端中的 Clue 列表、树浏览器与创建向导
 
 ### 技术约束
 
@@ -309,6 +338,7 @@
 | 文档归档 | AFD（Rust N-API） | S3 / MinIO |
 | 索引元数据 | `.fs_index/index.json` | PostgreSQL `directories` / `files` 表 |
 | 全局注册表 | `~/.agent_fs/registry.json` | PostgreSQL `tenants` / `projects` 表 |
+| 知识线索 | `<project>/.fs_index/clues/*.json` | 暂未实现，当前 CloudAdapter 仅保留 `ClueAdapter` 占位 |
 
 ### 13.4 多租户
 
@@ -332,12 +362,14 @@
 | `get_project_memory` | 获取项目 memory |
 | `index_documents` | 🆕 从 URL 下载并触发索引 |
 
+说明：当前云端模式尚未提供 `list_clues / browse_clue / read_clue_leaf / clue_*` 系列工具。
+
 ### 13.6 架构抽象
 
 通过 `StorageAdapter` 接口解耦核心逻辑与存储后端：
-- `VectorStoreAdapter` / `InvertedIndexAdapter` / `DocumentArchiveAdapter` / `MetadataAdapter`
-- `LocalAdapter`：包装现有 LanceDB / SQLite / AFD（Electron 用）
-- `CloudAdapter`：实现 pgvector / PG BM25 / S3（云端用）
+- `VectorStoreAdapter` / `InvertedIndexAdapter` / `DocumentArchiveAdapter` / `MetadataAdapter` / `ClueAdapter`
+- `LocalAdapter`：包装现有 LanceDB / SQLite / AFD / `.fs_index/clues`（Electron / 本地 MCP 用）
+- `CloudAdapter`：实现 pgvector / PG BM25 / S3；当前 `ClueAdapter` 仅占位，尚未提供 SaaS Clue 能力
 - 核心包（indexer / search）只依赖接口，不直接依赖具体后端
 
 ### 13.7 部署基础设施

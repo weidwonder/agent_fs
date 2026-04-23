@@ -37,6 +37,17 @@ export type {
   SearchResponse,
 } from './types/search';
 
+// Clue types
+export type {
+  Segment,
+  ClueFolder,
+  ClueLeaf,
+  ClueNode,
+  Clue,
+  ClueSummary,
+  ClueReference,
+} from './types/clue';
+
 // Index types
 export type {
   IndexMetadata,
@@ -83,3 +94,16 @@ export {
   type ResolvedConfig,
   type RawConfigResult,
 } from './config';
+
+export {
+  createClue,
+  findNode,
+  addChild,
+  updateNode,
+  removeNode,
+  listLeaves,
+  renderTree,
+  type CreateClueInput,
+  type UpdateNodeInput,
+  type RenderTreeOptions,
+} from './clue/tree';

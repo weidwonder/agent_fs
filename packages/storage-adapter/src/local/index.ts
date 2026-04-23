@@ -6,11 +6,13 @@ import { LocalVectorStoreAdapter } from './local-vector-store-adapter.js';
 import { LocalInvertedIndexAdapter } from './local-inverted-index-adapter.js';
 import { LocalArchiveAdapter } from './local-archive-adapter.js';
 import { LocalMetadataAdapter } from './local-metadata-adapter.js';
+import { LocalClueAdapter } from './local-clue-adapter.js';
 
 export { LocalVectorStoreAdapter } from './local-vector-store-adapter.js';
 export { LocalInvertedIndexAdapter } from './local-inverted-index-adapter.js';
 export { LocalArchiveAdapter } from './local-archive-adapter.js';
 export { LocalMetadataAdapter } from './local-metadata-adapter.js';
+export { LocalClueAdapter } from './local-clue-adapter.js';
 
 export interface LocalAdapterOptions {
   /** Base directory for all local storage data */
@@ -47,22 +49,26 @@ export function createLocalAdapter(options: LocalAdapterOptions): StorageAdapter
   const invertedIndexAdapter = new LocalInvertedIndexAdapter(invertedIndex);
   const archive = new LocalArchiveAdapter(archiveStorage);
   const metadata = new LocalMetadataAdapter({ metadataDir, registryPath });
+  const clue = new LocalClueAdapter({ registryPath });
 
   return {
     vector,
     invertedIndex: invertedIndexAdapter,
     archive,
     metadata,
+    clue,
 
     async init(): Promise<void> {
       await vector.init();
       await invertedIndexAdapter.init();
+      await clue.init();
     },
 
     async close(): Promise<void> {
       await vector.close();
       await invertedIndexAdapter.close();
       await archive.close();
+      await clue.close();
     },
   };
 }
