@@ -30,6 +30,17 @@ export function createCloudAdapter(config: CloudAdapterConfig): StorageAdapter {
     async deleteClue(): Promise<void> {
       throw new Error('云端 ClueAdapter 尚未实现');
     },
+    async removeLeavesByFileId(): Promise<{
+      affectedClues: string[];
+      removedLeaves: number;
+      removedFolders: number;
+    }> {
+      return {
+        affectedClues: [],
+        removedLeaves: 0,
+        removedFolders: 0,
+      };
+    },
     async close(): Promise<void> {},
   };
 
@@ -40,17 +51,10 @@ export function createCloudAdapter(config: CloudAdapterConfig): StorageAdapter {
     metadata,
     clue,
     async init(): Promise<void> {
-      await Promise.all([
-        vector.init(),
-        invertedIndex.init(),
-      ]);
+      await Promise.all([vector.init(), invertedIndex.init()]);
     },
     async close(): Promise<void> {
-      await Promise.all([
-        vector.close(),
-        invertedIndex.close(),
-        archive.close(),
-      ]);
+      await Promise.all([vector.close(), invertedIndex.close(), archive.close()]);
     },
   };
 }

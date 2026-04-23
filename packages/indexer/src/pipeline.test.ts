@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   existsSync,
   mkdtempSync,
@@ -16,6 +16,7 @@ function makeStorage(overrides?: {
   vector?: Record<string, unknown>;
   archive?: Record<string, unknown>;
   invertedIndex?: Record<string, unknown>;
+  clue?: Record<string, unknown>;
 }) {
   return {
     vector: {
@@ -36,11 +37,23 @@ function makeStorage(overrides?: {
       removeDirectory: vi.fn().mockResolvedValue(undefined),
       ...overrides?.invertedIndex,
     },
+    clue: {
+      removeLeavesByFileId: vi.fn().mockResolvedValue({
+        affectedClues: [],
+        removedLeaves: 0,
+        removedFolders: 0,
+      }),
+      ...overrides?.clue,
+    },
     init: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
     metadata: {} as any,
   };
 }
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('IndexPipeline summary mode', () => {
   it('skip 模式不应调用 summaryService 且摘要为空', async () => {
@@ -85,7 +98,8 @@ describe('IndexPipeline summary mode', () => {
     expect(summaryService.generateDirectorySummary).not.toHaveBeenCalled();
 
     expect(storage.archive.write).toHaveBeenCalledTimes(1);
-    const afdPayload = (storage.archive.write.mock.calls[0][1] as { files: Record<string, string> }).files;
+    const afdPayload = (storage.archive.write.mock.calls[0][1] as { files: Record<string, string> })
+      .files;
     const summaries = JSON.parse(afdPayload['summaries.json']) as { documentSummary: string };
     expect(summaries.documentSummary).toBe('');
 
@@ -248,9 +262,7 @@ describe('IndexPipeline summary mode', () => {
     };
 
     const embeddingService = {
-      embed: vi
-        .fn()
-        .mockRejectedValueOnce(new Error('The operation was aborted due to timeout')),
+      embed: vi.fn().mockRejectedValueOnce(new Error('The operation was aborted due to timeout')),
     };
 
     const storage = makeStorage();
@@ -521,7 +533,9 @@ describe('IndexPipeline summary mode', () => {
         write: vi.fn().mockImplementation(async (archiveName: string) => {
           archivedNames.add(archiveName);
         }),
-        exists: vi.fn().mockImplementation(async (archiveName: string) => archivedNames.has(archiveName)),
+        exists: vi
+          .fn()
+          .mockImplementation(async (archiveName: string) => archivedNames.has(archiveName)),
         delete: vi.fn().mockImplementation(async (archiveName: string) => {
           archivedNames.delete(archiveName);
         }),
@@ -644,6 +658,7 @@ describe('IndexPipeline summary mode', () => {
     expect(storage.archive.delete).toHaveBeenCalledWith('update.md');
     expect(storage.invertedIndex.removeFile).toHaveBeenCalledWith(oldFileId);
     expect(storage.invertedIndex.addFile).toHaveBeenCalledTimes(1);
+    expect(storage.clue.removeLeavesByFileId).not.toHaveBeenCalled();
 
     rmSync(dirPath, { recursive: true, force: true });
   });
@@ -707,10 +722,154 @@ describe('IndexPipeline summary mode', () => {
     await secondPipeline.run();
 
     expect(storage.archive.delete).toHaveBeenCalledWith('a.md');
+    expect(storage.clue.removeLeavesByFileId).toHaveBeenCalledTimes(1);
 
     if (existsSync(staleAfdPath)) {
       unlinkSync(staleAfdPath);
     }
+    rmSync(dirPath, { recursive: true, force: true });
+  });
+
+  it('删除文件时应同步清理 Clue 引用', async () => {
+    const dirPath = mkdtempSync(join(tmpdir(), 'agent-fs-clue-delete-sync-'));
+    mkdirSync(join(dirPath, '.fs_index'), { recursive: true });
+    writeFileSync(
+      join(dirPath, '.fs_index', 'index.json'),
+      JSON.stringify(
+        {
+          version: '2.0',
+          createdAt: '2026-04-23T00:00:00.000Z',
+          updatedAt: '2026-04-23T00:00:00.000Z',
+          dirId: 'project-delete',
+          directoryPath: dirPath,
+          directorySummary: '',
+          projectId: 'project-delete',
+          relativePath: '.',
+          parentDirId: null,
+          stats: { fileCount: 1, chunkCount: 1, totalTokens: 10 },
+          files: [
+            {
+              name: 'gone.md',
+              afdName: 'gone.md',
+              type: 'md',
+              size: 10,
+              hash: 'hash-old',
+              fileId: 'file-delete',
+              indexedAt: '2026-04-23T00:00:00.000Z',
+              chunkCount: 1,
+              summary: '',
+            },
+          ],
+          subdirectories: [],
+          unsupportedFiles: [],
+        },
+        null,
+        2
+      )
+    );
+
+    const pluginManager = {
+      getSupportedExtensions: () => ['md'],
+      getPlugin: () => null,
+    };
+    const summaryService = {
+      generateDocumentSummary: vi.fn(),
+      generateDirectorySummary: vi.fn(),
+    };
+    const embeddingService = {
+      embed: vi.fn().mockResolvedValue([0, 0, 0]),
+    };
+    const storage = makeStorage();
+
+    const pipeline = new IndexPipeline({
+      dirPath,
+      pluginManager: pluginManager as any,
+      embeddingService: embeddingService as any,
+      summaryService: summaryService as any,
+      storage: storage as any,
+      chunkOptions: { minTokens: 1, maxTokens: 200 },
+      summaryOptions: {
+        mode: 'skip',
+      },
+    });
+
+    await pipeline.run();
+
+    expect(storage.vector.deleteByFileId).toHaveBeenCalledWith('file-delete');
+    expect(storage.invertedIndex.removeFile).toHaveBeenCalledWith('file-delete');
+    expect(storage.clue.removeLeavesByFileId).toHaveBeenCalledWith('project-delete', 'file-delete');
+
+    rmSync(dirPath, { recursive: true, force: true });
+  });
+
+  it('新增或修改文件后应异步发送 Clue Webhook', async () => {
+    const dirPath = mkdtempSync(join(tmpdir(), 'agent-fs-clue-webhook-'));
+    writeFileSync(join(dirPath, 'new.md'), '# 新文档\n\n内容');
+
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const plugin = {
+      name: 'markdown',
+      toMarkdown: vi.fn(async () => ({ markdown: '# 新文档\n\n内容', mapping: [] })),
+    };
+    const pluginManager = {
+      getSupportedExtensions: () => ['md'],
+      getPlugin: () => plugin,
+    };
+    const summaryService = {
+      generateDocumentSummary: vi.fn(),
+      generateDirectorySummary: vi.fn(),
+    };
+    const embeddingService = {
+      embed: vi.fn().mockResolvedValue([0, 0, 0]),
+    };
+    const storage = makeStorage();
+
+    const pipeline = new IndexPipeline({
+      dirPath,
+      pluginManager: pluginManager as any,
+      embeddingService: embeddingService as any,
+      summaryService: summaryService as any,
+      storage: storage as any,
+      chunkOptions: { minTokens: 1, maxTokens: 200 },
+      summaryOptions: {
+        mode: 'skip',
+      },
+      clueConfig: {
+        webhook_url: 'http://127.0.0.1:3000/clue-webhook',
+        webhook_secret: 'test-secret',
+      },
+    });
+
+    await pipeline.run();
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+
+    const [url, requestInit] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const payload = JSON.parse(String(requestInit.body)) as {
+      event: string;
+      project_id: string;
+      project_path: string;
+      changes: Array<{ file_path: string; action: string; summary: string }>;
+    };
+    const headers = requestInit.headers as Record<string, string>;
+
+    expect(url).toBe('http://127.0.0.1:3000/clue-webhook');
+    expect(payload.event).toBe('documents_changed');
+    expect(payload.project_path).toBe(dirPath);
+    expect(payload.project_id).toBeTruthy();
+    expect(payload.changes).toHaveLength(1);
+    expect(payload.changes[0]).toMatchObject({
+      file_path: 'new.md',
+      action: 'added',
+      summary: '',
+    });
+    expect(headers['X-Webhook-Signature']).toMatch(/^sha256=/u);
+
     rmSync(dirPath, { recursive: true, force: true });
   });
 });

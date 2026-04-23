@@ -117,6 +117,19 @@ function createPipeline(context: IntegrationContext): IndexPipeline {
     invertedIndex: new LocalInvertedIndexAdapter(context.invertedIndex),
     archive: archiveResolver(context.projectDir),
     metadata: {} as any,
+    clue: {
+      init: async () => {},
+      listClues: async () => [],
+      getClue: async () => null,
+      saveClue: async () => {},
+      deleteClue: async () => {},
+      removeLeavesByFileId: vi.fn().mockResolvedValue({
+        affectedClues: [],
+        removedLeaves: 0,
+        removedFolders: 0,
+      }),
+      close: async () => {},
+    },
     init: async () => {},
     close: async () => {},
   };
@@ -209,7 +222,9 @@ describe('IndexPipeline Integration', () => {
     const docsStorage = createAFDStorage({
       documentsDir: join(context.projectDir, 'docs', '.fs_index', 'documents'),
     });
-    expect(await docsStorage.exists(oldDeleted!.afdName ?? oldDeleted!.name ?? oldDeleted!.fileId)).toBe(false);
+    expect(
+      await docsStorage.exists(oldDeleted!.afdName ?? oldDeleted!.name ?? oldDeleted!.fileId)
+    ).toBe(false);
 
     const removedResults = await context.invertedIndex.search('海豚', { topK: 10 });
     expect(removedResults.some((item) => item.fileId === oldDeleted!.fileId)).toBe(false);

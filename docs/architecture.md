@@ -125,7 +125,7 @@ Electron 客户端在知识库卡片设置中提供三种手动操作：
 
 对子目录删除场景，系统会基于 `SubdirectoryInfo.fileIds` 与 `fileArchives` 做兜底清理，避免子索引缺失时残留孤儿向量、倒排记录或 AFD 归档。
 
-说明：当前 Indexer 主流程尚未在增量更新末尾自动同步 Clue；Clue 仍由 MCP Builder 工具显式维护。
+说明：当前 Indexer 已在删除路径自动清理 Clue leaf，并在新增/修改后通过可选 Webhook 通知外部编排端；Clue 结构本身仍由 MCP Builder 工具显式维护。
 
 ---
 
@@ -230,8 +230,10 @@ Consumer 侧工具：
 - `browse_clue` 只返回结构、类型与摘要，不暴露来源定位
 - `read_clue_leaf` 复用现有 AFD Markdown 读取链路，返回正文与来源行号
 - `search` 会扫描命中文件对应的 Clue 引用，并追加 `clue_refs`
+- 文档删除时，Indexer 会清理所有引用该 `fileId` 的 leaf，并级联移除空 folder
+- 文档新增/修改时，Indexer 可按 `config.clue.webhook_url` 异步发送 `documents_changed` Webhook
 
-说明：LLM 自动构建 Clue、Indexer 自动同步 Clue、Electron Clue UI 仍未实现。
+说明：LLM 自动构建 Clue、Indexer 内置 LLM 重写 Clue、Electron Clue UI 仍未实现。
 
 ## 5.6 目录工具
 
@@ -425,7 +427,7 @@ interface DocumentConversionResult {
 - 搜索质量依赖插件 `locator` 与 `searchableText` 质量
 - 若切换 Node/Electron 版本导致 ABI 变化，需重新执行 Electron 端原生模块重建
 - Clue 当前仅在本地模式实现；云端 `ClueAdapter` 仍是占位
-- Clue 当前不参与 Indexer 自动增量同步，需通过 MCP Builder 工具显式维护
+- Clue 当前不做 Indexer 内置 LLM 重写；仅支持删除自动清理与新增/修改 Webhook 通知，结构维护仍由 MCP Builder 或外部服务负责
 
 ---
 

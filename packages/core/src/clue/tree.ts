@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Clue, ClueFolder, ClueLeaf, ClueNode } from '../types/clue.js';
 import { renderTree, type RenderTreeOptions } from './tree-render.js';
+export { removeLeavesByFileId, type RemoveLeavesByFileIdResult } from './tree-remove.js';
 import {
   assertNodeName,
   ensureUniqueName,
@@ -52,12 +53,7 @@ export function findNode(clue: Clue, nodePath: string): ClueNode | null {
   return findNodeFromRoot(clue.root, nodePath);
 }
 
-export function addChild(
-  clue: Clue,
-  parentPath: string,
-  node: ClueNode,
-  position?: number,
-): Clue {
+export function addChild(clue: Clue, parentPath: string, node: ClueNode, position?: number): Clue {
   assertNodeName(node.name);
   const parent = findNode(clue, parentPath);
   if (!parent) throw new Error(`父路径不存在: ${parentPath}`);
@@ -133,7 +129,7 @@ function replaceFolder(clue: Clue, nodePath: string, folder: ClueFolder): Clue {
 function replaceFolderRecursive(
   current: ClueFolder,
   segments: string[],
-  replacement: ClueFolder,
+  replacement: ClueFolder
 ): ClueFolder {
   if (segments.length === 0) {
     return replacement;
@@ -160,7 +156,7 @@ function applyUpdates(node: ClueNode, updates: UpdateNodeInput): ClueNode {
       name: nextName,
       summary: updates.summary ?? node.summary,
       organization,
-      timeFormat: organization === 'timeline' ? updates.timeFormat ?? node.timeFormat : undefined,
+      timeFormat: organization === 'timeline' ? (updates.timeFormat ?? node.timeFormat) : undefined,
     };
   }
 

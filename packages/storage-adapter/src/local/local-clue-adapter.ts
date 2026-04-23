@@ -1,7 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { listLeaves, type Clue, type ClueSummary, type Registry } from '@agent-fs/core';
+import {
+  listLeaves,
+  removeLeavesByFileId as removeClueLeavesByFileId,
+  type Clue,
+  type ClueSummary,
+  type Registry,
+} from '@agent-fs/core';
 import type { ClueAdapter } from '../types.js';
 
 interface ClueRegistryFile {
@@ -37,7 +43,7 @@ export class LocalClueAdapter implements ClueAdapter {
     const projectPath = this.resolveProjectPath(clue.projectId);
     const registry = this.readClueRegistry(projectPath);
     const duplicated = registry.clues.find(
-      (item) => item.id !== clue.id && item.name === clue.name,
+      (item) => item.id !== clue.id && item.name === clue.name
     );
     if (duplicated) {
       throw new Error(`Clue 名称已存在: ${clue.name}`);
@@ -71,6 +77,56 @@ export class LocalClueAdapter implements ClueAdapter {
     this.writeClueRegistry(location.projectPath, {
       clues: registry.clues.filter((item) => item.id !== clueId),
     });
+  }
+
+  async removeLeavesByFileId(
+    projectId: string,
+    fileId: string
+  ): Promise<{
+    affectedClues: string[];
+    removedLeaves: number;
+    removedFolders: number;
+  }> {
+    const projectPath = this.resolveProjectPath(projectId);
+    const registry = this.readClueRegistry(projectPath);
+    const nextClues = [...registry.clues];
+    const affectedClues: string[] = [];
+    let removedLeaves = 0;
+    let removedFolders = 0;
+    let changed = false;
+
+    for (const [index, summary] of nextClues.entries()) {
+      const clue = await this.getClue(summary.id);
+      if (!clue) {
+        continue;
+      }
+
+      const result = removeClueLeavesByFileId(clue, fileId);
+      if (result.removedLeaves === 0) {
+        continue;
+      }
+
+      changed = true;
+      affectedClues.push(clue.id);
+      removedLeaves += result.removedLeaves;
+      removedFolders += result.removedFolders;
+      writeFileSync(this.cluePath(projectPath, clue.id), JSON.stringify(result.clue, null, 2));
+      nextClues[index] = {
+        ...summary,
+        updatedAt: result.clue.updatedAt,
+        leafCount: listLeaves(result.clue).length,
+      };
+    }
+
+    if (changed) {
+      this.writeClueRegistry(projectPath, { clues: sortByName(nextClues) });
+    }
+
+    return {
+      affectedClues,
+      removedLeaves,
+      removedFolders,
+    };
   }
 
   async close(): Promise<void> {}
@@ -126,7 +182,7 @@ export class LocalClueAdapter implements ClueAdapter {
     this.ensureClueDir(projectPath);
     writeFileSync(
       join(this.clueDir(projectPath), 'registry.json'),
-      JSON.stringify(registry, null, 2),
+      JSON.stringify(registry, null, 2)
     );
   }
 

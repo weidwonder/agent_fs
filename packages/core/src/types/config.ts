@@ -20,6 +20,9 @@ export interface Config {
   /** 搜索配置 */
   search: SearchConfig;
 
+  /** Clue 配置 */
+  clue?: ClueConfig;
+
   /** 插件配置 */
   plugins?: Record<string, unknown>;
 }
@@ -150,4 +153,15 @@ export interface SearchConfig {
   fusion: {
     method: 'rrf';
   };
+}
+
+/**
+ * Clue 配置
+ */
+export interface ClueConfig {
+  /** Clue 变更通知 Webhook 地址 */
+  webhook_url?: string;
+
+  /** Webhook 签名密钥 */
+  webhook_secret?: string;
 }

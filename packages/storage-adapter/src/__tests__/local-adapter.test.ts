@@ -351,12 +351,8 @@ describe('LocalClueAdapter', () => {
     await adapter.saveClue(clue);
 
     expect(await adapter.getClue(clue.id)).toEqual(clue);
-    expect(
-      existsSync(join(projectAPath, '.fs_index', 'clues', 'registry.json')),
-    ).toBe(true);
-    expect(
-      existsSync(join(projectAPath, '.fs_index', 'clues', `${clue.id}.json`)),
-    ).toBe(true);
+    expect(existsSync(join(projectAPath, '.fs_index', 'clues', 'registry.json'))).toBe(true);
+    expect(existsSync(join(projectAPath, '.fs_index', 'clues', `${clue.id}.json`))).toBe(true);
   });
 
   it('listClues 应按 projectId 过滤', async () => {
@@ -370,11 +366,11 @@ describe('LocalClueAdapter', () => {
 
   it('同一项目下 duplicate clue name 应报错，但不同项目允许同名', async () => {
     await expect(
-      adapter.saveClue(makeClue('project-a', { id: 'clue-a-dup', name: '认证系统演进' })),
+      adapter.saveClue(makeClue('project-a', { id: 'clue-a-dup', name: '认证系统演进' }))
     ).rejects.toThrow(/Clue 名称已存在/u);
 
     await expect(
-      adapter.saveClue(makeClue('project-b', { id: 'clue-b-dup', name: '认证系统演进' })),
+      adapter.saveClue(makeClue('project-b', { id: 'clue-b-dup', name: '认证系统演进' }))
     ).resolves.toBeUndefined();
   });
 
@@ -386,9 +382,69 @@ describe('LocalClueAdapter', () => {
 
     expect(await adapter.getClue(clue.id)).toBeNull();
     const registry = JSON.parse(
-      readFileSync(join(projectAPath, '.fs_index', 'clues', 'registry.json'), 'utf-8'),
+      readFileSync(join(projectAPath, '.fs_index', 'clues', 'registry.json'), 'utf-8')
     ) as { clues: Array<{ id: string }> };
     expect(registry.clues.some((item) => item.id === clue.id)).toBe(false);
+  });
+
+  it('removeLeavesByFileId 应清理匹配 leaf 并更新 registry leafCount', async () => {
+    const clue = makeClue('project-a', {
+      id: 'clue-prune',
+      name: '待清理',
+      root: {
+        kind: 'folder',
+        organization: 'tree',
+        name: '',
+        summary: '待清理',
+        children: [
+          {
+            kind: 'folder',
+            organization: 'tree',
+            name: '认证',
+            summary: '认证',
+            children: [
+              {
+                kind: 'leaf',
+                name: '旧文档',
+                summary: '旧文档',
+                segment: {
+                  fileId: 'file-delete',
+                  type: 'document',
+                },
+              },
+            ],
+          },
+          {
+            kind: 'leaf',
+            name: '保留文档',
+            summary: '保留文档',
+            segment: {
+              fileId: 'file-keep',
+              type: 'document',
+            },
+          },
+        ],
+      },
+    });
+    await adapter.saveClue(clue);
+
+    const result = await adapter.removeLeavesByFileId('project-a', 'file-delete');
+    const updated = await adapter.getClue('clue-prune');
+    const registry = JSON.parse(
+      readFileSync(join(projectAPath, '.fs_index', 'clues', 'registry.json'), 'utf-8')
+    ) as { clues: Array<{ id: string; leafCount?: number }> };
+
+    expect(result).toEqual({
+      affectedClues: ['clue-prune'],
+      removedLeaves: 1,
+      removedFolders: 1,
+    });
+    expect(updated?.root.children).toHaveLength(1);
+    expect(updated?.root.children[0]).toMatchObject({
+      kind: 'leaf',
+      name: '保留文档',
+    });
+    expect(registry.clues.find((item) => item.id === 'clue-prune')?.leafCount).toBe(1);
   });
 });
 

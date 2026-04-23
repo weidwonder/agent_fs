@@ -97,8 +97,9 @@
 | 内容粒度 | leaf 指向 `Segment`，支持整个文档（`document`）或行号区间（`range`） |
 | 当前创建方式 | Phase 0 通过 MCP Builder 工具显式创建与维护，不依赖 LLM 自动生成 |
 | 当前浏览方式 | 通过 `list_clues / browse_clue / read_clue_leaf` 浏览结构、读取正文与来源定位 |
-| 当前范围 | 已落地 Core 类型、树操作、本地存储、MCP 工具、搜索 `clueRefs` 挂接 |
-| 暂未覆盖 | LLM 自动构建、Indexer 自动同步、Electron Clue UI |
+| 当前同步 | 文档删除时自动清理引用该 `fileId` 的 leaf；文档新增/修改时通过可选 Webhook 通知外部 Clue 编排器 |
+| 当前范围 | 已落地 Core 类型、树操作、本地存储、MCP 工具、搜索 `clueRefs` 挂接、删除同步、Webhook 通知 |
+| 暂未覆盖 | LLM 自动构建、Indexer 内置 LLM 重写 Clue、Electron Clue UI |
 
 ## 3. 系统架构要求
 
@@ -273,7 +274,7 @@
 - 图片/音视频等非文档格式
 - searchableText 原始明细不单独持久化（每次重建索引时重新生成）
 - LLM 主导的 Clue 对话式创建与自动展开
-- Indexer 管线末尾自动同步 Clue
+- Indexer 内置 LLM 自动重写 Clue（当前仅负责删除清理与新增/修改 Webhook 通知）
 - Electron 客户端中的 Clue 列表、树浏览器与创建向导
 
 ### 技术约束

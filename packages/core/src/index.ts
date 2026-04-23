@@ -26,6 +26,7 @@ export type {
   RerankConfig,
   IndexingConfig,
   SearchConfig,
+  ClueConfig,
 } from './types/config';
 
 // Search types
@@ -102,8 +103,10 @@ export {
   updateNode,
   removeNode,
   listLeaves,
+  removeLeavesByFileId,
   renderTree,
   type CreateClueInput,
+  type RemoveLeavesByFileIdResult,
   type UpdateNodeInput,
   type RenderTreeOptions,
 } from './clue/tree';

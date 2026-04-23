@@ -1,8 +1,16 @@
 import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { basename, join } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import type {
+  ClueConfig,
   ChunkMetadata,
   DocumentConversionResult,
   FileMetadata,
@@ -16,6 +24,7 @@ import type { EmbeddingService, SummaryService } from '@agent-fs/llm';
 import type { IndexEntry } from '@agent-fs/search';
 import type { DocumentArchiveAdapter, StorageAdapter } from '@agent-fs/storage-adapter';
 import { FileChecker } from './file-checker';
+import { notifyClueWebhook, type DocumentChange } from './clue-webhook';
 import type { PluginManager } from './plugin-manager';
 import { scanDirectory, type ScanResult } from './scanner';
 
@@ -36,6 +45,7 @@ export interface IndexerOptions {
   fileParallelism?: number;
   chunkOptions: { minTokens: number; maxTokens: number };
   summaryOptions: SummaryPipelineOptions;
+  clueConfig?: ClueConfig;
   indexerVersion?: string;
   onProgress?: (progress: IndexProgress) => void;
 }
@@ -109,6 +119,7 @@ export class IndexPipeline {
   private processedFiles = 0;
   private totalFiles = 0;
   private readonly fileChecker = new FileChecker();
+  private readonly changedDocuments = new Map<string, DocumentChange>();
   private logFilePath = '';
   private runStartedAt = 0;
 
@@ -120,6 +131,7 @@ export class IndexPipeline {
   async run(): Promise<IndexMetadata> {
     const { dirPath } = this.options;
     this.runStartedAt = Date.now();
+    this.changedDocuments.clear();
 
     // 确保根目录索引目录存在
     mkdirSync(join(dirPath, '.fs_index'), { recursive: true });
@@ -136,8 +148,7 @@ export class IndexPipeline {
     const persistedResumeProjectId = persistedResumeSnapshot?.projectId;
     const canRecoverFromResume =
       Boolean(persistedResumeProjectId) &&
-      (!persistedRootMetadata ||
-        persistedRootMetadata.projectId === persistedResumeProjectId);
+      (!persistedRootMetadata || persistedRootMetadata.projectId === persistedResumeProjectId);
     const recoveredMetadata =
       canRecoverFromResume && persistedResumeSnapshot
         ? this.buildMetadataMapFromResumeSnapshot(persistedResumeSnapshot)
@@ -180,6 +191,7 @@ export class IndexPipeline {
     try {
       const result = await this.indexDirectoryTree(tree);
       this.clearResumeSnapshot();
+      this.dispatchClueWebhook();
       this.writeLog({
         level: 'info',
         event: 'run_success',
@@ -324,7 +336,8 @@ export class IndexPipeline {
           await this.cleanupFileArtifacts(
             previousFile.fileId,
             context.dirPath,
-            previousFile.afdName ?? previousFile.name ?? previousFile.fileId
+            previousFile.afdName ?? previousFile.name ?? previousFile.fileId,
+            { cleanupClue: false }
           );
           this.removeResumeFile(context.relativePath, filename);
         }
@@ -344,6 +357,18 @@ export class IndexPipeline {
         });
         ownFilesByIndex[fileIndex] = processedFile;
         this.recordResumeFile(context, processedFile);
+        const changeAction = this.resolveDocumentChangeAction(
+          Boolean(previousFile),
+          hashResult.changed
+        );
+        if (changeAction) {
+          this.recordDocumentChange({
+            fileId: processedFile.fileId,
+            filePath: relativeFilePath,
+            action: changeAction,
+            summary: processedFile.summary,
+          });
+        }
       }
     });
 
@@ -363,14 +388,17 @@ export class IndexPipeline {
       await this.cleanupFileArtifacts(
         removedFile.fileId,
         context.dirPath,
-        removedFile.afdName ?? removedFile.name ?? removedFile.fileId
+        removedFile.afdName ?? removedFile.name ?? removedFile.fileId,
+        { cleanupClue: true }
       );
       this.removeResumeFile(context.relativePath, removedFile.name);
     }
     this.replaceResumeDirectoryFiles(context, ownFiles);
 
     const childResults: DirectoryRunResult[] = [];
-    const currentSubdirectoryNames = new Set(context.children.map((child) => basename(child.dirPath)));
+    const currentSubdirectoryNames = new Set(
+      context.children.map((child) => basename(child.dirPath))
+    );
     for (const child of context.children) {
       childResults.push(await this.indexDirectoryTree(child));
     }
@@ -380,7 +408,10 @@ export class IndexPipeline {
         continue;
       }
 
-      await this.cleanupRemovedDirectory(oldSubdirectory, join(context.dirPath, oldSubdirectory.name));
+      await this.cleanupRemovedDirectory(
+        oldSubdirectory,
+        join(context.dirPath, oldSubdirectory.name)
+      );
       const removedRelativePath =
         context.relativePath === '.'
           ? oldSubdirectory.name
@@ -466,7 +497,9 @@ export class IndexPipeline {
 
   private collectDirectoryFileIds(metadata: IndexMetadata): string[] {
     const ownFileIds = metadata.files.map((file) => file.fileId);
-    const childFileIds = metadata.subdirectories.flatMap((subdirectory) => subdirectory.fileIds ?? []);
+    const childFileIds = metadata.subdirectories.flatMap(
+      (subdirectory) => subdirectory.fileIds ?? []
+    );
     return Array.from(new Set([...ownFileIds, ...childFileIds]));
   }
 
@@ -495,11 +528,15 @@ export class IndexPipeline {
   private async cleanupFileArtifacts(
     fileId: string,
     dirPath: string,
-    archiveName: string
+    archiveName: string,
+    options: { cleanupClue: boolean }
   ): Promise<void> {
     await this.options.storage.vector.deleteByFileId(fileId);
     await this.options.storage.invertedIndex.removeFile(fileId);
     await this.deleteAfdFile(dirPath, archiveName);
+    if (options.cleanupClue) {
+      await this.options.storage.clue.removeLeavesByFileId(this.projectId, fileId);
+    }
   }
 
   private async cleanupRemovedDirectory(
@@ -509,10 +546,8 @@ export class IndexPipeline {
     const metadata = this.readIndexMetadata(dirPath);
     if (metadata) {
       for (const file of metadata.files) {
-        await this.deleteAfdFile(
-          metadata.directoryPath,
-          file.afdName ?? file.name ?? file.fileId
-        );
+        await this.deleteAfdFile(metadata.directoryPath, file.afdName ?? file.name ?? file.fileId);
+        await this.options.storage.clue.removeLeavesByFileId(this.projectId, file.fileId);
       }
 
       for (const childSubdirectory of metadata.subdirectories) {
@@ -528,21 +563,56 @@ export class IndexPipeline {
         const archivedName = fallbackArchives.get(fileId);
         if (archivedName) {
           await this.deleteAfdFile(dirPath, archivedName);
-          continue;
+        } else {
+          const archived = this.existingFileArchiveById.get(fileId);
+          if (archived) {
+            await this.deleteAfdFile(archived.dirPath, archived.archiveName);
+          } else {
+            await this.deleteAfdFile(dirPath, fileId);
+          }
         }
 
-        const archived = this.existingFileArchiveById.get(fileId);
-        if (archived) {
-          await this.deleteAfdFile(archived.dirPath, archived.archiveName);
-          continue;
-        }
-
-        await this.deleteAfdFile(dirPath, fileId);
+        await this.options.storage.clue.removeLeavesByFileId(this.projectId, fileId);
       }
     }
 
     await this.options.storage.vector.deleteByDirId(subdirectory.dirId);
     await this.options.storage.invertedIndex.removeDirectory(subdirectory.dirId);
+  }
+
+  private dispatchClueWebhook(): void {
+    const webhookUrl = this.options.clueConfig?.webhook_url;
+    if (!webhookUrl || this.changedDocuments.size === 0) {
+      return;
+    }
+
+    const changes = [...this.changedDocuments.values()].sort((left, right) =>
+      left.filePath.localeCompare(right.filePath, 'zh-CN')
+    );
+    void notifyClueWebhook({
+      webhookUrl,
+      webhookSecret: this.options.clueConfig?.webhook_secret,
+      projectId: this.projectId,
+      projectPath: this.options.dirPath,
+      changes,
+    });
+  }
+
+  private recordDocumentChange(change: DocumentChange): void {
+    this.changedDocuments.set(change.filePath, change);
+  }
+
+  private resolveDocumentChangeAction(
+    hasPreviousFile: boolean,
+    fileChanged: boolean
+  ): 'added' | 'modified' | null {
+    if (!hasPreviousFile) {
+      return 'added';
+    }
+    if (fileChanged) {
+      return 'modified';
+    }
+    return null;
   }
 
   private async deleteAfdFile(dirPath: string, archiveName: string): Promise<void> {
@@ -727,7 +797,9 @@ export class IndexPipeline {
       return;
     }
 
-    const directory = this.resumeSnapshot.directories.find((item) => item.relativePath === relativePath);
+    const directory = this.resumeSnapshot.directories.find(
+      (item) => item.relativePath === relativePath
+    );
     if (!directory) {
       return;
     }
@@ -952,12 +1024,7 @@ export class IndexPipeline {
       processed,
       total,
     } = input;
-    const {
-      pluginManager,
-      embeddingService,
-      summaryService,
-      onProgress,
-    } = this.options;
+    const { pluginManager, embeddingService, summaryService, onProgress } = this.options;
     const archive = this.getArchive(dirPath);
 
     this.writeLog({

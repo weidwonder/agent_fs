@@ -200,4 +200,18 @@ describe('configSchema', () => {
     const result = validateConfig(configWithPlugins);
     expect(result.plugins?.pdf).toEqual({ extra_param: 'value' });
   });
+
+  it('should allow optional clue webhook config', () => {
+    const configWithClue = {
+      ...validConfig,
+      clue: {
+        webhook_url: 'http://127.0.0.1:3000/clue-webhook',
+        webhook_secret: 'test-secret',
+      },
+    };
+
+    const result = validateConfig(configWithClue);
+    expect(result.clue?.webhook_url).toBe('http://127.0.0.1:3000/clue-webhook');
+    expect(result.clue?.webhook_secret).toBe('test-secret');
+  });
 });

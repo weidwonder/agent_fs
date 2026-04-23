@@ -80,6 +80,14 @@ const searchConfigSchema = z.object({
 });
 
 /**
+ * Clue 配置 schema
+ */
+const clueConfigSchema = z.object({
+  webhook_url: z.string().url().optional(),
+  webhook_secret: z.string().min(1).optional(),
+});
+
+/**
  * 完整配置 schema
  */
 export const configSchema = z.object({
@@ -93,6 +101,7 @@ export const configSchema = z.object({
   }),
   indexing: indexingConfigSchema,
   search: searchConfigSchema,
+  clue: clueConfigSchema.optional(),
   plugins: z.record(z.string(), z.unknown()).optional(),
 });
 

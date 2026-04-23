@@ -52,11 +52,7 @@ export interface InvertedSearchResult {
 
 export interface InvertedIndexAdapter {
   init(): Promise<void>;
-  addFile(
-    fileId: string,
-    dirId: string,
-    entries: InvertedIndexEntry[],
-  ): Promise<void>;
+  addFile(fileId: string, dirId: string, entries: InvertedIndexEntry[]): Promise<void>;
   search(params: {
     terms: string[];
     dirIds: string[];
@@ -73,15 +69,9 @@ export interface InvertedIndexAdapter {
 // ---------------------------------------------------------------------------
 
 export interface DocumentArchiveAdapter {
-  write(
-    fileId: string,
-    content: { files: Record<string, string> },
-  ): Promise<void>;
+  write(fileId: string, content: { files: Record<string, string> }): Promise<void>;
   read(fileId: string, fileName: string): Promise<string>;
-  readBatch(
-    fileId: string,
-    fileNames: string[],
-  ): Promise<Record<string, string>>;
+  readBatch(fileId: string, fileNames: string[]): Promise<Record<string, string>>;
   exists(fileId: string): Promise<boolean>;
   delete(fileId: string): Promise<void>;
   close(): Promise<void>;
@@ -96,7 +86,7 @@ export interface MetadataAdapter {
   writeIndexMetadata(dirId: string, metadata: IndexMetadata): Promise<void>;
   deleteIndexMetadata(dirId: string): Promise<void>;
   listSubdirectories(
-    dirId: string,
+    dirId: string
   ): Promise<{ dirId: string; relativePath: string; summary?: string }[]>;
   listProjects(): Promise<
     {
@@ -111,11 +101,7 @@ export interface MetadataAdapter {
     projectMd: string;
     files: { name: string; size: number }[];
   } | null>;
-  writeProjectMemoryFile(
-    projectId: string,
-    fileName: string,
-    content: string,
-  ): Promise<void>;
+  writeProjectMemoryFile(projectId: string, fileName: string, content: string): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -128,6 +114,14 @@ export interface ClueAdapter {
   getClue(clueId: string): Promise<Clue | null>;
   saveClue(clue: Clue): Promise<void>;
   deleteClue(clueId: string): Promise<void>;
+  removeLeavesByFileId(
+    projectId: string,
+    fileId: string
+  ): Promise<{
+    affectedClues: string[];
+    removedLeaves: number;
+    removedFolders: number;
+  }>;
   close(): Promise<void>;
 }
 

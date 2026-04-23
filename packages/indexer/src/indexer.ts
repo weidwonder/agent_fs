@@ -108,6 +108,7 @@ export class Indexer {
         maxRetries: summaryConfig?.max_retries,
         timeoutMs: summaryConfig?.timeout_ms,
       },
+      clueConfig: this.config.clue,
       indexerVersion: this.runtimeVersion,
       onProgress: this.options.onProgress,
     });
@@ -599,8 +600,8 @@ export class Indexer {
       total: input.total,
     });
     const chunks = input.chunker.chunk(markdown);
-    const chunkIds = chunks.map((_, index) =>
-      `${input.file.fileId}:${String(index).padStart(4, '0')}`
+    const chunkIds = chunks.map(
+      (_, index) => `${input.file.fileId}:${String(index).padStart(4, '0')}`
     );
     if (chunkIds.length !== input.file.chunkCount) {
       throw new Error(
@@ -732,7 +733,9 @@ export class Indexer {
 
   private collectDirectoryFileIds(metadata: IndexMetadata): string[] {
     const ownFileIds = metadata.files.map((file) => file.fileId);
-    const childFileIds = metadata.subdirectories.flatMap((subdirectory) => subdirectory.fileIds ?? []);
+    const childFileIds = metadata.subdirectories.flatMap(
+      (subdirectory) => subdirectory.fileIds ?? []
+    );
     return Array.from(new Set([...ownFileIds, ...childFileIds]));
   }
 
@@ -782,7 +785,12 @@ export class Indexer {
     if (!minerURaw) return {};
 
     const normalizedMinerU: Record<string, unknown> = { ...minerURaw };
-    const serverUrl = this.pickFirstString(minerURaw, ['serverUrl', 'server_url', 'apiHost', 'api_host']);
+    const serverUrl = this.pickFirstString(minerURaw, [
+      'serverUrl',
+      'server_url',
+      'apiHost',
+      'api_host',
+    ]);
     if (serverUrl) {
       normalizedMinerU.serverUrl = serverUrl;
       delete normalizedMinerU.server_url;
@@ -841,10 +849,7 @@ export class Indexer {
     return value as Record<string, unknown>;
   }
 
-  private pickFirstString(
-    source: Record<string, unknown>,
-    keys: string[]
-  ): string | null {
+  private pickFirstString(source: Record<string, unknown>, keys: string[]): string | null {
     for (const key of keys) {
       const value = source[key];
       if (typeof value === 'string' && value.trim().length > 0) {

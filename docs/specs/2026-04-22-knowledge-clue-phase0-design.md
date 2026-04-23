@@ -402,21 +402,86 @@ MCP 工具序列化输出时，字段名转换为 `clue_refs`，元素字段为 
 
 实现：搜索完成后，用结果的 fileId 扫描项目所有 Clue，找出引用这些 fileId 的 leaf 节点。Clue 数据量小，扫描成本低。
 
-## 10. Electron UI
+## 10. 文档变更与 Clue 同步
 
-### 10.1 Clue 列表面板
+### 10.1 删除同步（自动，无需 LLM）
+
+文档删除时，系统自动清理所有 Clue 中引用该文档的 leaf 节点：
+
+1. 遍历项目所有 Clue（从 `clues/registry.json` 读取）
+2. 在每个 Clue 树中查找 `segment.fileId` 匹配的 ClueLeaf
+3. 移除匹配的 leaf 节点
+4. 若某 folder 的 children 变空，级联移除该 folder
+5. 保存更新后的 Clue
+
+此逻辑在 Indexer `cleanupFileArtifacts` 末尾调用，与向量/倒排/AFD 清理同步执行。
+
+ClueAdapter 新增方法：
+
+```typescript
+removeLeavesByFileId(projectId: string, fileId: string): Promise<{
+  affectedClues: string[];   // 被修改的 Clue ID 列表
+  removedLeaves: number;     // 移除的 leaf 数
+  removedFolders: number;    // 级联移除的空 folder 数
+}>
+```
+
+### 10.2 新增/修改通知（Webhook，外部 LLM 处理）
+
+文档新增或修改时，Indexer 完成索引后通过 Webhook 通知外部 LLM 服务，由其自行调用 Builder MCP 工具整理 Clue。Indexer 本身不运行 LLM 来更新 Clue。
+
+**配置：**
+
+```yaml
+# config.yaml
+clue:
+  webhook_url: "http://localhost:3000/clue-webhook"  # 可选，不配置则不通知
+  webhook_secret: "..."                               # 可选，用于签名验证
+```
+
+**Webhook 请求格式：**
+
+```typescript
+POST {webhook_url}
+Content-Type: application/json
+X-Webhook-Signature: sha256=...    // 若配置了 secret
+
+{
+  event: 'documents_changed';
+  project_id: string;
+  project_path: string;
+  timestamp: string;               // ISO 8601
+  changes: Array<{
+    file_id: string;
+    file_path: string;             // 相对于 project_path 的路径，如 "docs/auth/jwt-migration.md"
+    action: 'added' | 'modified';
+    summary: string;               // 文档摘要
+  }>;
+}
+```
+
+**触发时机：** Indexer 完成所有文件处理并写入 IndexMetadata 后，异步发送（不阻塞索引流程）。
+
+**设计原则：**
+- Indexer 只负责通知，不关心 Clue 内容组织
+- 外部服务收到通知后，可调用 Builder MCP 工具（clue_add_leaf、clue_update_node 等）自主整理
+- Webhook 失败不影响索引流程（fire-and-forget，可配置重试）
+
+## 11. Electron UI
+
+### 11.1 Clue 列表面板
 
 项目详情页新增"知识线索"Tab，展示 Clue 卡片（名称、描述、节点数、更新时间），支持打开、删除、触发更新。
 
-### 10.2 Clue 树浏览器
+### 11.2 Clue 树浏览器
 
 左侧可展开/折叠的树结构，folder 节点显示组织模式标识。右侧选中 leaf 时展示 Segment 正文（从 AFD 读取）。Timeline folder 子节点按时间轴可视化排列。
 
-### 10.3 Clue 创建向导
+### 11.3 Clue 创建向导
 
 输入主题描述 → LLM 对话澄清 → 骨架预览/调整 → 展开进度 → 完成跳转浏览器。
 
-### 10.4 IPC 接口
+### 11.4 IPC 接口
 
 ```typescript
 ipcMain.handle('list-clues', (_, projectId) => ...)
@@ -430,7 +495,7 @@ ipcMain.emit('clue-creation-progress', { phase, folder, progress })
 ipcMain.emit('clue-update-progress', { clueId, phase, progress })
 ```
 
-## 11. 实现路径（自底向上）
+## 12. 实现路径（自底向上）
 
 ```
 Step 1: Core 类型定义（@agent-fs/core）

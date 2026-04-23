@@ -6,8 +6,6 @@ export { PluginManager } from './plugin-manager';
 export { scanDirectory } from './scanner';
 export type { ScanResult } from './scanner';
 export { FileChecker } from './file-checker';
-export type {
-  FileCheckerOptions,
-  FileHashReference,
-  FileChangeResult,
-} from './file-checker';
+export type { FileCheckerOptions, FileHashReference, FileChangeResult } from './file-checker';
+export { notifyClueWebhook } from './clue-webhook';
+export type { DocumentChange, NotifyClueWebhookParams } from './clue-webhook';
