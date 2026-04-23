@@ -4,6 +4,7 @@ import {
   addChild,
   createClue,
   findNode,
+  listLeafEntries,
   listLeaves,
   renderTree,
   removeLeavesByFileId,
@@ -71,6 +72,11 @@ describe('clue tree', () => {
       kind: 'leaf',
       name: 'JWT 迁移',
     });
+    expect(listLeafEntries(clue)).toEqual([
+      expect.objectContaining({
+        path: '基础认证/JWT 迁移',
+      }),
+    ]);
   });
 
   it('同层节点重名时 addChild 应报错', () => {

@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { ClueReference, IndexMetadata, Registry } from '@agent-fs/core';
-import { loadConfig } from '@agent-fs/core';
+import { listLeafEntries, loadConfig } from '@agent-fs/core';
 import type { EmbeddingService } from '@agent-fs/llm';
 import { createEmbeddingService } from '@agent-fs/llm';
 import type { InvertedSearchResult } from '@agent-fs/search';
@@ -15,7 +15,6 @@ import {
 import type { StorageAdapter } from '@agent-fs/storage-adapter';
 import { createLocalAdapter } from '@agent-fs/storage-adapter';
 import { resolveDisplayLocator } from './locator-display.js';
-import { collectLeafEntries } from './clue-storage.js';
 
 interface SearchInput {
   query: string;
@@ -117,7 +116,9 @@ async function initializeSearchService(): Promise<void> {
   const storagePath = join(homedir(), '.agent_fs', 'storage');
 
   if (!existsSync(join(storagePath, 'vectors'))) {
-    console.error('Warning: Vector storage not found. Search will not work until indexing is done.');
+    console.error(
+      'Warning: Vector storage not found. Search will not work until indexing is done.'
+    );
     return;
   }
 
@@ -194,7 +195,7 @@ async function closeCurrentSearchServices(): Promise<void> {
 
 async function closeInitializedSearchServices(
   activeEmbeddingService: EmbeddingService | null,
-  activeStorageAdapter: StorageAdapter | null,
+  activeStorageAdapter: StorageAdapter | null
 ): Promise<void> {
   const cleanupResults = await Promise.allSettled([
     activeStorageAdapter?.close(),
@@ -301,8 +302,10 @@ export async function search(input: SearchInput) {
   );
 
   const clueRefsByFileId = await buildClueRefsByFileId(
-    new Set(reselectedResults.map((item) => item.item.fileId).filter((fileId) => fileId.length > 0)),
-    storageAdapter,
+    new Set(
+      reselectedResults.map((item) => item.item.fileId).filter((fileId) => fileId.length > 0)
+    ),
+    storageAdapter
   );
 
   const hydratedResults = await Promise.all(
@@ -345,9 +348,7 @@ export async function search(input: SearchInput) {
 
 function normalizeScopes(scope: string | string[]): string[] {
   const values = Array.isArray(scope) ? scope : [scope];
-  return values
-    .map((item) => normalizePath(item))
-    .filter(Boolean);
+  return values.map((item) => normalizePath(item)).filter(Boolean);
 }
 
 function normalizePath(path: string): string {
@@ -429,11 +430,7 @@ function resolveScopedContext(scopes: string[]): {
 }
 
 function isPathRelated(pathA: string, pathB: string): boolean {
-  return (
-    pathA === pathB ||
-    pathA.startsWith(`${pathB}/`) ||
-    pathB.startsWith(`${pathA}/`)
-  );
+  return pathA === pathB || pathA.startsWith(`${pathB}/`) || pathB.startsWith(`${pathA}/`);
 }
 
 function loadRegistry(): Registry | null {
@@ -470,8 +467,7 @@ function collectRequestedDirIds(projects: RuntimeProject[], scopes: string[]): s
       if (scope.startsWith(`${normalizedProjectPath}/`)) {
         const relativePath = normalizeRelativePath(scope.slice(normalizedProjectPath.length + 1));
         const matchedSubdir = project.subdirectories.find(
-          (subdirectory) =>
-            normalizeRelativePath(subdirectory.relativePath) === relativePath
+          (subdirectory) => normalizeRelativePath(subdirectory.relativePath) === relativePath
         );
         if (matchedSubdir) {
           dirIds.add(matchedSubdir.dirId);
@@ -512,7 +508,10 @@ async function searchVector(
   scopes: string[],
   dirIds: string[]
 ) {
-  const merged = new Map<string, { chunk_id: string; score: number; document: Record<string, unknown> }>();
+  const merged = new Map<
+    string,
+    { chunk_id: string; score: number; document: Record<string, unknown> }
+  >();
 
   const searchDirIds = dirIds.length > 0 ? dirIds : [];
 
@@ -540,7 +539,7 @@ async function searchVector(
 
 async function buildClueRefsByFileId(
   fileIds: Set<string>,
-  adapter: StorageAdapter,
+  adapter: StorageAdapter
 ): Promise<Map<string, ClueReference[]>> {
   const refs = new Map<string, ClueReference[]>();
   if (fileIds.size === 0) {
@@ -562,7 +561,7 @@ async function buildClueRefsByFileId(
       const clue = await adapter.clue.getClue(summary.id);
       if (!clue) continue;
 
-      for (const entry of collectLeafEntries(clue)) {
+      for (const entry of listLeafEntries(clue)) {
         if (!fileIds.has(entry.leaf.segment.fileId)) continue;
 
         const items = refs.get(entry.leaf.segment.fileId) ?? [];
@@ -580,7 +579,7 @@ async function buildClueRefsByFileId(
     [...refs.entries()].map(([fileId, items]) => [
       fileId,
       items.sort((left, right) => left.leafPath.localeCompare(right.leafPath, 'zh-CN')),
-    ]),
+    ])
   );
 }
 
@@ -597,10 +596,7 @@ function mapVectorItem(
   fileLookup: Map<string, FileLookup>
 ): RuntimeSearchItem {
   const fileId = String(item.document.file_id ?? '');
-  const filePath =
-    String(item.document.file_path ?? '') ||
-    fileLookup.get(fileId)?.filePath ||
-    '';
+  const filePath = String(item.document.file_path ?? '') || fileLookup.get(fileId)?.filePath || '';
 
   return {
     chunkId: item.chunk_id,
@@ -966,8 +962,7 @@ async function readSummaries(
     const text = await storageAdapter.archive.read(archiveName, 'summaries.json');
     const parsed = JSON.parse(text) as { documentSummary?: unknown };
     const normalized = {
-      documentSummary:
-        typeof parsed.documentSummary === 'string' ? parsed.documentSummary : '',
+      documentSummary: typeof parsed.documentSummary === 'string' ? parsed.documentSummary : '',
     };
     cache.set(cacheKey, normalized);
     return normalized;
@@ -1040,19 +1035,13 @@ function extractByLocator(markdown: string, locator: string): string {
   return '';
 }
 
-function extractByLineRange(
-  markdown: string,
-  lineStart?: number,
-  lineEnd?: number
-): string {
+function extractByLineRange(markdown: string, lineStart?: number, lineEnd?: number): string {
   if (!markdown || !lineStart || !lineEnd || lineStart <= 0 || lineEnd < lineStart) {
     return '';
   }
 
   const lines = markdown.split('\n');
-  return lines
-    .slice(Math.max(0, lineStart - 1), Math.min(lines.length, lineEnd))
-    .join('\n');
+  return lines.slice(Math.max(0, lineStart - 1), Math.min(lines.length, lineEnd)).join('\n');
 }
 
 export function stripPageMarkers(content: string): string {
@@ -1060,10 +1049,7 @@ export function stripPageMarkers(content: string): string {
     return '';
   }
 
-  const withoutMarkers = content.replace(
-    /(^|\n)\s*<!-- page: \d+ -->\s*(\n|$)/gu,
-    '$1',
-  );
+  const withoutMarkers = content.replace(/(^|\n)\s*<!-- page: \d+ -->\s*(\n|$)/gu, '$1');
 
   return withoutMarkers
     .split('\n')
@@ -1219,7 +1205,9 @@ function splitSearchTerms(value: string): string[] {
     if (/[\u4e00-\u9fff]/u.test(term) && term.length >= 4) {
       refinedTerms.push(
         ...term
-          .split(/什么|哪些|哪类|哪种|如何|多少|是否|需要|需|应当|包括|满足|开始|采用|有关|相关|责任|内容/u)
+          .split(
+            /什么|哪些|哪类|哪种|如何|多少|是否|需要|需|应当|包括|满足|开始|采用|有关|相关|责任|内容/u
+          )
           .map((item) => item.trim())
           .filter((item) => item.length >= 2)
       );

@@ -1,16 +1,25 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { findNode, type Clue, type ClueLeaf, type ClueNode, type IndexMetadata } from '@agent-fs/core';
-import { listLocalMarkdownFiles, readLocalRegistry, resolveLocalScopeFromProject } from './local-markdown-access.js';
+import {
+  findNode,
+  type Clue,
+  type ClueLeaf,
+  type ClueNode,
+  type IndexMetadata,
+} from '@agent-fs/core';
+import {
+  listLocalMarkdownFiles,
+  readLocalRegistry,
+  resolveLocalScopeFromProject,
+} from './local-markdown-access.js';
 
 export function resolveProjectContext(project: string): { projectId: string; projectPath: string } {
   const registryPath = getRegistryPath();
   const registry = readLocalRegistry(registryPath);
   const normalizedProject = normalizePath(project);
   const matched = registry?.projects.find(
-    (item) =>
-      item.projectId === project || normalizePath(item.path) === normalizedProject,
+    (item) => item.projectId === project || normalizePath(item.path) === normalizedProject
   );
   if (matched) {
     return {
@@ -35,29 +44,6 @@ export function resolveProjectPathById(projectId: string): string {
   return resolveProjectContext(projectId).projectPath;
 }
 
-export function collectLeafEntries(clue: Clue): Array<{ path: string; leaf: ClueLeaf }> {
-  const entries: Array<{ path: string; leaf: ClueLeaf }> = [];
-
-  function walk(node: ClueNode, parentPath: string): void {
-    if (node.kind === 'leaf') {
-      entries.push({ path: parentPath, leaf: node });
-      return;
-    }
-
-    node.children.forEach((child) => {
-      const nextPath = buildNodePath(parentPath, child.name);
-      walk(child, nextPath);
-    });
-  }
-
-  walk(clue.root, '');
-  return entries;
-}
-
-export function countLeaves(clue: Clue): number {
-  return collectLeafEntries(clue).length;
-}
-
 export function countNodes(node: ClueNode): number {
   if (node.kind === 'leaf') {
     return 1;
@@ -80,7 +66,10 @@ export function getLeafOrThrow(clue: Clue, nodePath: string): ClueLeaf {
   return node;
 }
 
-export function resolveFileRef(projectPath: string, fileId: string): {
+export function resolveFileRef(
+  projectPath: string,
+  fileId: string
+): {
   fileId: string;
   path: string;
   absolutePath: string;

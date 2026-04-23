@@ -16,11 +16,17 @@ const moduleMocks = vi.hoisted(() => ({
 
 const state = {
   homeDir: '',
-  afdFiles: new Map<string, {
-    content: string;
-    summaries: { documentSummary: string };
-    mapping?: Array<{ markdownRange: { startLine: number; endLine: number }; originalLocator: string }>;
-  }>(),
+  afdFiles: new Map<
+    string,
+    {
+      content: string;
+      summaries: { documentSummary: string };
+      mapping?: Array<{
+        markdownRange: { startLine: number; endLine: number };
+        originalLocator: string;
+      }>;
+    }
+  >(),
 };
 
 vi.mock('node:os', async () => {
@@ -33,6 +39,28 @@ vi.mock('node:os', async () => {
 
 vi.mock('@agent-fs/core', () => ({
   loadConfig: moduleMocks.loadConfig,
+  listLeafEntries: (clue: {
+    root: {
+      kind: 'folder';
+      children: Array<any>;
+    };
+  }) => {
+    const entries: Array<{ path: string; leaf: any }> = [];
+    const walk = (node: any, parentPath: string) => {
+      if (node.kind === 'leaf') {
+        entries.push({ path: parentPath, leaf: node });
+        return;
+      }
+
+      node.children.forEach((child: any) => {
+        const nextPath = parentPath ? `${parentPath}/${child.name}` : child.name;
+        walk(child, nextPath);
+      });
+    };
+
+    walk(clue.root, '');
+    return entries;
+  },
 }));
 
 vi.mock('@agent-fs/llm', () => ({
@@ -76,16 +104,19 @@ vi.mock('@agent-fs/search', () => ({
     getFileKey: (item: T) => string | null | undefined,
     getChunkId: (item: T) => string
   ) => {
-    const groups = new Map<string, {
-      representative: { item: T; score: number; sources: string[] };
-      scoreSum: number;
-      chunkIds: string[];
-      chunkIdSet: Set<string>;
-      sources: Set<string>;
-    }>();
+    const groups = new Map<
+      string,
+      {
+        representative: { item: T; score: number; sources: string[] };
+        scoreSum: number;
+        chunkIds: string[];
+        chunkIdSet: Set<string>;
+        sources: Set<string>;
+      }
+    >();
 
     for (const row of fused) {
-      const key = ((getFileKey(row.item) || '').trim()) || `__chunk__:${getChunkId(row.item)}`;
+      const key = (getFileKey(row.item) || '').trim() || `__chunk__:${getChunkId(row.item)}`;
       const chunkId = getChunkId(row.item);
       const group = groups.get(key);
       if (!group) {
@@ -140,7 +171,13 @@ import {
 // Helper to build a storageAdapter mock from old-style vectorStore+invertedIndex mocks
 function makeAdapterMock(opts: {
   vectorResults?: Array<{ chunk_id: string; score: number; document: Record<string, unknown> }>;
-  invertedResults?: Array<{ chunkId: string; fileId: string; dirId?: string; locator: string; score: number }>;
+  invertedResults?: Array<{
+    chunkId: string;
+    fileId: string;
+    dirId?: string;
+    locator: string;
+    score: number;
+  }>;
   getByChunkIdsResult?: Array<Record<string, unknown>>;
   searchByVector?: ReturnType<typeof vi.fn>;
   getByChunkIds?: ReturnType<typeof vi.fn>;
@@ -153,14 +190,17 @@ function makeAdapterMock(opts: {
 
   return {
     vector: {
-      searchByVector: opts.searchByVector ?? vi.fn().mockResolvedValue(
-        vectorResults.map((r) => ({
-          chunkId: r.chunk_id,
-          score: r.score,
-          document: r.document,
-        }))
-      ),
-      getByChunkIds: opts.getByChunkIds ?? vi.fn().mockResolvedValue(opts.getByChunkIdsResult ?? []),
+      searchByVector:
+        opts.searchByVector ??
+        vi.fn().mockResolvedValue(
+          vectorResults.map((r) => ({
+            chunkId: r.chunk_id,
+            score: r.score,
+            document: r.document,
+          }))
+        ),
+      getByChunkIds:
+        opts.getByChunkIds ?? vi.fn().mockResolvedValue(opts.getByChunkIdsResult ?? []),
     },
     invertedIndex: {
       search: opts.invertedSearch ?? vi.fn().mockResolvedValue(invertedResults),
@@ -173,7 +213,8 @@ function makeAdapterMock(opts: {
           if (keyFileId === fileId) {
             if (filePath === 'content.md') return data.content;
             if (filePath === 'summaries.json') return JSON.stringify(data.summaries);
-            if (filePath === 'metadata.json') return JSON.stringify({ mapping: data.mapping ?? [] });
+            if (filePath === 'metadata.json')
+              return JSON.stringify({ mapping: data.mapping ?? [] });
           }
         }
         throw new Error(`missing AFD: ${fileId}/${filePath}`);
@@ -397,18 +438,22 @@ describe('search', () => {
       storageAdapter: {
         ...makeAdapterMock({
           searchByVector,
-          invertedSearch: vi.fn().mockImplementation(async (params: { terms: string[]; dirIds: string[]; topK: number }) => {
-            invertedCalls.push(params);
-            return [
-              {
-                chunkId: 'f1:0001',
-                fileId: 'f1',
-                dirId: 'd1',
-                locator: 'line:2-2',
-                score: 1.1,
-              },
-            ];
-          }),
+          invertedSearch: vi
+            .fn()
+            .mockImplementation(
+              async (params: { terms: string[]; dirIds: string[]; topK: number }) => {
+                invertedCalls.push(params);
+                return [
+                  {
+                    chunkId: 'f1:0001',
+                    fileId: 'f1',
+                    dirId: 'd1',
+                    locator: 'line:2-2',
+                    score: 1.1,
+                  },
+                ];
+              }
+            ),
         }),
       } as any,
     });

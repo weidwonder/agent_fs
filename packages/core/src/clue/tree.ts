@@ -1,14 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import type { Clue, ClueFolder, ClueLeaf, ClueNode } from '../types/clue.js';
+import type { Clue, ClueFolder, ClueNode } from '../types/clue.js';
 import { renderTree, type RenderTreeOptions } from './tree-render.js';
+export { listLeafEntries, listLeaves, type ClueLeafEntry } from './tree-leaves.js';
 export { removeLeavesByFileId, type RemoveLeavesByFileIdResult } from './tree-remove.js';
-import {
-  assertNodeName,
-  ensureUniqueName,
-  findNodeFromRoot,
-  splitPath,
-  visitLeaves,
-} from './tree-helpers.js';
+import { assertNodeName, ensureUniqueName, findNodeFromRoot, splitPath } from './tree-helpers.js';
 
 export interface CreateClueInput {
   projectId: string;
@@ -110,14 +105,6 @@ export function removeNode(clue: Clue, nodePath: string): Clue {
   }
 
   return replaceFolder(clue, parentPath, { ...parent, children: nextChildren });
-}
-
-export function listLeaves(clue: Clue): ClueLeaf[] {
-  const leaves: ClueLeaf[] = [];
-  visitLeaves(clue.root, '', (leaf) => {
-    leaves.push(leaf);
-  });
-  return leaves;
 }
 
 function replaceFolder(clue: Clue, nodePath: string, folder: ClueFolder): Clue {
