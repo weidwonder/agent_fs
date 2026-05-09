@@ -115,6 +115,8 @@
 | searchableText | 多对一关系：多个 searchableText entry 对应同一个 markdown 行，每个 entry 带 locator |
 | 位置映射 | 插件定义 `locator` 格式（如 `Sheet1!A1:C100`），主程序不解析 |
 
+说明：PDF 插件默认优先走直接文本提取；逐页可提取字符数 `<100`（可配置）时判为扫描页。全 text 直接提取、全 scan 回退 MinerU、mixed 按页合并两种结果。
+
 ### 3.2 扁平架构
 
 ```

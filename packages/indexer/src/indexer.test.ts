@@ -135,6 +135,7 @@ describe('Indexer 插件配置注入', () => {
         timeout: 30000,
         maxConcurrency: 4,
         pageConcurrency: 2,
+        cropImageFormat: 'png',
       },
     });
 
@@ -150,6 +151,52 @@ describe('Indexer 插件配置注入', () => {
     expect(mocks.excelCtor).toHaveBeenCalledWith({
       converter: {
         dotnetPath: '/tmp/excel-converter.csproj',
+      },
+    });
+  });
+
+  it('应透传 pdf.text_extraction 配置并规范化阈值字段', async () => {
+    mocks.loadConfig.mockReturnValue({
+      llm: {
+        provider: 'openai-compatible',
+        base_url: 'https://example.com/v1',
+        api_key: 'test-key',
+        model: 'gpt-4o-mini',
+      },
+      embedding: {
+        default: 'local',
+        local: {
+          model: 'test-model',
+          device: 'cpu',
+        },
+      },
+      indexing: {
+        chunk_size: {
+          min_tokens: 10,
+          max_tokens: 100,
+        },
+      },
+      search: {
+        default_top_k: 10,
+        fusion: { method: 'rrf' },
+      },
+      plugins: {
+        pdf: {
+          text_extraction: {
+            enabled: false,
+            min_text_chars_per_page: 150,
+          },
+        },
+      },
+    });
+
+    const { Indexer } = await import('./indexer');
+    new Indexer();
+
+    expect(mocks.pdfCtor).toHaveBeenCalledWith({
+      textExtraction: {
+        enabled: false,
+        minTextCharsPerPage: 150,
       },
     });
   });
@@ -199,6 +246,7 @@ describe('Indexer 插件配置注入', () => {
         timeout: 30000,
         maxConcurrency: 4,
         pageConcurrency: 2,
+        cropImageFormat: 'png',
       },
     });
   });
@@ -245,6 +293,7 @@ describe('Indexer 插件配置注入', () => {
         serverUrl: 'http://127.0.0.1:30000',
         maxConcurrency: 4,
         pageConcurrency: 2,
+        cropImageFormat: 'png',
       },
     });
   });
@@ -292,6 +341,7 @@ describe('Indexer 插件配置注入', () => {
         serverUrl: 'http://127.0.0.1:30000',
         maxConcurrency: 3,
         pageConcurrency: 2,
+        cropImageFormat: 'png',
       },
     });
   });
@@ -339,6 +389,55 @@ describe('Indexer 插件配置注入', () => {
         serverUrl: 'http://127.0.0.1:30000',
         maxConcurrency: 4,
         pageConcurrency: 3,
+        cropImageFormat: 'png',
+      },
+    });
+  });
+
+  it('显式配置 minerU.cropImageFormat 时应保持原值', async () => {
+    mocks.loadConfig.mockReturnValue({
+      llm: {
+        provider: 'openai-compatible',
+        base_url: 'https://example.com/v1',
+        api_key: 'test-key',
+        model: 'gpt-4o-mini',
+      },
+      embedding: {
+        default: 'local',
+        local: {
+          model: 'test-model',
+          device: 'cpu',
+        },
+      },
+      indexing: {
+        chunk_size: {
+          min_tokens: 10,
+          max_tokens: 100,
+        },
+      },
+      search: {
+        default_top_k: 10,
+        fusion: { method: 'rrf' },
+      },
+      plugins: {
+        pdf: {
+          minerU: {
+            serverUrl: 'http://127.0.0.1:30000',
+            cropImageFormat: 'jpeg',
+          },
+        },
+      },
+    });
+
+    const { Indexer } = await import('./indexer');
+    new Indexer();
+
+    expect(mocks.pdfCtor).toHaveBeenCalledWith({
+      minerU: {
+        serverUrl: 'http://127.0.0.1:30000',
+        maxConcurrency: 4,
+        pageConcurrency: 2,
+        cropImageFormat: 'jpeg',
       },
     });
   });

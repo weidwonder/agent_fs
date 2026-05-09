@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { extractPageFromLocator, insertPageMarkers, PDFPlugin } from './plugin';
+import { PDFPlugin } from './plugin';
+import { extractPageFromLocator, insertPageMarkers } from './page-markers';
 
 describe('PDFPlugin', () => {
   const plugin = new PDFPlugin();

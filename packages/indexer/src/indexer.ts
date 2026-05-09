@@ -781,8 +781,37 @@ export class Indexer {
   private resolvePdfPluginOptions(
     raw: Record<string, unknown> | null
   ): ConstructorParameters<typeof PDFPlugin>[0] {
+    const textExtractionRaw = raw
+      ? this.toRecord(raw.textExtraction) ?? this.toRecord(raw.text_extraction)
+      : null;
     const minerURaw = raw ? this.toRecord(raw.minerU) : null;
-    if (!minerURaw) return {};
+    const resolvedOptions: ConstructorParameters<typeof PDFPlugin>[0] = {};
+
+    if (textExtractionRaw) {
+      const normalizedTextExtraction: Record<string, unknown> = {
+        ...textExtractionRaw,
+      };
+      const minTextCharsPerPage = this.pickFirstNumber(textExtractionRaw, [
+        'minTextCharsPerPage',
+        'min_text_chars_per_page',
+      ]);
+
+      if (minTextCharsPerPage !== null) {
+        normalizedTextExtraction.minTextCharsPerPage = Math.max(
+          0,
+          Math.floor(minTextCharsPerPage)
+        );
+        delete normalizedTextExtraction.min_text_chars_per_page;
+      }
+
+      if (typeof textExtractionRaw.enabled === 'boolean') {
+        normalizedTextExtraction.enabled = textExtractionRaw.enabled;
+      }
+
+      resolvedOptions.textExtraction = normalizedTextExtraction as any;
+    }
+
+    if (!minerURaw) return resolvedOptions;
 
     const normalizedMinerU: Record<string, unknown> = { ...minerURaw };
     const serverUrl = this.pickFirstString(minerURaw, [
@@ -816,7 +845,13 @@ export class Indexer {
       normalizedMinerU.pageConcurrency = 2;
     }
 
+    const cropImageFormat = normalizedMinerU.cropImageFormat;
+    if (cropImageFormat !== 'jpeg' && cropImageFormat !== 'png') {
+      normalizedMinerU.cropImageFormat = 'png';
+    }
+
     return {
+      ...resolvedOptions,
       minerU: normalizedMinerU as any,
     };
   }
@@ -853,6 +888,16 @@ export class Indexer {
     for (const key of keys) {
       const value = source[key];
       if (typeof value === 'string' && value.trim().length > 0) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  private pickFirstNumber(source: Record<string, unknown>, keys: string[]): number | null {
+    for (const key of keys) {
+      const value = source[key];
+      if (typeof value === 'number' && Number.isFinite(value)) {
         return value;
       }
     }

@@ -1,25 +1,34 @@
 # @agent-fs/plugin-pdf
 
-PDF 文档处理插件，使用 mineru-ts 将 PDF 转换为 Markdown。
+PDF 文档处理插件，采用“文本优先 + MinerU 回退”的方案 C：
+
+- **全 text**：直接用 `pdfjs-dist` 本地提取
+- **全 scan**：整份 PDF 回退到 MinerU
+- **mixed**：文本页保留本地提取，扫描页使用 MinerU，并按页合并
 
 ## 功能
 
-- 将 PDF 转换为结构化 Markdown
-- 保留 PDF 位置映射（页级粒度）
-- 支持双向定位：Markdown <-> PDF
-- 复用 Markdown 分块和向量化流程
-- 内置 VLM 空响应重试（`Empty response from VLM server` 场景）
-- 内置网络异常重试（`EHOSTDOWN`/`ETIMEDOUT` 等场景）
-- 未配置 `maxConcurrency` 时自动使用更保守默认值 `4`
-- 页面级并发默认限制为 `1`，降低大 PDF 转换时的服务冲击
-- 页级可重试错误默认重试 2 次，重试后仍失败时默认跳过该页
-- 插件内置转换锁，同一进程内 PDF 会串行调用 MinerU
+- 优先处理原生文本 PDF，避免纯文本文档依赖 VLM
+- 基于逐页字符数做扫描判定，默认阈值 `100`
+- 判定前会忽略跨页重复页眉/页脚（如网页导出时间戳、URL、页码）
+- mixed 文档按页合并直接提取结果与 MinerU 结果
+- 输出兼容现有 `DocumentConversionResult`：`markdown + mapping`
+- 保留页级定位：`page:N`
+- 仅 MinerU 路径受串行锁约束，直接文本提取不串行
 
 ## 依赖
 
-### MinerU VLM 服务
+### 本地文本提取
 
-`mineru-ts` 需要可用的 VLM 服务（serverUrl）。
+使用 `pdfjs-dist` `^4.x`，无需额外服务，适合原生文本 PDF。
+
+### MinerU
+
+扫描件、图片型 PDF，以及 mixed 文档中的扫描页需要 MinerU。若未配置 MinerU：
+
+- 纯文本 PDF：仍可成功
+- 纯扫描 PDF：抛出明确错误
+- mixed PDF：文本页保留，扫描页写入占位文本 `[扫描页，需配置 MinerU]`
 
 ## 使用
 
@@ -27,18 +36,21 @@ PDF 文档处理插件，使用 mineru-ts 将 PDF 转换为 Markdown。
 import { createPDFPlugin } from '@agent-fs/plugin-pdf';
 
 const plugin = createPDFPlugin({
+  textExtraction: {
+    enabled: true,               // 默认 true
+    minTextCharsPerPage: 100,    // <100 字符判为 scan 页
+  },
   minerU: {
-    serverUrl: 'http://localhost:30000', // VLM 服务地址
-    apiKey: 'sk-...',                    // 可选
-    modelName: 'vlm-model',              // 可选
-    dpi: 200,                            // 可选
-    outputDir: './output',               // 可选：保存图片
-    timeout: 600000,                     // 可选
-    maxRetries: 3,                       // 可选
-    maxConcurrency: 10,                  // 可选
-    pageConcurrency: 2,                  // 可选：页面级并发（默认 1）
-    pageRetryLimit: 2,                   // 可选：页面级重试次数（默认 2）
-    skipFailedPages: true,               // 可选：页面级重试耗尽后是否跳过（默认 true）
+    serverUrl: 'http://localhost:30000',
+    apiKey: 'sk-...',
+    modelName: 'vlm-model',
+    timeout: 600000,
+    maxRetries: 3,
+    maxConcurrency: 4,
+    cropImageFormat: 'png',
+    pageConcurrency: 2,
+    pageRetryLimit: 2,
+    skipFailedPages: true,
   },
 });
 
@@ -51,44 +63,65 @@ console.log(result.mapping);
 await plugin.dispose();
 ```
 
-## 位置映射格式
+## 判定规则
 
-### originalLocator
+- 单页 `charCount < minTextCharsPerPage` → `scan`
+- 跨页重复页眉/页脚不计入 `charCount`
+- 所有页都是 `text` → 直接提取
+- 所有页都是 `scan` → MinerU
+- 同时存在 `text` / `scan` → mixed 按页合并
 
-当前版本只支持页级映射：
-- `page:N` - 第 N 页
+默认阈值 `100` 可通过 `textExtraction.minTextCharsPerPage` 调整。
 
-### 示例
+## 位置映射
+
+当前版本输出页级 mapping：
+
+- `page:1`
+- `page:2`
+
+示例：
 
 ```typescript
 {
-  markdownRange: { startLine: 1, endLine: 50 },
-  originalLocator: 'page:1'
+  markdownRange: { startLine: 1, endLine: 20 },
+  originalLocator: 'page:1',
 }
 ```
 
 ## 测试
 
 ```bash
-# 单元测试
-pnpm --filter @agent-fs/plugin-pdf test
+# plugin-pdf 定向测试
+pnpm exec vitest run \
+  packages/plugins/plugin-pdf/src/pdf-text-extractor.test.ts \
+  packages/plugins/plugin-pdf/src/plugin-conversion.test.ts \
+  packages/plugins/plugin-pdf/src/plugin-concurrency.test.ts \
+  packages/plugins/plugin-pdf/src/plugin.test.ts \
+  packages/plugins/plugin-pdf/src/mineru.test.ts
 
-# 集成测试（需要 MinerU VLM 服务）
-MINERU_SERVER_URL=http://localhost:30000 npx tsx scripts/test-with-pdf.ts /path/to/sample.pdf
+# 构建
+pnpm --filter @agent-fs/core build
+pnpm --filter @agent-fs/plugin-pdf clean
+pnpm --filter @agent-fs/plugin-pdf build
+
+# 真实 PDF 验证（会输出文档分类、最终路径、页级字符数、Markdown 摘要）
+pnpm exec tsx packages/plugins/plugin-pdf/scripts/test-with-pdf.ts /path/to/document.pdf
+
+# 若需要同时验证 MinerU 可用性
+MINERU_SERVER_URL=http://host:30000 \
+pnpm exec tsx packages/plugins/plugin-pdf/scripts/test-with-pdf.ts /path/to/document.pdf
 ```
 
 ## 注意事项
 
-1. **VLM 服务**：需要提前部署并确保 serverUrl 可访问
-2. **性能**：PDF 转换较慢（大文件可能需要 1-2 分钟），建议设置 120s 以上超时
-3. **位置映射**：当前只支持页级映射，不支持更精确的 bbox 映射
-4. **回退机制**：无法从内容列表定位时，会按剩余行数平均分配页范围
-5. **并发建议**：若 VLM 服务资源紧张，建议显式设置 `maxConcurrency` 为 2-4，`pageConcurrency` 为 1-2
-6. **容错建议**：对超长 PDF 建议保留 `skipFailedPages: true`，避免单页异常导致整份文档失败
-
-## 输出文件
-
-如果设置了 `outputDir`，mineru-ts 会输出提取的图片到 `outputDir/images/`。
+1. 纯文本 PDF 默认不再依赖 MinerU，速度显著更快
+2. mixed 文档仍会调用整份 MinerU，但最终按页合并
+3. mixed 且无 MinerU 时不会完全失败，但扫描页只会保留占位文本
+4. 纯扫描且无 MinerU 时会抛错：`检测到扫描件但未配置 MinerU`
+5. MinerU 仍保留网络异常与空响应重试逻辑
+6. 未显式配置时，扫描页裁剪图默认走 `PNG`；`pageConcurrency` 仍默认 `2`
+7. 若个别重扫描/票据样本在页后段持续丢字，可单独尝试 `pageConcurrency: 1`
 
 ## 许可证
 

@@ -21,7 +21,8 @@
   },
   "dependencies": {
     "@agent-fs/core": "workspace:*",
-    "mineru-ts": "^1.0.2"
+    "mineru-ts": "^1.0.3",
+    "pdfjs-dist": "^4.10.38"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

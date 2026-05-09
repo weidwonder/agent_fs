@@ -5,7 +5,6 @@ const mockInitialize = vi.fn();
 const mockParseFile = vi.fn();
 const mockResultToMarkdown = vi.fn();
 const mockResultToContentList = vi.fn();
-const mockTwoStepExtract = vi.fn();
 const createdClientOptions: Record<string, unknown>[] = [];
 
 vi.mock('mineru-ts', () => ({
@@ -21,9 +20,6 @@ vi.mock('mineru-ts', () => ({
     parseFile = mockParseFile;
     resultToMarkdown = mockResultToMarkdown;
     resultToContentList = mockResultToContentList;
-    twoStepExtract = mockTwoStepExtract;
-    batchTwoStepExtract = async (pageImages: unknown[]) =>
-      Promise.all(pageImages.map((pageImage) => this.twoStepExtract(pageImage)));
   },
 }));
 
@@ -42,8 +38,6 @@ describe('convertPDFWithMinerU', () => {
     mockResultToMarkdown.mockReturnValue('# 标题');
     mockResultToContentList.mockReset();
     mockResultToContentList.mockReturnValue([{ page_idx: 0, text: '第一页' }]);
-    mockTwoStepExtract.mockReset();
-    mockTwoStepExtract.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -61,11 +55,14 @@ describe('convertPDFWithMinerU', () => {
 
     const result = await convertPDFWithMinerU('/tmp/sample.pdf', {
       serverUrl: 'http://127.0.0.1:30000',
-    } as any);
+    });
 
     expect(typeof globalRecord.File).toBe('function');
     expect(mockInitialize).toHaveBeenCalledTimes(1);
     expect(mockParseFile).toHaveBeenCalledWith('/tmp/sample.pdf');
+    expect(createdClientOptions[0]?.maxConcurrency).toBe(4);
+    expect(createdClientOptions[0]?.pageConcurrency).toBe(2);
+    expect(createdClientOptions[0]?.cropImageFormat).toBe('png');
     expect(result.markdown).toBe('# 标题');
     expect(result.totalPages).toBe(2);
     expect(result.contentList).toEqual([{ page_idx: 0, text: '第一页' }]);
@@ -82,9 +79,10 @@ describe('convertPDFWithMinerU', () => {
 
     const result = await convertPDFWithMinerU('/tmp/retry.pdf', {
       serverUrl: 'http://127.0.0.1:30000',
-    } as any);
+    });
 
     expect(mockParseFile).toHaveBeenCalledTimes(2);
+    expect(createdClientOptions.map((option) => option.maxConcurrency)).toEqual([4, 2]);
     expect(result.markdown).toBe('# 重试成功');
     expect(result.totalPages).toBe(3);
     expect(result.contentList).toEqual([{ page_idx: 1, text: '第二页' }]);
@@ -101,7 +99,7 @@ describe('convertPDFWithMinerU', () => {
 
     const result = await convertPDFWithMinerU('/tmp/network-retry.pdf', {
       serverUrl: 'http://127.0.0.1:30000',
-    } as any);
+    });
 
     expect(mockParseFile).toHaveBeenCalledTimes(2);
     expect(result.markdown).toBe('# 网络重试成功');
@@ -113,75 +111,33 @@ describe('convertPDFWithMinerU', () => {
     await expect(
       convertPDFWithMinerU('/tmp/no-retry.pdf', {
         serverUrl: 'http://127.0.0.1:30000',
-      } as any)
+      })
     ).rejects.toThrow('internal error');
 
     expect(mockParseFile).toHaveBeenCalledTimes(1);
   });
 
-  it('应按 pageConcurrency 限制页面级并发', async () => {
-    let running = 0;
-    let peakRunning = 0;
-
-    mockTwoStepExtract.mockImplementation(async () => {
-      running += 1;
-      peakRunning = Math.max(peakRunning, running);
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      running -= 1;
-      return [];
-    });
-
-    mockParseFile.mockImplementation(async function (this: { batchTwoStepExtract: (pages: number[]) => Promise<unknown[]> }) {
-      await this.batchTwoStepExtract([1, 2, 3, 4, 5]);
-      return {
-        metadata: { totalPages: 5 },
-      };
-    });
-
-    await convertPDFWithMinerU('/tmp/page-concurrency.pdf', {
+  it('应将 mineru-ts 内建页级控制配置透传给客户端', async () => {
+    await convertPDFWithMinerU('/tmp/page-options.pdf', {
       serverUrl: 'http://127.0.0.1:30000',
+      maxConcurrency: 6,
       pageConcurrency: 2,
-    } as any);
-
-    expect(peakRunning).toBeLessThanOrEqual(2);
-    expect(createdClientOptions[0]?.pageConcurrency).toBeUndefined();
-  });
-
-  it('单页空响应时应跳过失败页并继续转换', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-
-    mockTwoStepExtract.mockImplementation(async (pageImage: { pageIndex: number }) => {
-      if (pageImage.pageIndex === 1) {
-        throw new Error('Empty response from VLM server');
-      }
-      return [{ page_idx: pageImage.pageIndex, text: `第${pageImage.pageIndex + 1}页` }];
+      pageRetryLimit: 1,
+      skipFailedPages: false,
+      cropImageFormat: 'jpeg',
+      cropImageQuality: 0.8,
+      keepAlive: false,
     });
 
-    mockParseFile.mockImplementation(async function (
-      this: {
-        batchTwoStepExtract: (pages: Array<{ pageIndex: number }>) => Promise<unknown[]>;
-      }
-    ) {
-      const pageBlocks = await this.batchTwoStepExtract([
-        { pageIndex: 0 },
-        { pageIndex: 1 },
-        { pageIndex: 2 },
-      ]);
-      expect(pageBlocks).toHaveLength(3);
-      expect(pageBlocks[1]).toEqual([]);
-      return {
-        metadata: { totalPages: 3 },
-      };
-    });
-
-    const result = await convertPDFWithMinerU('/tmp/page-skip.pdf', {
+    expect(createdClientOptions[0]).toMatchObject({
       serverUrl: 'http://127.0.0.1:30000',
-      pageRetryLimit: 0,
-    } as any);
-
-    expect(mockParseFile).toHaveBeenCalledTimes(1);
-    expect(result.markdown).toBe('# 标题');
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    warnSpy.mockRestore();
+      maxConcurrency: 6,
+      pageConcurrency: 2,
+      pageRetryLimit: 1,
+      skipFailedPages: false,
+      cropImageFormat: 'jpeg',
+      cropImageQuality: 0.8,
+      keepAlive: false,
+    });
   });
 });
